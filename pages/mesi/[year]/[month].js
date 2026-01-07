@@ -52,19 +52,17 @@ export async function getStaticProps({ params }) {
   };
 }
 
+// >>> FIX CRITICO: null/undefined/"" NON devono diventare 0
 function n(x) {
+  if (x === null || x === undefined || x === "") return NaN;
   const v = Number(x);
   return Number.isFinite(v) ? v : NaN;
 }
+
 function fmt(x, d = 1) {
   const v = n(x);
   if (!Number.isFinite(v)) return "—";
   return v.toFixed(d);
-}
-function fmt0(x) {
-  const v = n(x);
-  if (!Number.isFinite(v)) return "—";
-  return String(Math.round(v));
 }
 function sumFinite(arr) {
   let s = 0;
@@ -134,8 +132,14 @@ function monthName(mm) {
   return MONTHS_IT[m - 1] || mm;
 }
 
+// >>> mostra solo giorno del mese (1,2,3...)
+function dayOfMonthLabel(dateStr) {
+  if (!dateStr || String(dateStr).length < 10) return "—";
+  const dd = Number(String(dateStr).slice(8, 10));
+  return Number.isFinite(dd) ? String(dd) : "—";
+}
+
 export default function MonthPage(props) {
-  // fallback anti-crash (il tuo errore era qui)
   const year = props.year ?? "";
   const month = props.month ?? "";
   const ym = props.ym ?? "";
@@ -186,7 +190,7 @@ export default function MonthPage(props) {
     const esc = Number.isFinite(minT) && Number.isFinite(maxT) ? maxT - minT : NaN;
 
     const rainSum = sumFinite(days.map((d) => d.rain_total));
-    const rainyDays = days.map((d) => n(d.rain_total)).filter((x) => Number.isFinite(x) && x > 0).length;
+    const rainyDays = days.map((d) => n(d.rain_total)).filter((x) => Number.isFinite(x) && x >= 1).length;
 
     const gustMax = maxFinite(days.map((d) => d.gust_max));
     const pressMean = avgFinite(days.map((d) => d.press_avg));
@@ -322,7 +326,7 @@ export default function MonthPage(props) {
           <thead>
             <tr>
               <Th onClick={() => toggleSort("date")} active={sortKey === "date"} dir={sortDir}>
-                Data
+                Giorno
               </Th>
               <Th onClick={() => toggleSort("tmin")} active={sortKey === "tmin"} dir={sortDir}>
                 Tmin
@@ -360,12 +364,14 @@ export default function MonthPage(props) {
             {sorted.map((d) => (
               <tr key={d.date}>
                 <td className="date sticky">
-                  <Link href={`/giorni/${d.date}`}>{d.date}</Link>
+                  <Link href={`/giorni/${d.date}`}>{dayOfMonthLabel(d.date)}</Link>
                 </td>
                 <td>{fmt(d.tmin, 1)} °C</td>
                 <td>{fmt(d.tmax, 1)} °C</td>
                 <td className="strong">{fmt(d.tmean, 1)} °C</td>
-                <td className={n(d.rain_total) > 0 ? "rainy" : ""}>{fmt(d.rain_total, 1)} mm</td>
+                <td className={Number.isFinite(n(d.rain_total)) && n(d.rain_total) > 0 ? "rainy" : ""}>
+                  {fmt(d.rain_total, 1)} mm
+                </td>
 
                 {showExtra && (
                   <>
@@ -562,6 +568,8 @@ export default function MonthPage(props) {
           border-collapse: collapse;
           min-width: 980px;
         }
+
+        /* >>> Allineamento coerente: tutto centrato (header + celle) */
         thead th {
           position: sticky;
           top: 0;
@@ -572,7 +580,7 @@ export default function MonthPage(props) {
           letter-spacing: 0.08em;
           opacity: 0.75;
           padding: 10px 10px;
-          text-align: left;
+          text-align: center;
           white-space: nowrap;
           user-select: none;
         }
@@ -580,7 +588,9 @@ export default function MonthPage(props) {
           border-bottom: 1px solid #f1f1f1;
           padding: 12px 10px;
           white-space: nowrap;
+          text-align: center;
         }
+
         tbody tr:hover td {
           background: #fafafa;
         }
@@ -588,20 +598,23 @@ export default function MonthPage(props) {
           background: #fcfcfc;
         }
 
-        .date a {
-          color: #111;
-          text-decoration: none;
-          font-weight: 800;
-        }
-        .date a:hover {
-          text-decoration: underline;
-        }
-
+        /* >>> colonna sticky: mantiene posizione ma contenuto centrato */
         .sticky {
           position: sticky;
           left: 0;
           z-index: 2;
           background: inherit;
+        }
+        .date a {
+          color: #111;
+          text-decoration: none;
+          font-weight: 800;
+          display: inline-block;
+          width: 100%;
+          text-align: center;
+        }
+        .date a:hover {
+          text-decoration: underline;
         }
 
         .strong {
@@ -613,6 +626,7 @@ export default function MonthPage(props) {
         .empty {
           padding: 18px 10px;
           opacity: 0.7;
+          text-align: center;
         }
 
         @media (max-width: 980px) {

@@ -28,10 +28,13 @@ export async function getStaticProps({ params }) {
   return { props: { year, days } };
 }
 
+// >>> FIX CRITICO: null/undefined/"" non devono diventare 0
 function n(x) {
+  if (x === null || x === undefined || x === "") return NaN;
   const v = Number(x);
   return Number.isFinite(v) ? v : NaN;
 }
+
 function fmt(x, d = 1) {
   const v = n(x);
   if (!Number.isFinite(v)) return "—";
@@ -92,8 +95,18 @@ function maxFinite(arr) {
 }
 
 const MONTHS_IT = [
-  "Gennaio","Febbraio","Marzo","Aprile","Maggio","Giugno",
-  "Luglio","Agosto","Settembre","Ottobre","Novembre","Dicembre",
+  "Gennaio",
+  "Febbraio",
+  "Marzo",
+  "Aprile",
+  "Maggio",
+  "Giugno",
+  "Luglio",
+  "Agosto",
+  "Settembre",
+  "Ottobre",
+  "Novembre",
+  "Dicembre",
 ];
 function monthLabel(ym) {
   const mm = Number(String(ym).slice(5, 7));
@@ -118,7 +131,7 @@ export default function YearOverviewPage({ year, days }) {
     return m;
   }, [days]);
 
-  // summary mensile usando i tuoi campi
+  // summary mensile
   const monthly = useMemo(() => {
     return months.map((ym) => {
       const arr = byMonth.get(ym) || [];
@@ -149,7 +162,7 @@ export default function YearOverviewPage({ year, days }) {
     });
   }, [months, byMonth]);
 
-  // summary annuale (sui giorni)
+  // summary annuale
   const annual = useMemo(() => {
     const tmin = minFinite(days.map((d) => d.tmin));
     const tmax = maxFinite(days.map((d) => d.tmax));
@@ -165,7 +178,7 @@ export default function YearOverviewPage({ year, days }) {
     return { tmin, tmax, tmean, esc, rainSum, rainyDays, gustMax, pressMean, ndays: days.length };
   }, [days]);
 
-  // grafici mensili
+  // grafici mensili (null se manca)
   const x = monthly.map((m) => monthLabel(m.ym));
   const tmeanSeries = monthly.map((m) => (Number.isFinite(n(m.tmean)) ? n(m.tmean) : null));
   const rainSeries = monthly.map((m) => (Number.isFinite(n(m.rainSum)) ? n(m.rainSum) : null));
@@ -208,12 +221,30 @@ export default function YearOverviewPage({ year, days }) {
         </div>
 
         <div className="cards">
-          <div className="card"><div className="label">Tmin anno</div><div className="value">{fmt(annual.tmin, 1)} °C</div></div>
-          <div className="card"><div className="label">Tmax anno</div><div className="value">{fmt(annual.tmax, 1)} °C</div></div>
-          <div className="card"><div className="label">Tmedia anno</div><div className="value">{fmt(annual.tmean, 1)} °C</div></div>
-          <div className="card"><div className="label">Escursione</div><div className="value">{fmt(annual.esc, 1)} °C</div></div>
-          <div className="card"><div className="label">Raffica max anno</div><div className="value">{fmt(annual.gustMax, 1)} km/h</div></div>
-          <div className="card"><div className="label">Press. media anno</div><div className="value">{fmt(annual.pressMean, 1)} hPa</div></div>
+          <div className="card">
+            <div className="label">Tmin anno</div>
+            <div className="value">{fmt(annual.tmin, 1)} °C</div>
+          </div>
+          <div className="card">
+            <div className="label">Tmax anno</div>
+            <div className="value">{fmt(annual.tmax, 1)} °C</div>
+          </div>
+          <div className="card">
+            <div className="label">Tmedia anno</div>
+            <div className="value">{fmt(annual.tmean, 1)} °C</div>
+          </div>
+          <div className="card">
+            <div className="label">Escursione</div>
+            <div className="value">{fmt(annual.esc, 1)} °C</div>
+          </div>
+          <div className="card">
+            <div className="label">Raffica max anno</div>
+            <div className="value">{fmt(annual.gustMax, 1)} km/h</div>
+          </div>
+          <div className="card">
+            <div className="label">Press. media anno</div>
+            <div className="value">{fmt(annual.pressMean, 1)} hPa</div>
+          </div>
         </div>
       </header>
 
@@ -244,11 +275,11 @@ export default function YearOverviewPage({ year, days }) {
           </thead>
           <tbody>
             {monthly.map((m) => {
-              const mm = String(m.ym).slice(5, 7); // "02"
+              const mm = String(m.ym).slice(5, 7);
+              const rs = n(m.rainSum);
               return (
                 <tr key={m.ym}>
                   <td className="strong">
-                    {/* link alla tua pagina mese esistente: /2021/02 */}
                     <Link href={`/mesi/${year}/${mm}`}>{monthLabel(m.ym)}</Link>
                   </td>
                   <td>{m.days}</td>
@@ -256,7 +287,7 @@ export default function YearOverviewPage({ year, days }) {
                   <td>{fmt(m.tmax, 1)} °C</td>
                   <td>{fmt(m.tmean, 1)} °C</td>
                   <td>{fmt(m.esc, 1)} °C</td>
-                  <td className={n(m.rainSum) > 0 ? "rainy" : ""}>{fmt(m.rainSum, 1)} mm</td>
+                  <td className={Number.isFinite(rs) && rs > 0 ? "rainy" : ""}>{fmt(m.rainSum, 1)} mm</td>
                   <td>{fmt0(m.rainyDays)}</td>
                   <td>{fmt(m.gustMax, 1)} km/h</td>
                   <td>{fmt(m.pressMean, 1)} hPa</td>
@@ -280,10 +311,23 @@ export default function YearOverviewPage({ year, days }) {
           gap: 14px;
           margin-bottom: 14px;
         }
-        .back { text-decoration: none; color: #111; opacity: 0.75; }
-        .back:hover { opacity: 1; }
-        .brandTitle { font-weight: 800; letter-spacing: 0.02em; }
-        .brandSub { font-size: 12px; opacity: 0.7; margin-top: 2px; }
+        .back {
+          text-decoration: none;
+          color: #111;
+          opacity: 0.75;
+        }
+        .back:hover {
+          opacity: 1;
+        }
+        .brandTitle {
+          font-weight: 800;
+          letter-spacing: 0.02em;
+        }
+        .brandSub {
+          font-size: 12px;
+          opacity: 0.7;
+          margin-top: 2px;
+        }
 
         .hero {
           display: grid;
@@ -294,14 +338,43 @@ export default function YearOverviewPage({ year, days }) {
           border-radius: 16px;
           background: linear-gradient(180deg, #fff, #fbfbfb);
         }
-        .kicker { font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; opacity: 0.65; margin-bottom: 6px; }
-        h1 { margin: 0; font-size: 40px; line-height: 1.05; }
-        .sub { margin-top: 8px; opacity: 0.75; }
+        .kicker {
+          font-size: 12px;
+          letter-spacing: 0.12em;
+          text-transform: uppercase;
+          opacity: 0.65;
+          margin-bottom: 6px;
+        }
+        h1 {
+          margin: 0;
+          font-size: 40px;
+          line-height: 1.05;
+        }
+        .sub {
+          margin-top: 8px;
+          opacity: 0.75;
+        }
 
-        .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
-        .card { border: 1px solid #ededed; border-radius: 14px; padding: 12px; background: #fff; }
-        .label { font-size: 12px; opacity: 0.7; }
-        .value { font-size: 22px; margin-top: 6px; font-weight: 800; }
+        .cards {
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 10px;
+        }
+        .card {
+          border: 1px solid #ededed;
+          border-radius: 14px;
+          padding: 12px;
+          background: #fff;
+        }
+        .label {
+          font-size: 12px;
+          opacity: 0.7;
+        }
+        .value {
+          font-size: 22px;
+          margin-top: 6px;
+          font-weight: 800;
+        }
 
         .charts {
           margin-top: 14px;
@@ -309,7 +382,12 @@ export default function YearOverviewPage({ year, days }) {
           grid-template-columns: 1fr 1fr;
           gap: 12px;
         }
-        .chartBox { border: 1px solid #e7e7e7; border-radius: 16px; padding: 8px; background: #fff; }
+        .chartBox {
+          border: 1px solid #e7e7e7;
+          border-radius: 16px;
+          padding: 8px;
+          background: #fff;
+        }
 
         .tableWrap {
           margin-top: 12px;
@@ -318,7 +396,11 @@ export default function YearOverviewPage({ year, days }) {
           overflow: auto;
           background: #fff;
         }
-        table { width: 100%; border-collapse: collapse; min-width: 980px; }
+        table {
+          width: 100%;
+          border-collapse: collapse;
+          min-width: 980px;
+        }
         thead th {
           position: sticky;
           top: 0;
@@ -332,17 +414,37 @@ export default function YearOverviewPage({ year, days }) {
           text-align: left;
           white-space: nowrap;
         }
-        tbody td { border-bottom: 1px solid #f1f1f1; padding: 12px 10px; white-space: nowrap; }
-        tbody tr:hover td { background: #fafafa; }
-        tbody tr:nth-child(even) td { background: #fcfcfc; }
+        tbody td {
+          border-bottom: 1px solid #f1f1f1;
+          padding: 12px 10px;
+          white-space: nowrap;
+        }
+        tbody tr:hover td {
+          background: #fafafa;
+        }
+        tbody tr:nth-child(even) td {
+          background: #fcfcfc;
+        }
 
-        .strong a { color: #111; text-decoration: none; font-weight: 800; }
-        .strong a:hover { text-decoration: underline; }
-        .rainy { font-weight: 800; }
+        .strong a {
+          color: #111;
+          text-decoration: none;
+          font-weight: 800;
+        }
+        .strong a:hover {
+          text-decoration: underline;
+        }
+        .rainy {
+          font-weight: 800;
+        }
 
         @media (max-width: 980px) {
-          .hero { grid-template-columns: 1fr; }
-          .charts { grid-template-columns: 1fr; }
+          .hero {
+            grid-template-columns: 1fr;
+          }
+          .charts {
+            grid-template-columns: 1fr;
+          }
         }
       `}</style>
     </div>
