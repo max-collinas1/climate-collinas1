@@ -15,6 +15,11 @@ const RAIN_TICK_MM = 0.2;
 // watch debounce (ms)
 const WATCH_DEBOUNCE_MS = 600;
 
+// >>> NEW: qualità medie giornaliere (15-min)
+const QH_PER_DAY = 96; // 24h * 4
+const MIN_COVERAGE = 0.9; // 90%
+const MIN_SAMPLES_FOR_MEAN = Math.ceil(QH_PER_DAY * MIN_COVERAGE); // 87
+
 // ==================== utils ====================
 function listFiles(dir) {
   const out = [];
@@ -90,6 +95,14 @@ function mean(vals) {
   if (!v.length) return null;
   return v.reduce((s, x) => s + x, 0) / v.length;
 }
+
+// >>> NEW: mean con soglia minima campioni (se sotto soglia => null)
+function meanMin(vals, minCount = MIN_SAMPLES_FOR_MEAN) {
+  const v = (vals || []).filter(Number.isFinite);
+  if (v.length < minCount) return null;
+  return v.reduce((s, x) => s + x, 0) / v.length;
+}
+
 function minv(vals) {
   const v = (vals || []).filter(Number.isFinite);
   if (!v.length) return null;
@@ -263,6 +276,24 @@ function circularMeanDeg(degs) {
   return meanDeg;
 }
 
+// >>> NEW: circular mean con soglia minima campioni
+function circularMeanDegMin(degs, minCount = MIN_SAMPLES_FOR_MEAN) {
+  const vals = (degs || []).filter((d) => Number.isFinite(d));
+  if (vals.length < minCount) return null;
+
+  let sx = 0;
+  let sy = 0;
+  for (const d of vals) {
+    const rad = (d * Math.PI) / 180;
+    sx += Math.cos(rad);
+    sy += Math.sin(rad);
+  }
+  const meanRad = Math.atan2(sy / vals.length, sx / vals.length);
+  let meanDeg = (meanRad * 180) / Math.PI;
+  if (meanDeg < 0) meanDeg += 360;
+  return meanDeg;
+}
+
 function rainDeltasFixed(obsRows, tickMm = RAIN_TICK_MM) {
   const deltas = [];
   let prev = NaN;
@@ -370,11 +401,10 @@ function buildOnce() {
     for (const date of datesSorted) {
       const rows = byDate.get(date);
 
-      const obs = rows.filter(isObsRow).sort((a, b) => String(a.time).localeCurrencyCompare?.(String(b.time)) ?? String(a.time).localeCompare(String(b.time)));
-      // fallback robusto (Node vecchi): se localeCurrencyCompare non esiste, usa localeCompare
-      if (!obs.length) {
-        // ok, giornata senza obs: tutte le metriche "da obs" saranno null
-      }
+      // >>> FIX: ordinamento robusto per time
+      const obs = rows
+        .filter(isObsRow)
+        .sort((a, b) => String(a.time).localeCompare(String(b.time)));
 
       const ovr = rows.filter(isOvrRow);
 
@@ -400,20 +430,22 @@ function buildOnce() {
 
       const tmin_calc = minv(tvals);
       const tmax_calc = maxv(tvals);
-      const tmean = mean(tvals);
 
-      const dewpoint_mean = mean(dpvals);
-      const rh_mean = mean(rhvals);
+      // >>> CHANGE: medie giornaliere solo se coverage >= 90% (~87 quarti d'ora)
+      const tmean = meanMin(tvals);
+      const dewpoint_mean = meanMin(dpvals);
+      const rh_mean = meanMin(rhvals);
+      const wind_avg = meanMin(wvals);
+      const press_avg = meanMin(pvals);
 
-      const wind_avg = mean(wvals);
+      // max/min restano liberi (basta 1 campione)
       const wind_max = maxv(wvals);
       const gust_max_calc = maxv(gvals);
-
-      const press_avg = mean(pvals);
       const press_min = minv(pvals);
       const press_max = maxv(pvals);
 
-      const wind_dir_mean_calc = circularMeanDeg(dvals);
+      // >>> CHANGE: direzione media solo se coverage >= 90%
+      const wind_dir_mean_calc = circularMeanDegMin(dvals);
 
       let deltas15 = [];
       let rain_total_calc = null;
@@ -424,7 +456,6 @@ function buildOnce() {
       }
 
       // rain totals: se manca intraday, devono restare null (a meno di OVR)
-      // usa OVR key consigliata: "rain_total" (puoi anche mettere "rain_total_mm" se vuoi, qui le supporto entrambe)
       const rain_total_ovr = pickOverrideNumber(override, "rain_total", "rain_total_mm");
       const rain_total = rain_total_ovr !== null ? rain_total_ovr : rain_total_calc;
 
@@ -446,6 +477,7 @@ function buildOnce() {
       const gust_max = Number.isFinite(override.gustmax) ? override.gustmax : gust_max_calc;
       const rainrate_max = Number.isFinite(override.rainrate_max) ? override.rainrate_max : rainrate_max_calc;
 
+      // se OVR wind_dir_mean_deg esiste, prevale; altrimenti usa quella calcolata (che ora può essere null per coverage)
       const wind_dir_mean_deg = Number.isFinite(override.wind_dir_mean_deg)
         ? override.wind_dir_mean_deg
         : wind_dir_mean_calc;
@@ -460,7 +492,7 @@ function buildOnce() {
         rainrate_max,
         wind_dir_mean_deg,
 
-        // SOLO da obs (se manca obs => null)
+        // SOLO da obs (se manca obs => null) + ora anche quality gate 90%
         tmean,
         dewpoint_mean,
         rh_mean,
@@ -484,6 +516,9 @@ function buildOnce() {
 
         // utile per debug/UI
         has_obs: hasObs,
+        // >>> NEW: utile per capire perché una media è null
+        obs_count: obs.length,
+        mean_min_samples: MIN_SAMPLES_FOR_MEAN,
       });
 
       const intraday = obs.map((r, i) => ({
