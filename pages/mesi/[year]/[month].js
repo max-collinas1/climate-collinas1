@@ -1,8 +1,12 @@
 import fs from "fs";
 import path from "path";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import dynamic from "next/dynamic";
+import { useEffect, useMemo, useState } from "react";
 
+const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
+
+// -------------------- data load --------------------
 function readDaily() {
   const filePath = path.join(process.cwd(), "data", "daily.json");
   return JSON.parse(fs.readFileSync(filePath, "utf8"));
@@ -52,17 +56,21 @@ export async function getStaticProps({ params }) {
   };
 }
 
-// >>> FIX CRITICO: null/undefined/"" NON devono diventare 0
+// -------------------- helpers --------------------
 function n(x) {
   if (x === null || x === undefined || x === "") return NaN;
   const v = Number(x);
   return Number.isFinite(v) ? v : NaN;
 }
-
 function fmt(x, d = 1) {
   const v = n(x);
   if (!Number.isFinite(v)) return "—";
   return v.toFixed(d);
+}
+function fmtInt(x) {
+  const v = n(x);
+  if (!Number.isFinite(v)) return "—";
+  return String(Math.round(v));
 }
 function sumFinite(arr) {
   let s = 0;
@@ -131,14 +139,64 @@ function monthName(mm) {
   const m = Number(mm);
   return MONTHS_IT[m - 1] || mm;
 }
-
-// >>> mostra solo giorno del mese (1,2,3...)
 function dayOfMonthLabel(dateStr) {
   if (!dateStr || String(dateStr).length < 10) return "—";
   const dd = Number(String(dateStr).slice(8, 10));
   return Number.isFinite(dd) ? String(dd) : "—";
 }
+function degToCardinal16(v) {
+  const n0 = Number(v);
+  if (!Number.isFinite(n0)) return "—";
+  const d = ((n0 % 360) + 360) % 360;
+  const ix = Math.round(d / 22.5) % 16;
+  return ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"][ix];
+}
 
+// umidità
+function getRhMin(d) {
+  const a = n(d?.rh_min);
+  if (Number.isFinite(a)) return a;
+  const b = n(d?.rh_pct_min);
+  if (Number.isFinite(b)) return b;
+  return NaN;
+}
+function getRhMax(d) {
+  const a = n(d?.rh_max);
+  if (Number.isFinite(a)) return a;
+  const b = n(d?.rh_pct_max);
+  if (Number.isFinite(b)) return b;
+  return NaN;
+}
+function getRhMean(d) {
+  const a = n(d?.rh_mean);
+  if (Number.isFinite(a)) return a;
+  const b = n(d?.rh_pct_mean);
+  if (Number.isFinite(b)) return b;
+  return NaN;
+}
+
+// serie con null per buchi
+function seriesLine(arr) {
+  return arr.map((v) => (Number.isFinite(n(v)) ? n(v) : null));
+}
+
+// progressivo: somma solo quando il valore esiste; se manca, mantiene il valore precedente
+function cumulative(arr) {
+  let s = 0;
+  let started = false;
+  return arr.map((v) => {
+    const x = n(v);
+    if (Number.isFinite(x)) {
+      s += x;
+      started = true;
+      return s;
+    }
+    // se non è mai iniziato e mancano dati => null (non disegna)
+    return started ? s : null;
+  });
+}
+
+// -------------------- page --------------------
 export default function MonthPage(props) {
   const year = props.year ?? "";
   const month = props.month ?? "";
@@ -146,11 +204,12 @@ export default function MonthPage(props) {
   const days = Array.isArray(props.days) ? props.days : [];
   const monthsInYear = Array.isArray(props.monthsInYear) ? props.monthsInYear : [];
 
-  const [q, setQ] = useState("");
-  const [showExtra, setShowExtra] = useState(true);
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
 
+  const [q, setQ] = useState("");
   const [sortKey, setSortKey] = useState("date");
-  const [sortDir, setSortDir] = useState("asc"); // asc|desc
+  const [sortDir, setSortDir] = useState("asc");
 
   const filtered = useMemo(() => {
     const qq = q.trim().toLowerCase();
@@ -183,38 +242,217 @@ export default function MonthPage(props) {
     }
   }
 
+  const chrono = useMemo(() => {
+    return [...days].sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  }, [days]);
+
   const summary = useMemo(() => {
     const minT = minFinite(days.map((d) => d.tmin));
     const maxT = maxFinite(days.map((d) => d.tmax));
     const meanT = avgFinite(days.map((d) => d.tmean));
-    const esc = Number.isFinite(minT) && Number.isFinite(maxT) ? maxT - minT : NaN;
 
     const rainSum = sumFinite(days.map((d) => d.rain_total));
     const rainyDays = days.map((d) => n(d.rain_total)).filter((x) => Number.isFinite(x) && x >= 1).length;
 
     const gustMax = maxFinite(days.map((d) => d.gust_max));
     const pressMean = avgFinite(days.map((d) => d.press_avg));
+    const rhMean = avgFinite(days.map((d) => getRhMean(d)));
 
-    return { ndays: days.length, minT, maxT, meanT, esc, rainSum, rainyDays, gustMax, pressMean };
+    return { ndays: days.length, minT, maxT, meanT, rainSum, rainyDays, gustMax, pressMean, rhMean };
   }, [days]);
 
+  // -------------------- charts --------------------
+  const xLabels = chrono.map((d) => dayOfMonthLabel(d.date));
+
+  const baseChart = {
+    animation: false,
+    grid: { left: 52, right: 40, top: 72, bottom: 38 },
+    xAxis: { type: "category", data: xLabels, boundaryGap: true, axisLabel: { hideOverlap: true } },
+    toolbox: { feature: { restore: {} }, right: 10, top: 8 },
+    title: { left: "center", top: 6 },
+    legend: { top: 34, left: "center" },
+    tooltip: { trigger: "axis" },
+  };
+
+  // 1) Temperature
+  const optTemp = {
+    ...baseChart,
+    title: { ...baseChart.title, text: "Temperature giornaliere" },
+    tooltip: {
+      trigger: "axis",
+      valueFormatter: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} °C`),
+    },
+    yAxis: { type: "value", name: "°C", scale: true, axisLabel: { formatter: (v) => Number(v).toFixed(1) } },
+    series: [
+      { name: "Tmin", type: "line", data: seriesLine(chrono.map((d) => d.tmin)), showSymbol: false, connectNulls: false, lineStyle: { width: 2 } },
+      { name: "Tmedia", type: "line", data: seriesLine(chrono.map((d) => d.tmean)), showSymbol: false, connectNulls: false, lineStyle: { width: 2 } },
+      { name: "Tmax", type: "line", data: seriesLine(chrono.map((d) => d.tmax)), showSymbol: false, connectNulls: false, lineStyle: { width: 2 } },
+    ],
+  };
+
+  // 2) Precipitazioni: giornaliero + progressivo + rainrate max (punti)
+  const rainDaily = chrono.map((d) => d.rain_total);
+  const rainCum = cumulative(rainDaily);
+
+  const optRain = {
+    ...baseChart,
+    title: { ...baseChart.title, text: "Precipitazioni" },
+    yAxis: [
+      {
+        type: "value",
+        name: "mm",
+        scale: true,
+        splitNumber: 5,
+        alignTicks: true,
+        axisLabel: { formatter: (v) => Number(v).toFixed(1) },
+      },
+      {
+        type: "value",
+        name: "mm/h",
+        scale: true,
+        splitNumber: 5,
+        alignTicks: true,
+        axisLabel: { formatter: (v) => Number(v).toFixed(1) },
+      },
+    ],
+    tooltip: {
+      trigger: "axis",
+      formatter: (params) => {
+        const i = params?.[0]?.dataIndex ?? 0;
+        const day = xLabels[i] ?? "—";
+        const acc = n(chrono[i]?.rain_total);
+        const cum = n(rainCum[i]);
+        const rr = n(chrono[i]?.rainrate_max);
+        return [
+          `<b>Giorno ${day}</b>`,
+          `Accumulo: ${Number.isFinite(acc) ? acc.toFixed(1) + " mm" : "—"}`,
+          `Progressivo: ${Number.isFinite(cum) ? cum.toFixed(1) + " mm" : "—"}`,
+          `Rain rate max: ${Number.isFinite(rr) ? rr.toFixed(1) + " mm/h" : "—"}`,
+        ].join("<br/>");
+      },
+    },
+    series: [
+      { name: "Accumulo", type: "bar", data: seriesLine(rainDaily), yAxisIndex: 0 },
+      { name: "Progressivo", type: "line", data: seriesLine(rainCum), yAxisIndex: 0, showSymbol: false, connectNulls: false, lineStyle: { width: 2 } },
+      { name: "Rain rate max", type: "scatter", data: seriesLine(chrono.map((d) => d.rainrate_max)), yAxisIndex: 1, symbolSize: 7 },
+    ],
+  };
+
+  // 3) Umidità
+  const optRh = {
+    ...baseChart,
+    title: { ...baseChart.title, text: "Umidità" },
+    tooltip: {
+      trigger: "axis",
+      valueFormatter: (v) => (v == null ? "—" : `${Math.round(Number(v))} %`),
+    },
+    yAxis: { type: "value", name: "%", min: 0, max: 100, splitNumber: 5, axisLabel: { formatter: (v) => `${Math.round(Number(v))}` } },
+    series: [
+      { name: "UR min", type: "line", data: seriesLine(chrono.map((d) => getRhMin(d))), showSymbol: false, connectNulls: false, lineStyle: { width: 2 } },
+      { name: "UR media", type: "line", data: seriesLine(chrono.map((d) => getRhMean(d))), showSymbol: false, connectNulls: false, lineStyle: { width: 2 } },
+      { name: "UR max", type: "line", data: seriesLine(chrono.map((d) => getRhMax(d))), showSymbol: false, connectNulls: false, lineStyle: { width: 2 } },
+    ],
+  };
+
+  // 4) Vento (dir a punti)
+  const optWind = {
+    ...baseChart,
+    title: { ...baseChart.title, text: "Vento" },
+    yAxis: [
+      { type: "value", name: "km/h", scale: true, splitNumber: 5, alignTicks: true, axisLabel: { formatter: (v) => Number(v).toFixed(0) } },
+      { type: "value", name: "°", min: 0, max: 360, splitNumber: 5, alignTicks: true, axisLabel: { formatter: (v) => `${Math.round(Number(v))}` } },
+    ],
+    tooltip: {
+      trigger: "axis",
+      formatter: (params) => {
+        const i = params?.[0]?.dataIndex ?? 0;
+        const day = xLabels[i] ?? "—";
+        const wAvg = n(chrono[i]?.wind_avg);
+        const gust = n(chrono[i]?.gust_max);
+        const dir = n(chrono[i]?.wind_dir_mean_deg);
+        return [
+          `<b>Giorno ${day}</b>`,
+          `Vento medio: ${Number.isFinite(wAvg) ? wAvg.toFixed(1) + " km/h" : "—"}`,
+          `Raffica: ${Number.isFinite(gust) ? gust.toFixed(1) + " km/h" : "—"}`,
+          `Direzione media: ${Number.isFinite(dir) ? `${degToCardinal16(dir)} (${Math.round(dir)}°)` : "—"}`,
+        ].join("<br/>");
+      },
+    },
+    series: [
+      { name: "Vento medio", type: "line", data: seriesLine(chrono.map((d) => d.wind_avg)), yAxisIndex: 0, showSymbol: false, connectNulls: false, lineStyle: { width: 2 } },
+      { name: "Raffica", type: "line", data: seriesLine(chrono.map((d) => d.gust_max)), yAxisIndex: 0, showSymbol: false, connectNulls: false, lineStyle: { width: 2 } },
+      { name: "Direzione media", type: "scatter", data: seriesLine(chrono.map((d) => d.wind_dir_mean_deg)), yAxisIndex: 1, symbolSize: 7 },
+    ],
+  };
+
+  // 5) Pressione
+  const optPress = {
+    ...baseChart,
+    title: { ...baseChart.title, text: "Pressione" },
+    tooltip: { trigger: "axis", valueFormatter: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} hPa`) },
+    yAxis: { type: "value", name: "hPa", scale: true, splitNumber: 5, axisLabel: { formatter: (v) => Number(v).toFixed(0) } },
+    series: [
+      { name: "P min", type: "line", data: seriesLine(chrono.map((d) => d.press_min)), showSymbol: false, connectNulls: false, lineStyle: { width: 2 } },
+      { name: "P media", type: "line", data: seriesLine(chrono.map((d) => d.press_avg)), showSymbol: false, connectNulls: false, lineStyle: { width: 2 } },
+      { name: "P max", type: "line", data: seriesLine(chrono.map((d) => d.press_max)), showSymbol: false, connectNulls: false, lineStyle: { width: 2 } },
+    ],
+  };
+
+  // 6) UV e Rad: max + mean_pos (2 assi)
+  const optUvRad = {
+    ...baseChart,
+    title: { ...baseChart.title, text: "UV e Radiazione" },
+    yAxis: [
+      { type: "value", name: "UV", scale: true, splitNumber: 5, alignTicks: true, axisLabel: { formatter: (v) => Number(v).toFixed(1) } },
+      { type: "value", name: "W/m²", scale: true, splitNumber: 5, alignTicks: true, axisLabel: { formatter: (v) => String(Math.round(Number(v))) } },
+    ],
+    tooltip: {
+      trigger: "axis",
+      formatter: (params) => {
+        const i = params?.[0]?.dataIndex ?? 0;
+        const day = xLabels[i] ?? "—";
+        const uvM = n(chrono[i]?.uv_mean_pos);
+        const uvX = n(chrono[i]?.uv_max);
+        const solM = n(chrono[i]?.solar_mean_pos);
+        const solX = n(chrono[i]?.solar_max);
+        return [
+          `<b>Giorno ${day}</b>`,
+          `UV medio (>0): ${Number.isFinite(uvM) ? uvM.toFixed(1) : "—"}`,
+          `UV max: ${Number.isFinite(uvX) ? uvX.toFixed(1) : "—"}`,
+          `Rad media (>0): ${Number.isFinite(solM) ? Math.round(solM) + " W/m²" : "—"}`,
+          `Rad max: ${Number.isFinite(solX) ? Math.round(solX) + " W/m²" : "—"}`,
+        ].join("<br/>");
+      },
+    },
+    series: [
+      { name: "UV medio", type: "line", data: seriesLine(chrono.map((d) => d.uv_mean_pos)), yAxisIndex: 0, showSymbol: false, connectNulls: false, lineStyle: { width: 2 } },
+      { name: "UV max", type: "line", data: seriesLine(chrono.map((d) => d.uv_max)), yAxisIndex: 0, showSymbol: false, connectNulls: false, lineStyle: { width: 2 } },
+      { name: "Rad media", type: "line", data: seriesLine(chrono.map((d) => d.solar_mean_pos)), yAxisIndex: 1, showSymbol: false, connectNulls: false, lineStyle: { width: 2 } },
+      { name: "Rad max", type: "line", data: seriesLine(chrono.map((d) => d.solar_max)), yAxisIndex: 1, showSymbol: false, connectNulls: false, lineStyle: { width: 2 } },
+    ],
+  };
+
+  // -------------------- download --------------------
   function downloadCsv() {
     const cols = [
       "date",
       "tmin",
-      "tmax",
       "tmean",
-      "dewpoint_mean",
-      "rh_mean",
-      "wind_avg",
-      "wind_max",
-      "gust_max",
-      "press_avg",
-      "press_min",
-      "press_max",
+      "tmax",
       "rain_total",
       "rainrate_max",
+      "rh_min",
+      "rh_mean",
+      "rh_max",
+      "wind_avg",
+      "gust_max",
+      "wind_dir_mean_deg",
+      "press_min",
+      "press_avg",
+      "press_max",
+      "uv_mean_pos",
       "uv_max",
+      "solar_mean_pos",
       "solar_max",
     ];
 
@@ -222,7 +460,12 @@ export default function MonthPage(props) {
     const lines = sorted.map((d) =>
       cols
         .map((c) => {
-          const v = d[c];
+          let v = d[c];
+
+          if (c === "rh_min") v = Number.isFinite(getRhMin(d)) ? getRhMin(d) : v;
+          if (c === "rh_mean") v = Number.isFinite(getRhMean(d)) ? getRhMean(d) : v;
+          if (c === "rh_max") v = Number.isFinite(getRhMax(d)) ? getRhMax(d) : v;
+
           if (v === null || v === undefined) return "";
           const s = String(v).replaceAll('"', '""');
           return /[",\n]/.test(s) ? `"${s}"` : s;
@@ -291,8 +534,8 @@ export default function MonthPage(props) {
             <div className="value">{fmt(summary.meanT, 1)} °C</div>
           </div>
           <div className="card">
-            <div className="label">Escursione</div>
-            <div className="value">{fmt(summary.esc, 1)} °C</div>
+            <div className="label">UR media mese</div>
+            <div className="value">{fmtInt(summary.rhMean)} %</div>
           </div>
           <div className="card">
             <div className="label">Raffica max mese</div>
@@ -305,6 +548,29 @@ export default function MonthPage(props) {
         </div>
       </header>
 
+      {mounted && (
+        <section className="charts">
+          <div className="chartBox">
+            <ReactECharts option={optTemp} style={{ height: 250, width: "100%" }} />
+          </div>
+          <div className="chartBox">
+            <ReactECharts option={optRain} style={{ height: 250, width: "100%" }} />
+          </div>
+          <div className="chartBox">
+            <ReactECharts option={optRh} style={{ height: 250, width: "100%" }} />
+          </div>
+          <div className="chartBox">
+            <ReactECharts option={optWind} style={{ height: 250, width: "100%" }} />
+          </div>
+          <div className="chartBox">
+            <ReactECharts option={optPress} style={{ height: 250, width: "100%" }} />
+          </div>
+          <div className="chartBox">
+            <ReactECharts option={optUvRad} style={{ height: 250, width: "100%" }} />
+          </div>
+        </section>
+      )}
+
       <section className="toolbar">
         <div className="search">
           <span className="hint">Filtra per data</span>
@@ -312,8 +578,14 @@ export default function MonthPage(props) {
         </div>
 
         <div className="tools">
-          <button className="btn" onClick={() => setShowExtra(!showExtra)}>
-            {showExtra ? "Nascondi colonne extra" : "Mostra colonne extra"}
+          <button
+            className="btn"
+            onClick={() => {
+              setSortKey("date");
+              setSortDir("asc");
+            }}
+          >
+            Reset ordine (giorni)
           </button>
           <button className="btn primary" onClick={downloadCsv}>
             Scarica CSV (mese)
@@ -324,69 +596,148 @@ export default function MonthPage(props) {
       <section className="tableWrap">
         <table>
           <thead>
-            <tr>
-              <Th onClick={() => toggleSort("date")} active={sortKey === "date"} dir={sortDir}>
+            <tr className="groupRow">
+              <th className="group stickyHead bR" colSpan={1}>
                 Giorno
+              </th>
+              <th className="group temp bR" colSpan={3}>
+                Temperature
+              </th>
+              <th className="group rain bR" colSpan={2}>
+                Precipitazioni
+              </th>
+              <th className="group hum bR" colSpan={3}>
+                Umidità
+              </th>
+              <th className="group wind bR" colSpan={3}>
+                Vento
+              </th>
+              <th className="group press bR" colSpan={3}>
+                Pressione
+              </th>
+              <th className="group rad" colSpan={4}>
+                Rad/UV
+              </th>
+            </tr>
+
+            <tr className="colRow">
+              <Th onClick={() => toggleSort("date")} active={sortKey === "date"} dir={sortDir} className="bR stickyHead" title="Ordina per giorno">
+                {"\u00A0"}
               </Th>
+
               <Th onClick={() => toggleSort("tmin")} active={sortKey === "tmin"} dir={sortDir}>
-                Tmin
-              </Th>
-              <Th onClick={() => toggleSort("tmax")} active={sortKey === "tmax"} dir={sortDir}>
-                Tmax
+                Min
               </Th>
               <Th onClick={() => toggleSort("tmean")} active={sortKey === "tmean"} dir={sortDir}>
-                Tmedia
+                Media
               </Th>
+              <Th onClick={() => toggleSort("tmax")} active={sortKey === "tmax"} dir={sortDir} className="bR">
+                Max
+              </Th>
+
               <Th onClick={() => toggleSort("rain_total")} active={sortKey === "rain_total"} dir={sortDir}>
                 Pioggia
               </Th>
+              <Th onClick={() => toggleSort("rainrate_max")} active={sortKey === "rainrate_max"} dir={sortDir} className="bR">
+                Rate max
+              </Th>
 
-              {showExtra && (
-                <>
-                  <Th onClick={() => toggleSort("gust_max")} active={sortKey === "gust_max"} dir={sortDir}>
-                    Raffica max
-                  </Th>
-                  <Th onClick={() => toggleSort("press_avg")} active={sortKey === "press_avg"} dir={sortDir}>
-                    Press. media
-                  </Th>
-                  <Th onClick={() => toggleSort("wind_avg")} active={sortKey === "wind_avg"} dir={sortDir}>
-                    Vento medio
-                  </Th>
-                  <Th onClick={() => toggleSort("wind_max")} active={sortKey === "wind_max"} dir={sortDir}>
-                    Vento max
-                  </Th>
-                </>
-              )}
+              <Th onClick={() => toggleSort("rh_min")} active={sortKey === "rh_min"} dir={sortDir}>
+                Min
+              </Th>
+              <Th onClick={() => toggleSort("rh_mean")} active={sortKey === "rh_mean"} dir={sortDir}>
+                Media
+              </Th>
+              <Th onClick={() => toggleSort("rh_max")} active={sortKey === "rh_max"} dir={sortDir} className="bR">
+                Max
+              </Th>
+
+              <Th onClick={() => toggleSort("wind_avg")} active={sortKey === "wind_avg"} dir={sortDir}>
+                Medio
+              </Th>
+              <Th onClick={() => toggleSort("gust_max")} active={sortKey === "gust_max"} dir={sortDir}>
+                Raffica
+              </Th>
+              <Th onClick={() => toggleSort("wind_dir_mean_deg")} active={sortKey === "wind_dir_mean_deg"} dir={sortDir} className="bR">
+                Dir media
+              </Th>
+
+              <Th onClick={() => toggleSort("press_min")} active={sortKey === "press_min"} dir={sortDir}>
+                Min
+              </Th>
+              <Th onClick={() => toggleSort("press_avg")} active={sortKey === "press_avg"} dir={sortDir}>
+                Media
+              </Th>
+              <Th onClick={() => toggleSort("press_max")} active={sortKey === "press_max"} dir={sortDir} className="bR">
+                Max
+              </Th>
+
+              <Th onClick={() => toggleSort("uv_mean_pos")} active={sortKey === "uv_mean_pos"} dir={sortDir}>
+                UV medio
+              </Th>
+              <Th onClick={() => toggleSort("uv_max")} active={sortKey === "uv_max"} dir={sortDir}>
+                UV max
+              </Th>
+              <Th onClick={() => toggleSort("solar_mean_pos")} active={sortKey === "solar_mean_pos"} dir={sortDir}>
+                Rad media
+              </Th>
+              <Th onClick={() => toggleSort("solar_max")} active={sortKey === "solar_max"} dir={sortDir}>
+                Rad max
+              </Th>
             </tr>
           </thead>
 
           <tbody>
-            {sorted.map((d) => (
-              <tr key={d.date}>
-                <td className="date sticky">
-                  <Link href={`/giorni/${d.date}`}>{dayOfMonthLabel(d.date)}</Link>
-                </td>
-                <td>{fmt(d.tmin, 1)} °C</td>
-                <td>{fmt(d.tmax, 1)} °C</td>
-                <td className="strong">{fmt(d.tmean, 1)} °C</td>
-                <td className={Number.isFinite(n(d.rain_total)) && n(d.rain_total) > 0 ? "rainy" : ""}>
-                  {fmt(d.rain_total, 1)} mm
-                </td>
+            {sorted.map((d) => {
+              const rhMin = getRhMin(d);
+              const rhMean = getRhMean(d);
+              const rhMax = getRhMax(d);
 
-                {showExtra && (
-                  <>
-                    <td>{fmt(d.gust_max, 1)} km/h</td>
-                    <td>{fmt(d.press_avg, 1)} hPa</td>
-                    <td>{fmt(d.wind_avg, 1)} km/h</td>
-                    <td>{fmt(d.wind_max, 1)} km/h</td>
-                  </>
-                )}
-              </tr>
-            ))}
+              const hasRain = Number.isFinite(n(d.rain_total)) && n(d.rain_total) > 0;
+              const hasRR = Number.isFinite(n(d.rainrate_max)) && n(d.rainrate_max) > 0;
+
+              const dirDeg = n(d.wind_dir_mean_deg);
+              const dirTxt = Number.isFinite(dirDeg) ? degToCardinal16(dirDeg) : "—";
+
+              return (
+                <tr key={d.date}>
+                  <td className="date sticky bR">
+                    <Link href={`/giorni/${d.date}`}>{dayOfMonthLabel(d.date)}</Link>
+                  </td>
+
+                  <td>{fmt(d.tmin, 1)} °C</td>
+                  <td className="strong">{fmt(d.tmean, 1)} °C</td>
+                  <td className="bR">{fmt(d.tmax, 1)} °C</td>
+
+                  <td className={hasRain ? "rainy" : ""}>{fmt(d.rain_total, 1)} mm</td>
+                  <td className={`bR ${hasRR ? "rainy" : ""}`}>{fmt(d.rainrate_max, 1)} mm/h</td>
+
+                  <td>{Number.isFinite(rhMin) ? `${Math.round(rhMin)} %` : "—"}</td>
+                  <td className="strong">{Number.isFinite(rhMean) ? `${Math.round(rhMean)} %` : "—"}</td>
+                  <td className="bR">{Number.isFinite(rhMax) ? `${Math.round(rhMax)} %` : "—"}</td>
+
+                  <td>{fmt(d.wind_avg, 1)} km/h</td>
+                  <td>{fmt(d.gust_max, 1)} km/h</td>
+                  <td className="bR">
+                    {dirTxt}
+                    {Number.isFinite(dirDeg) ? <span style={{ opacity: 0.65 }}> ({Math.round(dirDeg)}°)</span> : null}
+                  </td>
+
+                  <td>{fmt(d.press_min, 1)} hPa</td>
+                  <td>{fmt(d.press_avg, 1)} hPa</td>
+                  <td className="bR">{fmt(d.press_max, 1)} hPa</td>
+
+                  <td>{fmt(d.uv_mean_pos, 1)}</td>
+                  <td>{fmt(d.uv_max, 1)}</td>
+                  <td>{Number.isFinite(n(d.solar_mean_pos)) ? `${Math.round(n(d.solar_mean_pos))} W/m²` : "—"}</td>
+                  <td>{Number.isFinite(n(d.solar_max)) ? `${Math.round(n(d.solar_max))} W/m²` : "—"}</td>
+                </tr>
+              );
+            })}
 
             {!sorted.length && (
               <tr>
-                <td colSpan={showExtra ? 10 : 6} className="empty">
+                <td colSpan={18} className="empty">
                   Nessun dato per il filtro corrente.
                 </td>
               </tr>
@@ -397,9 +748,9 @@ export default function MonthPage(props) {
 
       <style jsx>{`
         .wrap {
-          max-width: 1180px;
+          max-width: 1280px;
           margin: 0 auto;
-          padding: 18px 16px 50px;
+          padding: 18px 10px 50px;
           background: #fff;
         }
 
@@ -500,6 +851,18 @@ export default function MonthPage(props) {
           font-weight: 800;
         }
 
+        .charts {
+          margin-top: 12px;
+          display: grid;
+          gap: 12px;
+        }
+        .chartBox {
+          border: 1px solid #e7e7e7;
+          border-radius: 16px;
+          padding: 8px;
+          background: #fff;
+        }
+
         .toolbar {
           margin-top: 14px;
           display: flex;
@@ -566,29 +929,53 @@ export default function MonthPage(props) {
         table {
           width: 100%;
           border-collapse: collapse;
-          min-width: 980px;
+          min-width: 1620px;
         }
 
-        /* >>> Allineamento coerente: tutto centrato (header + celle) */
         thead th {
           position: sticky;
           top: 0;
           background: #fff;
           border-bottom: 1px solid #e7e7e7;
-          font-size: 12px;
+          font-size: 11px;
           text-transform: uppercase;
           letter-spacing: 0.08em;
-          opacity: 0.75;
+          opacity: 0.85;
           padding: 10px 10px;
           text-align: center;
           white-space: nowrap;
           user-select: none;
         }
+
+        .groupRow th {
+          font-size: 11px;
+          letter-spacing: 0.12em;
+          opacity: 0.9;
+          border-bottom: 0;
+          padding: 12px 10px 12px;
+          background: #fbfbfb;
+        }
+        .colRow th {
+          top: 44px;
+          background: #fff;
+          border-top: 1px solid #efefef;
+          padding-top: 12px;
+        }
+
+        .group {
+          font-weight: 950;
+        }
+
         tbody td {
           border-bottom: 1px solid #f1f1f1;
-          padding: 12px 10px;
+          padding: 9px 10px;
           white-space: nowrap;
           text-align: center;
+          font-size: 13px;
+        }
+
+        .bR {
+          border-right: 1px solid #e9e9e9;
         }
 
         tbody tr:hover td {
@@ -598,17 +985,35 @@ export default function MonthPage(props) {
           background: #fcfcfc;
         }
 
-        /* >>> colonna sticky: mantiene posizione ma contenuto centrato */
         .sticky {
           position: sticky;
           left: 0;
-          z-index: 2;
-          background: inherit;
+          z-index: 10;
+          background: #fff;
+          box-shadow: 2px 0 0 #e9e9e9;
         }
+        tbody tr:nth-child(even) td.sticky {
+          background: #fcfcfc;
+        }
+        tbody tr:hover td.sticky {
+          background: #fafafa;
+        }
+
+        .stickyHead {
+          position: sticky;
+          left: 0;
+          z-index: 20;
+          background: #fbfbfb;
+          box-shadow: 2px 0 0 #e9e9e9;
+        }
+        .colRow .stickyHead {
+          background: #fff;
+        }
+
         .date a {
           color: #111;
           text-decoration: none;
-          font-weight: 800;
+          font-weight: 900;
           display: inline-block;
           width: 100%;
           text-align: center;
@@ -618,15 +1023,16 @@ export default function MonthPage(props) {
         }
 
         .strong {
-          font-weight: 800;
+          font-weight: 900;
         }
         .rainy {
-          font-weight: 800;
+          font-weight: 900;
         }
         .empty {
           padding: 18px 10px;
           opacity: 0.7;
           text-align: center;
+          font-size: 13px;
         }
 
         @media (max-width: 980px) {
@@ -639,9 +1045,9 @@ export default function MonthPage(props) {
   );
 }
 
-function Th({ children, onClick, active, dir }) {
+function Th({ children, onClick, active, dir, className, title }) {
   return (
-    <th onClick={onClick} style={{ cursor: "pointer" }}>
+    <th onClick={onClick} className={className} style={{ cursor: "pointer" }} title={title}>
       <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
         {children}
         {active ? <span style={{ opacity: 0.6 }}>{dir === "asc" ? "▲" : "▼"}</span> : <span style={{ opacity: 0.25 }}>↕</span>}

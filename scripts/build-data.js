@@ -15,7 +15,7 @@ const RAIN_TICK_MM = 0.2;
 // watch debounce (ms)
 const WATCH_DEBOUNCE_MS = 600;
 
-// >>> NEW: qualità medie giornaliere (15-min)
+// qualità medie giornaliere (15-min)
 const QH_PER_DAY = 96; // 24h * 4
 const MIN_COVERAGE = 0.9; // 90%
 const MIN_SAMPLES_FOR_MEAN = Math.ceil(QH_PER_DAY * MIN_COVERAGE); // 87
@@ -77,10 +77,26 @@ function sniffDelimiter(text) {
   return ",";
 }
 
+// parse robusto anche con unità tipo "76%" "1013.2 hPa" "12.3 °C"
 function toNum(x) {
   if (x === "" || x === null || x === undefined) return NaN;
-  const s = String(x).trim();
+  let s = String(x).trim();
   if (!s) return NaN;
+
+  if (s === "-" || s === "—") return NaN;
+
+  s = s
+    .replaceAll("%", "")
+    .replaceAll("°C", "")
+    .replaceAll("°", "")
+    .replaceAll("km/h", "")
+    .replaceAll("mm/h", "")
+    .replaceAll("mm", "")
+    .replaceAll("hPa", "")
+    .replaceAll("W/m²", "")
+    .replaceAll("W/m2", "")
+    .trim();
+
   const n = Number(s.replace(",", "."));
   return Number.isFinite(n) ? n : NaN;
 }
@@ -96,10 +112,16 @@ function mean(vals) {
   return v.reduce((s, x) => s + x, 0) / v.length;
 }
 
-// >>> NEW: mean con soglia minima campioni (se sotto soglia => null)
 function meanMin(vals, minCount = MIN_SAMPLES_FOR_MEAN) {
   const v = (vals || []).filter(Number.isFinite);
   if (v.length < minCount) return null;
+  return v.reduce((s, x) => s + x, 0) / v.length;
+}
+
+// media solo dei valori > 0 (se nessun valore > 0 => null)
+function meanPositive(vals) {
+  const v = (vals || []).filter((x) => Number.isFinite(x) && x > 0);
+  if (!v.length) return null;
   return v.reduce((s, x) => s + x, 0) / v.length;
 }
 
@@ -234,49 +256,13 @@ function cardinalToDeg(txt) {
   const alias = { NORTH: "N", SOUTH: "S", EAST: "E", WEST: "W" };
   const s = alias[raw] || raw;
 
-  const order = [
-    "N",
-    "NNW",
-    "NW",
-    "WNW",
-    "W",
-    "WSW",
-    "SW",
-    "SSW",
-    "S",
-    "SSE",
-    "SE",
-    "ESE",
-    "E",
-    "ENE",
-    "NE",
-    "NNE",
-  ];
-
+  const order = ["N", "NNW", "NW", "WNW", "W", "WSW", "SW", "SSW", "S", "SSE", "SE", "ESE", "E", "ENE", "NE", "NNE"];
   const idx = order.indexOf(s);
   if (idx === -1) return null;
 
   return idx * CARDINAL_STEP_DEG;
 }
 
-function circularMeanDeg(degs) {
-  const vals = (degs || []).filter((d) => Number.isFinite(d));
-  if (!vals.length) return null;
-
-  let sx = 0;
-  let sy = 0;
-  for (const d of vals) {
-    const rad = (d * Math.PI) / 180;
-    sx += Math.cos(rad);
-    sy += Math.sin(rad);
-  }
-  const meanRad = Math.atan2(sy / vals.length, sx / vals.length);
-  let meanDeg = (meanRad * 180) / Math.PI;
-  if (meanDeg < 0) meanDeg += 360;
-  return meanDeg;
-}
-
-// >>> NEW: circular mean con soglia minima campioni
 function circularMeanDegMin(degs, minCount = MIN_SAMPLES_FOR_MEAN) {
   const vals = (degs || []).filter((d) => Number.isFinite(d));
   if (vals.length < minCount) return null;
@@ -353,7 +339,6 @@ function buildOnce() {
     ensureDir(path.join(ROOT, "data"));
     ensureDir(OUT_INTRADAY_DIR);
 
-    // ricrea sempre intraday per coerenza (semplice e robusto)
     clearIntradayJson(OUT_INTRADAY_DIR);
 
     const files = listFiles(IN_DIR);
@@ -401,16 +386,12 @@ function buildOnce() {
     for (const date of datesSorted) {
       const rows = byDate.get(date);
 
-      // >>> FIX: ordinamento robusto per time
-      const obs = rows
-        .filter(isObsRow)
-        .sort((a, b) => String(a.time).localeCompare(String(b.time)));
-
+      const obs = rows.filter(isObsRow).sort((a, b) => String(a.time).localeCompare(String(b.time)));
       const ovr = rows.filter(isOvrRow);
 
       const override = {};
       for (const r of ovr) {
-        const k = String(r.key).trim();
+        const k = normKey(r.key);
         const v = toNum(r.value);
         if (k && Number.isFinite(v)) override[k] = v;
       }
@@ -431,20 +412,24 @@ function buildOnce() {
       const tmin_calc = minv(tvals);
       const tmax_calc = maxv(tvals);
 
-      // >>> CHANGE: medie giornaliere solo se coverage >= 90% (~87 quarti d'ora)
+      // medie con coverage (come prima)
       const tmean = meanMin(tvals);
       const dewpoint_mean = meanMin(dpvals);
       const rh_mean = meanMin(rhvals);
       const wind_avg = meanMin(wvals);
       const press_avg = meanMin(pvals);
 
-      // max/min restano liberi (basta 1 campione)
+      // umidità min/max dai 15 minuti (basta 1 campione valido)
+      const rh_min = minv(rhvals);
+      const rh_max = maxv(rhvals);
+
+      // max/min (basta 1 campione)
       const wind_max = maxv(wvals);
       const gust_max_calc = maxv(gvals);
       const press_min = minv(pvals);
       const press_max = maxv(pvals);
 
-      // >>> CHANGE: direzione media solo se coverage >= 90%
+      // direzione media con coverage
       const wind_dir_mean_calc = circularMeanDegMin(dvals);
 
       let deltas15 = [];
@@ -455,7 +440,6 @@ function buildOnce() {
         rain_total_calc = deltas15.reduce((s, x) => s + x, 0);
       }
 
-      // rain totals: se manca intraday, devono restare null (a meno di OVR)
       const rain_total_ovr = pickOverrideNumber(override, "rain_total", "rain_total_mm");
       const rain_total = rain_total_ovr !== null ? rain_total_ovr : rain_total_calc;
 
@@ -471,40 +455,55 @@ function buildOnce() {
       const uv_max = maxv(uvvals);
       const solar_max = maxv(solvals);
 
+      // >>> NEW: medie diurne/attive: solo quando > 0
+      const uv_mean_pos = meanPositive(uvvals);
+      const solar_mean_pos = meanPositive(solvals);
+
       const tmin = Number.isFinite(override.tmin) ? override.tmin : tmin_calc;
       const tmax = Number.isFinite(override.tmax) ? override.tmax : tmax_calc;
 
       const gust_max = Number.isFinite(override.gustmax) ? override.gustmax : gust_max_calc;
-      const rainrate_max = Number.isFinite(override.rainrate_max) ? override.rainrate_max : rainrate_max_calc;
 
-      // se OVR wind_dir_mean_deg esiste, prevale; altrimenti usa quella calcolata (che ora può essere null per coverage)
-      const wind_dir_mean_deg = Number.isFinite(override.wind_dir_mean_deg)
-        ? override.wind_dir_mean_deg
-        : wind_dir_mean_calc;
+      const rainrate_max_ovr = pickOverrideNumber(
+        override,
+        "rainrate_max",
+        "rain_rate_max",
+        "rain_r_max",
+        "rain_rate_mmph_max"
+      );
+      const rainrate_max = rainrate_max_ovr !== null ? rainrate_max_ovr : rainrate_max_calc;
+
+      const wind_dir_mean_deg = Number.isFinite(override.wind_dir_mean_deg) ? override.wind_dir_mean_deg : wind_dir_mean_calc;
 
       daily.push({
         date,
 
-        // da OVR o obs
         tmin,
         tmax,
         gust_max,
         rainrate_max,
         wind_dir_mean_deg,
 
-        // SOLO da obs (se manca obs => null) + ora anche quality gate 90%
         tmean,
         dewpoint_mean,
         rh_mean,
+        rh_min,
+        rh_max,
+
         wind_avg,
         wind_max,
+
         press_avg,
         press_min,
         press_max,
+
         uv_max,
         solar_max,
 
-        // pioggia: OVR (se presente) altrimenti da obs; se manca tutto => null
+        // >>> NEW
+        uv_mean_pos,
+        solar_mean_pos,
+
         rain_total,
         rain_15m_max,
         rain_30m_max,
@@ -514,9 +513,7 @@ function buildOnce() {
         rain_12h_max,
         rain_24h_max,
 
-        // utile per debug/UI
         has_obs: hasObs,
-        // >>> NEW: utile per capire perché una media è null
         obs_count: obs.length,
         mean_min_samples: MIN_SAMPLES_FOR_MEAN,
       });
