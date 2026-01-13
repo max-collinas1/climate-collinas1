@@ -320,9 +320,27 @@ function rollingMaxSum(arr, win) {
   return max;
 }
 
-function pickOverrideNumber(override, ...keys) {
+function pickOverrideNumber(overrideNum, ...keys) {
   for (const k of keys) {
-    if (Number.isFinite(override[k])) return override[k];
+    if (Number.isFinite(overrideNum[k])) return overrideNum[k];
+  }
+  return null;
+}
+
+// direzione: prova numerico -> prova testuale (cardinale)
+function pickOverrideDirDeg(overrideNum, overrideStr, ...keys) {
+  for (const k of keys) {
+    if (Number.isFinite(overrideNum[k])) return overrideNum[k];
+  }
+  for (const k of keys) {
+    const s = overrideStr[k];
+    if (typeof s === "string" && s.trim()) {
+      const d = cardinalToDeg(s);
+      if (Number.isFinite(d)) return d;
+      // se per caso arriva "286.4" come stringa, riprova numerico
+      const n = toNum(s);
+      if (Number.isFinite(n)) return n;
+    }
   }
   return null;
 }
@@ -389,11 +407,17 @@ function buildOnce() {
       const obs = rows.filter(isObsRow).sort((a, b) => String(a.time).localeCompare(String(b.time)));
       const ovr = rows.filter(isOvrRow);
 
-      const override = {};
+      // OVR: salva sia numerico sia stringa (serve per direzione tipo "ESE")
+      const overrideNum = {};
+      const overrideStr = {};
       for (const r of ovr) {
         const k = normKey(r.key);
-        const v = toNum(r.value);
-        if (k && Number.isFinite(v)) override[k] = v;
+        const raw = r.value === null || r.value === undefined ? "" : String(r.value).trim();
+        if (!k) continue;
+        overrideStr[k] = raw;
+
+        const v = toNum(raw);
+        if (Number.isFinite(v)) overrideNum[k] = v;
       }
 
       const hasObs = obs.length > 0;
@@ -412,18 +436,18 @@ function buildOnce() {
       const tmin_calc = minv(tvals);
       const tmax_calc = maxv(tvals);
 
-      // medie con coverage (come prima)
+      // medie con coverage
       const tmean = meanMin(tvals);
       const dewpoint_mean = meanMin(dpvals);
       const rh_mean = meanMin(rhvals);
       const wind_avg = meanMin(wvals);
       const press_avg = meanMin(pvals);
 
-      // umidità min/max dai 15 minuti (basta 1 campione valido)
+      // umidità min/max
       const rh_min = minv(rhvals);
       const rh_max = maxv(rhvals);
 
-      // max/min (basta 1 campione)
+      // max/min
       const wind_max = maxv(wvals);
       const gust_max_calc = maxv(gvals);
       const press_min = minv(pvals);
@@ -440,7 +464,7 @@ function buildOnce() {
         rain_total_calc = deltas15.reduce((s, x) => s + x, 0);
       }
 
-      const rain_total_ovr = pickOverrideNumber(override, "rain_total", "rain_total_mm");
+      const rain_total_ovr = pickOverrideNumber(overrideNum, "rain_total", "rain_total_mm");
       const rain_total = rain_total_ovr !== null ? rain_total_ovr : rain_total_calc;
 
       const rain_15m_max = hasObs ? maxv(deltas15) : null;
@@ -455,17 +479,17 @@ function buildOnce() {
       const uv_max = maxv(uvvals);
       const solar_max = maxv(solvals);
 
-      // >>> NEW: medie diurne/attive: solo quando > 0
+      // medie solo quando > 0
       const uv_mean_pos = meanPositive(uvvals);
       const solar_mean_pos = meanPositive(solvals);
 
-      const tmin = Number.isFinite(override.tmin) ? override.tmin : tmin_calc;
-      const tmax = Number.isFinite(override.tmax) ? override.tmax : tmax_calc;
+      const tmin = Number.isFinite(overrideNum.tmin) ? overrideNum.tmin : tmin_calc;
+      const tmax = Number.isFinite(overrideNum.tmax) ? overrideNum.tmax : tmax_calc;
 
-      const gust_max = Number.isFinite(override.gustmax) ? override.gustmax : gust_max_calc;
+      const gust_max = Number.isFinite(overrideNum.gustmax) ? overrideNum.gustmax : gust_max_calc;
 
       const rainrate_max_ovr = pickOverrideNumber(
-        override,
+        overrideNum,
         "rainrate_max",
         "rain_rate_max",
         "rain_r_max",
@@ -473,7 +497,19 @@ function buildOnce() {
       );
       const rainrate_max = rainrate_max_ovr !== null ? rainrate_max_ovr : rainrate_max_calc;
 
-      const wind_dir_mean_deg = Number.isFinite(override.wind_dir_mean_deg) ? override.wind_dir_mean_deg : wind_dir_mean_calc;
+      // ✅ QUI: direzione media OVR può essere sia numerica che testuale (ESE, WNW, ecc.)
+      // accetto anche key "direction" perché spesso nei tuoi file compare così
+      const wind_dir_mean_deg_ovr = pickOverrideDirDeg(
+        overrideNum,
+        overrideStr,
+        "wind_dir_mean_deg",
+        "wind_dir_mean",
+        "wind_dir_mean_direction",
+        "direction",
+        "dir_mean"
+      );
+      const wind_dir_mean_deg =
+        wind_dir_mean_deg_ovr !== null ? wind_dir_mean_deg_ovr : wind_dir_mean_calc;
 
       daily.push({
         date,
@@ -500,7 +536,6 @@ function buildOnce() {
         uv_max,
         solar_max,
 
-        // >>> NEW
         uv_mean_pos,
         solar_mean_pos,
 
