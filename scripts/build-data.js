@@ -106,12 +106,6 @@ function numOrNull(x) {
   return Number.isFinite(n) ? n : null;
 }
 
-function mean(vals) {
-  const v = (vals || []).filter(Number.isFinite);
-  if (!v.length) return null;
-  return v.reduce((s, x) => s + x, 0) / v.length;
-}
-
 function meanMin(vals, minCount = MIN_SAMPLES_FOR_MEAN) {
   const v = (vals || []).filter(Number.isFinite);
   if (v.length < minCount) return null;
@@ -232,11 +226,48 @@ function mapHeaders(obj) {
   return out;
 }
 
+// ==================== CSV read (robusto) ====================
+const DEFAULT_COLUMNS_NO_HEADER = [
+  "date",
+  "time",
+  "temp_c",
+  "dewpoint_c",
+  "rh_pct",
+  "wind_dir_txt",
+  "wind_kmh",
+  "gust_kmh",
+  "press_hpa",
+  "rain_rate_mmph",
+  "rain_acc_mm",
+  "uv",
+  "solar_wm2",
+  "key",
+  "value",
+];
+
+function isNoHeaderParsedWrong(rowsParsed) {
+  if (!rowsParsed || !rowsParsed.length) return false;
+  const first = rowsParsed[0];
+  const keys = Object.keys(first || {});
+  if (!keys.length) return false;
+
+  const k0 = String(keys[0] || "").trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(k0)) return true;
+
+  const normKeys = keys.map(normKey);
+  const hasDate = normKeys.includes("date");
+  const hasTime = normKeys.includes("time");
+  if (!hasDate || !hasTime) {
+    if (keys.some((k) => /^\d{4}-\d{2}-\d{2}$/.test(String(k).trim()))) return true;
+  }
+  return false;
+}
+
 function readCsv(filePath) {
   const txt = fs.readFileSync(filePath, "utf8");
   const delimiter = sniffDelimiter(txt);
 
-  const rows = parse(txt, {
+  let rows = parse(txt, {
     columns: true,
     skip_empty_lines: true,
     trim: true,
@@ -245,10 +276,22 @@ function readCsv(filePath) {
     relax_quotes: true,
   });
 
+  if (isNoHeaderParsedWrong(rows)) {
+    rows = parse(txt, {
+      columns: DEFAULT_COLUMNS_NO_HEADER,
+      skip_empty_lines: true,
+      trim: true,
+      delimiter,
+      relax_column_count: true,
+      relax_quotes: true,
+    });
+  }
+
   return rows.map(mapHeaders);
 }
 
 // ==================== meteo helpers ====================
+// ✅ FIX: ordine corretto (senso orario meteorologico)
 function cardinalToDeg(txt) {
   const raw = String(txt || "").trim().toUpperCase();
   if (!raw) return null;
@@ -256,7 +299,14 @@ function cardinalToDeg(txt) {
   const alias = { NORTH: "N", SOUTH: "S", EAST: "E", WEST: "W" };
   const s = alias[raw] || raw;
 
-  const order = ["N", "NNW", "NW", "WNW", "W", "WSW", "SW", "SSW", "S", "SSE", "SE", "ESE", "E", "ENE", "NE", "NNE"];
+  // N=0, E=90, S=180, W=270
+  const order = [
+    "N", "NNE", "NE", "ENE",
+    "E", "ESE", "SE", "SSE",
+    "S", "SSW", "SW", "WSW",
+    "W", "WNW", "NW", "NNW",
+  ];
+
   const idx = order.indexOf(s);
   if (idx === -1) return null;
 
@@ -327,7 +377,6 @@ function pickOverrideNumber(overrideNum, ...keys) {
   return null;
 }
 
-// direzione: prova numerico -> prova testuale (cardinale)
 function pickOverrideDirDeg(overrideNum, overrideStr, ...keys) {
   for (const k of keys) {
     if (Number.isFinite(overrideNum[k])) return overrideNum[k];
@@ -337,7 +386,6 @@ function pickOverrideDirDeg(overrideNum, overrideStr, ...keys) {
     if (typeof s === "string" && s.trim()) {
       const d = cardinalToDeg(s);
       if (Number.isFinite(d)) return d;
-      // se per caso arriva "286.4" come stringa, riprova numerico
       const n = toNum(s);
       if (Number.isFinite(n)) return n;
     }
@@ -376,6 +424,7 @@ function buildOnce() {
       r.date = normalizeDate(r.date);
       r.time = normalizeTime(r.time);
 
+      // se manca il numerico, lo calcolo dal testuale (NW/WEST/...)
       if (!Number.isFinite(toNum(r.wind_dir_deg))) {
         const fromCard = cardinalToDeg(r.wind_dir_txt);
         if (Number.isFinite(fromCard)) r.wind_dir_deg = fromCard;
@@ -407,7 +456,6 @@ function buildOnce() {
       const obs = rows.filter(isObsRow).sort((a, b) => String(a.time).localeCompare(String(b.time)));
       const ovr = rows.filter(isOvrRow);
 
-      // OVR: salva sia numerico sia stringa (serve per direzione tipo "ESE")
       const overrideNum = {};
       const overrideStr = {};
       for (const r of ovr) {
@@ -436,24 +484,20 @@ function buildOnce() {
       const tmin_calc = minv(tvals);
       const tmax_calc = maxv(tvals);
 
-      // medie con coverage
       const tmean = meanMin(tvals);
       const dewpoint_mean = meanMin(dpvals);
       const rh_mean = meanMin(rhvals);
       const wind_avg = meanMin(wvals);
       const press_avg = meanMin(pvals);
 
-      // umidità min/max
       const rh_min = minv(rhvals);
       const rh_max = maxv(rhvals);
 
-      // max/min
       const wind_max = maxv(wvals);
       const gust_max_calc = maxv(gvals);
       const press_min = minv(pvals);
       const press_max = maxv(pvals);
 
-      // direzione media con coverage
       const wind_dir_mean_calc = circularMeanDegMin(dvals);
 
       let deltas15 = [];
@@ -479,7 +523,6 @@ function buildOnce() {
       const uv_max = maxv(uvvals);
       const solar_max = maxv(solvals);
 
-      // medie solo quando > 0
       const uv_mean_pos = meanPositive(uvvals);
       const solar_mean_pos = meanPositive(solvals);
 
@@ -497,8 +540,6 @@ function buildOnce() {
       );
       const rainrate_max = rainrate_max_ovr !== null ? rainrate_max_ovr : rainrate_max_calc;
 
-      // ✅ QUI: direzione media OVR può essere sia numerica che testuale (ESE, WNW, ecc.)
-      // accetto anche key "direction" perché spesso nei tuoi file compare così
       const wind_dir_mean_deg_ovr = pickOverrideDirDeg(
         overrideNum,
         overrideStr,
@@ -508,8 +549,7 @@ function buildOnce() {
         "direction",
         "dir_mean"
       );
-      const wind_dir_mean_deg =
-        wind_dir_mean_deg_ovr !== null ? wind_dir_mean_deg_ovr : wind_dir_mean_calc;
+      const wind_dir_mean_deg = wind_dir_mean_deg_ovr !== null ? wind_dir_mean_deg_ovr : wind_dir_mean_calc;
 
       daily.push({
         date,

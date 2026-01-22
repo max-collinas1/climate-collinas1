@@ -140,20 +140,7 @@ function circMeanDeg(arr) {
   return ((deg % 360) + 360) % 360;
 }
 
-const MONTHS_IT_FULL = [
-  "Gennaio",
-  "Febbraio",
-  "Marzo",
-  "Aprile",
-  "Maggio",
-  "Giugno",
-  "Luglio",
-  "Agosto",
-  "Settembre",
-  "Ottobre",
-  "Novembre",
-  "Dicembre",
-];
+const MONTHS_IT_FULL = ["Gennaio", "Febbraio", "Marzo", "Aprile", "Maggio", "Giugno", "Luglio", "Agosto", "Settembre", "Ottobre", "Novembre", "Dicembre"];
 function monthFullFromMm(mm) {
   const m = Number(mm);
   return MONTHS_IT_FULL[m - 1] || mm;
@@ -174,6 +161,7 @@ function degToCardinal16(v) {
   const ix = Math.round(d / 22.5) % 16;
   return ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"][ix];
 }
+const DIR_CATS_16 = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"];
 
 // umidità
 function getRhMin(d) {
@@ -201,6 +189,15 @@ function getRhMean(d) {
 // serie con null per buchi
 function seriesLine(arr) {
   return arr.map((v) => (Number.isFinite(n(v)) ? n(v) : null));
+}
+
+// serie category (stringhe) con null per buchi
+function seriesCat(arr) {
+  return arr.map((v) => {
+    if (v === null || v === undefined) return null;
+    const s = String(v);
+    return s && s !== "—" ? s : null;
+  });
 }
 
 // progressivo
@@ -283,13 +280,16 @@ export default function MonthPage(props) {
     return { ndays: days.length, minT, maxT, meanT, rainSum, rainyDays, gustMax, pressMean, rhMean };
   }, [days]);
 
-  // ---- riga riepilogo: medie mensili
+  // ---- riga riepilogo: (pioggia = TOTALE mensile, non media)
   const monthAvgRow = useMemo(() => {
     const tmin = avgFinite(days.map((d) => d.tmin));
     const tmean = avgFinite(days.map((d) => d.tmean));
     const tmax = avgFinite(days.map((d) => d.tmax));
 
-    const rain_total = avgFinite(days.map((d) => d.rain_total));
+    // >>> MODIFICA: totale mensile
+    const rain_total = sumFinite(days.map((d) => d.rain_total));
+
+    // lascio invariato (media dei rain-rate max giornalieri)
     const rainrate_max = avgFinite(days.map((d) => d.rainrate_max));
 
     const rh_min = avgFinite(days.map((d) => getRhMin(d)));
@@ -401,12 +401,24 @@ export default function MonthPage(props) {
     ],
   };
 
+  // ---- vento: asse destro in LETTERE (categoria), non in gradi
+  const windDirLetters = chrono.map((d) => {
+    const deg = n(d?.wind_dir_mean_deg);
+    return Number.isFinite(deg) ? degToCardinal16(deg) : null;
+  });
+
   const optWind = {
     ...baseChart,
     title: { ...baseChart.title, text: "Vento" },
     yAxis: [
       { type: "value", name: "km/h", scale: true, splitNumber: 5, alignTicks: true, axisLabel: { formatter: (v) => Number(v).toFixed(0) } },
-      { type: "value", name: "°", min: 0, max: 360, splitNumber: 5, alignTicks: true, axisLabel: { formatter: (v) => `${Math.round(Number(v))}` } },
+      {
+        type: "category",
+        name: "Dir",
+        data: DIR_CATS_16,
+        axisLabel: { formatter: (v) => String(v) },
+        axisTick: { alignWithLabel: true },
+      },
     ],
     tooltip: {
       trigger: "axis",
@@ -415,19 +427,19 @@ export default function MonthPage(props) {
         const day = xLabels[i] ?? "—";
         const wAvg = n(chrono[i]?.wind_avg);
         const gust = n(chrono[i]?.gust_max);
-        const dir = n(chrono[i]?.wind_dir_mean_deg);
+        const dir = windDirLetters[i];
         return [
           `<b>Giorno ${day}</b>`,
           `Vento medio: ${Number.isFinite(wAvg) ? wAvg.toFixed(1) + " km/h" : "—"}`,
           `Raffica: ${Number.isFinite(gust) ? gust.toFixed(1) + " km/h" : "—"}`,
-          `Direzione media: ${Number.isFinite(dir) ? `${degToCardinal16(dir)} (${Math.round(dir)}°)` : "—"}`,
+          `Direzione media: ${dir ? dir : "—"}`,
         ].join("<br/>");
       },
     },
     series: [
       { name: "Vento medio", type: "line", data: seriesLine(chrono.map((d) => d.wind_avg)), yAxisIndex: 0, showSymbol: false, connectNulls: false, lineStyle: { width: 2 } },
       { name: "Raffica", type: "line", data: seriesLine(chrono.map((d) => d.gust_max)), yAxisIndex: 0, showSymbol: false, connectNulls: false, lineStyle: { width: 2 } },
-      { name: "Direzione media", type: "scatter", data: seriesLine(chrono.map((d) => d.wind_dir_mean_deg)), yAxisIndex: 1, symbolSize: 7 },
+      { name: "Direzione media", type: "scatter", data: seriesCat(windDirLetters), yAxisIndex: 1, symbolSize: 7 },
     ],
   };
 
@@ -530,7 +542,7 @@ export default function MonthPage(props) {
     URL.revokeObjectURL(url);
   }
 
-  // ====== NAV MESI: replicata IDENTICA allo stile pagina ANNO ======
+  // ====== NAV MESI: dimensione RIDOTTA come annuale + grassetto + spaziatura ======
   const monthNav = (
     <nav className="monthNav" aria-label="Vai al mese">
       {monthsInYear.map((m) => {
@@ -543,11 +555,25 @@ export default function MonthPage(props) {
             className={isActive ? "monthLink active" : "monthLink"}
             title={`Apri ${monthFullFromYm(m)}`}
             aria-label={`Apri ${monthFullFromYm(m)}`}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 7,
+              fontWeight: 900,
+              fontSize: 15,
+              lineHeight: 1.15,
+              textDecoration: "none",
+              color: "inherit",
+              margin: "0 10px",
+              whiteSpace: "nowrap",
+            }}
           >
-            <span className="ext" aria-hidden="true">
+            <span className="ext" aria-hidden="true" style={{ fontWeight: 900, opacity: 0.85, fontSize: 13 }}>
               ↗
             </span>
-            <span className="monthText">{monthFullFromYm(m)}</span>
+            <span className="monthText" style={{ fontWeight: 900 }}>
+              {monthFullFromYm(m)}
+            </span>
           </Link>
         );
       })}
@@ -608,7 +634,6 @@ export default function MonthPage(props) {
           </div>
         </div>
 
-        {/* MESI (stesso identico concetto della pagina ANNO: centrati, gap, bold, icona) */}
         <div className="monthNavWrap">{monthNav}</div>
       </header>
 
@@ -819,13 +844,14 @@ export default function MonthPage(props) {
           <tfoot>
             <tr className="summaryRow">
               <td className="sticky bR summaryLabel">
-                <span className="sumTag">MEDIA MENSILE</span>
+                <span className="sumTag">RIEPILOGO MESE</span>
               </td>
 
               <td>{fmt(monthAvgRow.tmin, 1)} °C</td>
               <td className="strong">{fmt(monthAvgRow.tmean, 1)} °C</td>
               <td className="bR">{fmt(monthAvgRow.tmax, 1)} °C</td>
 
+              {/* >>> QUI ORA E' TOTALE MENSILE */}
               <td>{fmt(monthAvgRow.rain_total, 1)} mm</td>
               <td className="bR">{fmt(monthAvgRow.rainrate_max, 1)} mm/h</td>
 
@@ -920,11 +946,13 @@ export default function MonthPage(props) {
           opacity: 0.75;
         }
 
-        /* ====== MESI: COPIA DELLA PAGINA ANNO ====== */
+        /* ====== MESI: centro + distanza; (grassetto forzato inline) ====== */
         .monthNavWrap {
           margin-top: 14px;
-          padding-top: 14px;
+          padding-top: 16px;
           border-top: 1px solid #efefef;
+          display: flex;
+          justify-content: center;
         }
         .monthNav {
           width: 100%;
@@ -932,45 +960,13 @@ export default function MonthPage(props) {
           flex-wrap: wrap;
           justify-content: center;
           align-items: center;
-          gap: 10px;
+          column-gap: 22px;
+          row-gap: 14px;
           text-align: center;
         }
-        .monthLink {
-          display: inline-flex;
-          align-items: center;
-          gap: 6px;
-          padding: 6px 10px;
-          border-radius: 10px;
-          text-decoration: none;
-          color: #111;
-          font-weight: 900;
-          font-size: 16px;
-          line-height: 1.1;
-          transition: background 120ms ease, transform 120ms ease, box-shadow 120ms ease;
-        }
+        .monthLink,
         .monthText {
-          font-weight: 900;
-        }
-        .monthLink:hover {
-          background: #f4f4f4;
-          transform: translateY(-1px);
-          box-shadow: 0 8px 20px rgba(0, 0, 0, 0.06);
-        }
-        .monthLink:focus-visible {
-          outline: 2px solid #111;
-          outline-offset: 2px;
-        }
-        .monthLink.active {
-          background: #111;
-          color: #fff;
-        }
-        .monthLink.active .ext {
-          opacity: 0.9;
-        }
-        .ext {
-          font-size: 14px;
-          opacity: 0.65;
-          transform: translateY(-1px);
+          font-weight: 900 !important;
         }
 
         .cards {
@@ -1251,9 +1247,9 @@ export default function MonthPage(props) {
         }
 
         @media (max-width: 520px) {
-          .monthLink {
-            font-size: 14px;
-            padding: 6px 8px;
+          .monthNav {
+            column-gap: 16px;
+            row-gap: 12px;
           }
         }
       `}</style>
