@@ -2,6 +2,8 @@ import fs from "fs";
 import path from "path";
 import Link from "next/link";
 import dynamic from "next/dynamic";
+import { useMemo, useState } from "react";
+import { useRouter } from "next/router";
 
 const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
 
@@ -23,7 +25,7 @@ export async function getStaticPaths() {
 }
 
 export async function getStaticProps({ params }) {
-  const rows = readDaily();
+  const rows = readDaily().sort((a, b) => String(a?.date || "").localeCompare(String(b?.date || "")));
   const ix = rows.findIndex((r) => r.date === params.date);
   const day = ix >= 0 ? rows[ix] : null;
 
@@ -32,7 +34,16 @@ export async function getStaticProps({ params }) {
 
   const intraday = readIntraday(params.date);
 
-  return { props: { day, intraday, prev, next } };
+  // ---- confronto “stesso giorno” su altri anni (stesso MM-DD) ----
+  const mmdd = String(params?.date || "").slice(5, 10); // "12-11"
+  const sameDay = rows
+    .filter((r) => String(r?.date || "").slice(5, 10) === mmdd)
+    .map((r) => String(r.date))
+    .sort();
+
+  const compareOptions = sameDay.map((d) => ({ year: d.slice(0, 4), date: d }));
+
+  return { props: { day, intraday, prev, next, compareOptions } };
 }
 
 // -------------------- helpers --------------------
@@ -99,7 +110,7 @@ function degToCardinal8(v) {
   return ["N", "NE", "E", "SE", "S", "SW", "W", "NW"][ix];
 }
 
-// data in italiano: "13 aprile 2021"
+// data in italiano
 const MONTHS_IT = [
   "gennaio",
   "febbraio",
@@ -124,8 +135,17 @@ function formatDateIT(iso) {
   const monthName = MONTHS_IT[mm - 1] || String(mm);
   return `${dd} ${monthName} ${yyyy}`;
 }
+function formatMonthIT(ym) {
+  const s = String(ym || "");
+  const m = s.match(/^(\d{4})-(\d{2})$/);
+  if (!m) return s;
+  const yyyy = m[1];
+  const mm = Number(m[2]);
+  const monthName = MONTHS_IT[mm - 1] || m[2];
+  return `${monthName} ${yyyy}`;
+}
 
-// timeline uniforme 15-min (mostra i buchi in asse X)
+// timeline uniforme 15-min
 function pad2(n) {
   return String(n).padStart(2, "0");
 }
@@ -189,19 +209,57 @@ function makeDataZoom(n, windowPoints = 144) {
   ];
 }
 
-function StatRow({ label, value, unit }) {
+function KpiCard({ label, value, unit, hint }) {
   return (
-    <div className="row">
-      <div className="k">{label}</div>
-      <div className="v">
-        {value} {unit ? <span className="u">{unit}</span> : null}
+    <div className="kpi">
+      <div className="kpiLabel">{label}</div>
+      <div className="kpiValue">
+        {value} {unit ? <span className="kpiUnit">{unit}</span> : null}
       </div>
+      {hint ? <div className="kpiHint">{hint}</div> : null}
+
+      <style jsx>{`
+        .kpi {
+          border: 1px solid #e9e9e9;
+          border-radius: 18px;
+          background: rgba(255, 255, 255, 0.92);
+          box-shadow: 0 10px 26px rgba(15, 23, 42, 0.06);
+          padding: 12px 14px;
+        }
+        .kpiLabel {
+          font-size: 12px;
+          font-weight: 900;
+          color: rgba(15, 23, 42, 0.68);
+        }
+        .kpiValue {
+          margin-top: 6px;
+          font-size: 22px;
+          font-weight: 950;
+          letter-spacing: -0.01em;
+          color: #0f172a;
+          white-space: nowrap;
+        }
+        .kpiUnit {
+          font-size: 12px;
+          font-weight: 900;
+          color: rgba(15, 23, 42, 0.58);
+          margin-left: 6px;
+        }
+        .kpiHint {
+          margin-top: 6px;
+          font-size: 11px;
+          font-weight: 800;
+          color: rgba(15, 23, 42, 0.55);
+        }
+      `}</style>
     </div>
   );
 }
 
 // -------------------- page --------------------
-export default function DayPage({ day, intraday, prev, next }) {
+export default function DayPage({ day, intraday, prev, next, compareOptions = [] }) {
+  const router = useRouter();
+
   if (!day) {
     return (
       <main style={{ padding: 20, fontFamily: "system-ui" }}>
@@ -216,12 +274,12 @@ export default function DayPage({ day, intraday, prev, next }) {
   const year = day.date.slice(0, 4);
   const month = day.date.slice(5, 7);
   const ym = day.date.slice(0, 7);
+  const mmdd = day.date.slice(5, 10);
 
   // timeline uniforme (96 punti a 15 minuti)
   const labels = buildLabels(15);
   const byHHMM = mapIntradayByHHMM(intraday);
 
-  // se manca il dato -> null (linea spezzata)
   const temp = labels.map((hhmm) => toNull(byHHMM.get(hhmm)?.temp_c));
   const dew = labels.map((hhmm) => toNull(byHHMM.get(hhmm)?.dewpoint_c));
   const rh = labels.map((hhmm) => toNull(byHHMM.get(hhmm)?.rh_pct));
@@ -232,7 +290,6 @@ export default function DayPage({ day, intraday, prev, next }) {
   const uv = labels.map((hhmm) => toNull(byHHMM.get(hhmm)?.uv));
   const solar = labels.map((hhmm) => toNull(byHHMM.get(hhmm)?.solar_wm2));
 
-  // pioggia 15m: se manca riga -> null; cumulata resta piatta nei buchi
   const rain15 = labels.map((hhmm) => {
     const v = byHHMM.get(hhmm)?.rain_15m_mm;
     const n = Number(v);
@@ -244,9 +301,7 @@ export default function DayPage({ day, intraday, prev, next }) {
     return acc;
   });
 
-  const wrapStyle = { maxWidth: 1000, margin: "0 auto" };
-  const chartStyleSmall = { height: 280, width: "100%" };
-
+  const chartStyle = { height: 280, width: "100%" };
   const N = labels.length;
   const DZ = makeDataZoom(N, 144);
 
@@ -417,262 +472,507 @@ export default function DayPage({ day, intraday, prev, next }) {
     ],
   };
 
-  // ---- riepilogo: qui mettiamo Max 15 min + Max 1h (e rimuoviamo Max 24h) ----
   const rainDay = getRainTotal(day);
   const rain15Max = maxFinite(rain15);
   const rain1h = toNull(day?.rain_1h_max);
 
+  const tabs = useMemo(
+    () => [
+      { key: "temp", label: "Temperatura", option: tempDewOption },
+      { key: "rh", label: "Umidità", option: rhOption },
+      { key: "rain", label: "Pioggia", option: rainOption },
+      { key: "wind", label: "Vento", option: windOption },
+      { key: "press", label: "Pressione", option: pressOption },
+      { key: "uv", label: "UV/Radiazione", option: uvSolarOption },
+    ],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [day.date]
+  );
+
+  const [activeTab, setActiveTab] = useState("temp");
+  const [showAllCharts, setShowAllCharts] = useState(false);
+  const active = tabs.find((t) => t.key === activeTab) || tabs[0];
+  const oneChartKey = `${day.date}::${activeTab}::one`;
+
+  const compareAvailable = compareOptions.filter((x) => x?.date && x.year && x.date !== day.date);
+  const [comparePick, setComparePick] = useState(compareAvailable?.[0]?.date ?? "");
+
+  function onCompareChange(e) {
+    const targetDate = String(e.target.value || "");
+    setComparePick(targetDate);
+    if (targetDate) router.push(`/giorni/${targetDate}`);
+  }
+
   return (
-    <main className="wrap">
-      <div style={wrapStyle}>
-        <div className="topbar">
-          <div className="crumbs">
-            <Link className="crumbLink" href={`/anni/${year}`}>
-              ← Anno
+    <main className="page">
+      <div className="container">
+        {/* NAVBAR (spaziato, no “PrevMeseNext” appiccicato) */}
+        <div className="navBar">
+          <div className="navLeft">
+            <Link className="iconBtn" href={`/mesi/${year}/${month}`} aria-label="Torna al mese">
+              ←
             </Link>
-            <span className="sep">/</span>
-            <Link className="crumbLink" href={`/mesi/${year}/${month}`}>
-              Mese {ym}
-            </Link>
+
+            <div className="crumb">
+              <Link className="crumbLink" href={`/anni/${year}`}>
+                {year}
+              </Link>
+              <span className="dot">•</span>
+              <Link className="crumbLink" href={`/mesi/${year}/${month}`}>
+                {formatMonthIT(ym)}
+              </Link>
+              <span className="dot">•</span>
+              <span className="crumbHere">{formatDateIT(day.date)}</span>
+            </div>
           </div>
 
-          <div className="navBtns">
-            <Link className={`navBtn ${!prev ? "disabled" : ""}`} href={prev ? `/giorni/${prev}` : "#"} aria-disabled={!prev}>
-              ← Giorno precedente
-            </Link>
-            <Link className={`navBtn ${!next ? "disabled" : ""}`} href={next ? `/giorni/${next}` : "#"} aria-disabled={!next}>
-              Giorno successivo →
-            </Link>
+          <div className="navRight">
+            <div className="navActions">
+              <Link className={`navAction ${!prev ? "disabled" : ""}`} href={prev ? `/giorni/${prev}` : "#"} aria-disabled={!prev}>
+                ← Giorno precedente
+              </Link>
+
+              <Link className="navAction mid" href={`/mesi/${year}/${month}`}>
+                Torna al mese
+              </Link>
+
+              <Link className={`navAction ${!next ? "disabled" : ""}`} href={next ? `/giorni/${next}` : "#"} aria-disabled={!next}>
+                Giorno successivo →
+              </Link>
+            </div>
+
+            <div className={`compare ${compareAvailable.length ? "" : "disabled"}`}>
+              <div className="compareLabel">Confronta {mmdd}</div>
+              <select className="compareSelect" value={comparePick} onChange={onCompareChange} disabled={!compareAvailable.length}>
+                <option value="">{compareAvailable.length ? "Stesso giorno in…" : "Nessun altro anno"}</option>
+                {compareAvailable.map((o) => (
+                  <option key={o.date} value={o.date}>
+                    {o.year} → {o.date}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
         </div>
 
-        <header className="header">
-          <div className="titleBlock">
-            <h1 className="h1">{formatDateIT(day.date)}</h1>
-            <div className="subtitle">Dettaglio giornaliero</div>
+        {/* HEADER */}
+        <header className="hero">
+          <div className="heroInner">
+            <div className="heroTitle">
+              <h1 className="h1">{formatDateIT(day.date)}</h1>
+              <div className="sub">Dettaglio giornaliero</div>
+            </div>
+
+            <div className="heroMeta">
+              <div className="metaPill">Anno: {year}</div>
+              <div className="metaPill">Mese: {ym}</div>
+              <div className="metaPill">Intraday: {intraday.length ? "disponibile" : "non disponibile"}</div>
+            </div>
           </div>
         </header>
 
+        {/* KPI SUMMARY */}
         <section className="panel">
-          <div className="panelTitle">Dati principali</div>
-
-          <div className="grid">
-            <div className="col">
-              <StatRow label="Temperatura massima" value={fmt1(day.tmax)} unit="°C" />
-              <StatRow label="Temperatura media" value={fmt1(day.tmean)} unit="°C" />
-              <StatRow label="Temperatura minima" value={fmt1(day.tmin)} unit="°C" />
+          <div className="panelHead">
+            <div>
+              <div className="panelTitle">Riepilogo</div>
+              <div className="panelHint">Valori principali del giorno.</div>
             </div>
+          </div>
 
-            <div className="col">
-              <StatRow label="Pioggia giorno" value={fmt1(rainDay, "0.0")} unit="mm" />
-              <StatRow label="Max 15 min" value={rain15Max === null ? "—" : fmt1(rain15Max)} unit="mm" />
-              <StatRow label="Max 1h" value={rain1h === null ? "—" : fmt1(rain1h)} unit="mm" />
-            </div>
+          <div className="kpiGrid">
+            <KpiCard label="Temperatura max" value={fmt1(day.tmax)} unit="°C" />
+            <KpiCard label="Temperatura media" value={fmt1(day.tmean)} unit="°C" />
+            <KpiCard label="Temperatura min" value={fmt1(day.tmin)} unit="°C" />
 
-            <div className="col">
-              <StatRow label="Vento medio" value={fmt1(day.wind_avg)} unit="km/h" />
-              <StatRow label="Vento max" value={fmt1(day.wind_max)} unit="km/h" />
-              <StatRow label="Raffica max" value={fmt1(day.gust_max)} unit="km/h" />
-            </div>
+            <KpiCard label="Pioggia giorno" value={fmt1(rainDay, "0.0")} unit="mm" />
+            <KpiCard label="Pioggia max 15 min" value={rain15Max === null ? "—" : fmt1(rain15Max)} unit="mm" hint="Picco su 15 minuti" />
+            <KpiCard label="Pioggia max 1h" value={rain1h === null ? "—" : fmt1(rain1h)} unit="mm" hint="Picco su 1 ora" />
+
+            <KpiCard label="Vento medio" value={fmt1(day.wind_avg)} unit="km/h" />
+            <KpiCard label="Vento max" value={fmt1(day.wind_max)} unit="km/h" />
+            <KpiCard label="Raffica max" value={fmt1(day.gust_max)} unit="km/h" />
           </div>
         </section>
 
-        {intraday.length ? (
-          <section className="charts">
-            <div className="chartBox">
-              <ReactECharts option={tempDewOption} style={chartStyleSmall} />
+        {/* CHARTS */}
+        <section className="panel">
+          <div className="panelHead chartsHead">
+            <div>
+              <div className="panelTitle">Grafici intraday</div>
+              <div className="panelHint">Seleziona un grafico (pagina più corta), oppure mostra tutto.</div>
             </div>
-            <div className="chartBox">
-              <ReactECharts option={rhOption} style={chartStyleSmall} />
+
+            <div className="chartTools">
+              <button className="toggle" onClick={() => setShowAllCharts((s) => !s)}>
+                {showAllCharts ? "Mostra 1 grafico" : "Mostra tutti i grafici"}
+              </button>
             </div>
-            <div className="chartBox">
-              <ReactECharts option={rainOption} style={chartStyleSmall} />
-            </div>
-            <div className="chartBox">
-              <ReactECharts option={windOption} style={chartStyleSmall} />
-            </div>
-            <div className="chartBox">
-              <ReactECharts option={pressOption} style={chartStyleSmall} />
-            </div>
-            <div className="chartBox">
-              <ReactECharts option={uvSolarOption} style={chartStyleSmall} />
-            </div>
-          </section>
-        ) : (
-          <section className="panel" style={{ marginTop: 12 }}>
-            <div className="panelTitle">Dati intraday</div>
-            <div className="muted">Nessun dato intraday.</div>
-          </section>
-        )}
+          </div>
+
+          {!intraday.length ? (
+            <div className="muted">Nessun dato intraday per questo giorno.</div>
+          ) : (
+            <>
+              {!showAllCharts && (
+                <>
+                  <div className="tabs">
+                    {tabs.map((t) => (
+                      <button key={t.key} className={`tab ${activeTab === t.key ? "active" : ""}`} onClick={() => setActiveTab(t.key)}>
+                        {t.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="chartBox">
+                    <ReactECharts key={oneChartKey} option={active.option} style={chartStyle} notMerge={true} lazyUpdate={true} />
+                  </div>
+                </>
+              )}
+
+              {showAllCharts && (
+                <div className="allCharts">
+                  {tabs.map((t) => (
+                    <div key={`${day.date}::${t.key}::all`} className="chartBox">
+                      <ReactECharts option={t.option} style={chartStyle} notMerge={true} lazyUpdate={true} />
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </section>
       </div>
 
       <style jsx>{`
-        .wrap {
-          padding: 18px 16px 48px;
+        .page {
+          padding: 16px 14px 60px;
           font-family: system-ui;
-          background: #fff;
+          background: radial-gradient(900px 420px at 15% 0%, rgba(59, 130, 246, 0.08), transparent 55%),
+            radial-gradient(900px 420px at 85% 10%, rgba(16, 185, 129, 0.06), transparent 60%),
+            linear-gradient(180deg, #ffffff, #f8fafc);
+          min-height: 100vh;
+        }
+        .container {
+          max-width: 1100px;
+          margin: 0 auto;
         }
 
-        .topbar {
+        /* ---- NAVBAR ---- */
+        .navBar {
           display: flex;
           align-items: center;
           justify-content: space-between;
           gap: 12px;
-          padding: 10px 0;
+          padding: 10px 2px 10px;
+          position: sticky;
+          top: 0;
+          z-index: 5;
+          backdrop-filter: blur(10px);
+          background: rgba(248, 250, 252, 0.78);
+          border-bottom: 1px solid rgba(15, 23, 42, 0.08);
         }
 
-        .crumbs {
+        .navLeft {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          min-width: 0;
+        }
+        .iconBtn {
+          width: 36px;
+          height: 36px;
+          display: grid;
+          place-items: center;
+          text-decoration: none;
+          border: 1px solid #e7e7e7;
+          background: rgba(255, 255, 255, 0.92);
+          color: #0f172a;
+          border-radius: 12px;
+          font-weight: 950;
+          transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
+          flex: 0 0 auto;
+        }
+        .iconBtn:hover {
+          transform: translateY(-1px);
+          border-color: #d6d6d6;
+          background: #fff;
+        }
+
+        .crumb {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          flex-wrap: wrap;
+          min-width: 0;
+        }
+        .crumbLink {
+          text-decoration: none;
+          color: rgba(15, 23, 42, 0.78);
+          font-weight: 950;
+          border-bottom: 1px dashed rgba(15, 23, 42, 0.18);
+        }
+        .crumbLink:hover {
+          color: #0f172a;
+          border-bottom-color: rgba(15, 23, 42, 0.35);
+        }
+        .dot {
+          opacity: 0.4;
+          font-weight: 900;
+        }
+        .crumbHere {
+          color: #0f172a;
+          font-weight: 950;
+          white-space: nowrap;
+        }
+
+        .navRight {
           display: flex;
           align-items: center;
           gap: 10px;
           flex-wrap: wrap;
-        }
-        .crumbLink {
-          text-decoration: none;
-          color: #111;
-          font-weight: 800;
-          opacity: 0.85;
-        }
-        .crumbLink:hover {
-          opacity: 1;
-          text-decoration: underline;
-        }
-        .sep {
-          opacity: 0.35;
+          justify-content: flex-end;
         }
 
-        .navBtns {
+        .navActions {
           display: flex;
+          align-items: center;
           gap: 10px;
           flex-wrap: wrap;
           justify-content: flex-end;
         }
-        .navBtn {
+
+        .navAction {
           text-decoration: none;
-          border: 1px solid #e3e3e3;
-          background: #fff;
-          color: #111;
+          border: 1px solid #e7e7e7;
+          background: rgba(255, 255, 255, 0.92);
+          color: #0f172a;
           padding: 10px 12px;
-          border-radius: 12px;
-          font-weight: 900;
+          border-radius: 14px;
+          font-weight: 950;
           white-space: nowrap;
+          transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
         }
-        .navBtn:hover {
-          border-color: #bdbdbd;
-          background: #fafafa;
+        .navAction:hover {
+          transform: translateY(-1px);
+          border-color: #d6d6d6;
+          background: #fff;
         }
-        .navBtn.disabled {
+        .navAction.mid {
+          color: rgba(15, 23, 42, 0.78);
+        }
+        .navAction.disabled {
           pointer-events: none;
           opacity: 0.45;
         }
 
-        .header {
-          margin-top: 6px;
-          padding: 18px;
-          border: 1px solid #e7e7e7;
-          border-radius: 16px;
-          background: linear-gradient(180deg, #fff, #fbfbfb);
-        }
-        .titleBlock {
-          display: flex;
-          flex-direction: column;
+        .compare {
+          display: grid;
           gap: 6px;
+          padding: 8px 10px;
+          border: 1px solid #e7e7e7;
+          border-radius: 14px;
+          background: rgba(255, 255, 255, 0.92);
+          min-width: 220px;
+        }
+        .compare.disabled {
+          opacity: 0.55;
+        }
+        .compareLabel {
+          font-size: 11px;
+          font-weight: 950;
+          color: rgba(15, 23, 42, 0.68);
+        }
+        .compareSelect {
+          width: 100%;
+          border: 1px solid #ededed;
+          border-radius: 10px;
+          padding: 8px 10px;
+          font-weight: 900;
+          color: #0f172a;
+          background: #fff;
+          outline: none;
+        }
+
+        /* ---- HERO + PANELS ---- */
+        .hero {
+          border: 1px solid #e9e9e9;
+          border-radius: 24px;
+          background: rgba(255, 255, 255, 0.92);
+          box-shadow: 0 12px 36px rgba(15, 23, 42, 0.08);
+          padding: 18px;
+          margin-top: 10px;
+        }
+        .heroInner {
+          display: flex;
+          align-items: flex-end;
+          justify-content: space-between;
+          gap: 14px;
+          flex-wrap: wrap;
         }
         .h1 {
           margin: 0;
-          font-size: 42px;
+          font-size: 44px;
           line-height: 1.05;
           letter-spacing: -0.02em;
+          color: #0f172a;
+          font-weight: 950;
         }
-        .subtitle {
-          opacity: 0.7;
-          font-weight: 700;
+        .sub {
+          margin-top: 6px;
+          font-weight: 800;
+          color: rgba(15, 23, 42, 0.66);
+        }
+        .heroMeta {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 8px;
+          justify-content: flex-end;
+        }
+        .metaPill {
+          border: 1px solid #ececec;
+          background: rgba(248, 250, 252, 0.8);
+          border-radius: 999px;
+          padding: 7px 10px;
+          font-size: 12px;
+          font-weight: 900;
+          color: rgba(15, 23, 42, 0.72);
         }
 
         .panel {
-          margin-top: 12px;
-          border: 1px solid #e7e7e7;
-          border-radius: 16px;
-          background: #fff;
+          margin-top: 14px;
+          border: 1px solid #e9e9e9;
+          border-radius: 24px;
+          background: rgba(255, 255, 255, 0.92);
+          box-shadow: 0 10px 26px rgba(15, 23, 42, 0.06);
           padding: 14px;
+        }
+        .panelHead {
+          display: flex;
+          align-items: flex-end;
+          justify-content: space-between;
+          gap: 12px;
+          flex-wrap: wrap;
+          padding: 2px 4px 10px;
         }
         .panelTitle {
           font-weight: 950;
-          letter-spacing: 0.02em;
-          margin-bottom: 10px;
+          letter-spacing: -0.01em;
+          color: #0f172a;
+          font-size: 16px;
+        }
+        .panelHint {
+          margin-top: 4px;
+          font-size: 12px;
+          font-weight: 800;
+          color: rgba(15, 23, 42, 0.6);
         }
 
-        .grid {
+        .kpiGrid {
           display: grid;
           grid-template-columns: repeat(3, 1fr);
-          gap: 12px;
-        }
-        .col {
-          display: grid;
           gap: 10px;
         }
 
-        .row {
-          display: grid;
-          grid-template-columns: 1fr auto;
-          gap: 16px;
-          align-items: baseline;
+        .chartsHead {
+          align-items: center;
+        }
+        .chartTools {
+          display: flex;
+          gap: 10px;
+        }
+        .toggle {
+          border: 1px solid #e7e7e7;
+          background: rgba(255, 255, 255, 0.95);
+          border-radius: 14px;
           padding: 10px 12px;
-          border-radius: 12px;
-          background: #fcfcfc;
-          border: 1px solid #f0f0f0;
-        }
-        .k {
-          opacity: 0.75;
-          font-weight: 800;
-        }
-        .v {
           font-weight: 950;
-          white-space: nowrap;
+          color: #0f172a;
+          cursor: pointer;
+          transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
         }
-        .u {
-          opacity: 0.75;
-          font-weight: 800;
-          margin-left: 6px;
+        .toggle:hover {
+          transform: translateY(-1px);
+          border-color: #d6d6d6;
+          background: #fff;
         }
 
-        .charts {
-          margin-top: 12px;
+        .tabs {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 8px;
+          padding: 2px 4px 10px;
+        }
+        .tab {
+          border: 1px solid #e7e7e7;
+          background: rgba(248, 250, 252, 0.8);
+          border-radius: 999px;
+          padding: 8px 10px;
+          font-weight: 950;
+          font-size: 12px;
+          color: rgba(15, 23, 42, 0.74);
+          cursor: pointer;
+          transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
+        }
+        .tab:hover {
+          transform: translateY(-1px);
+          border-color: #d6d6d6;
+          background: #fff;
+        }
+        .tab.active {
+          background: #0f172a;
+          border-color: #0f172a;
+          color: #fff;
+        }
+
+        .chartBox {
+          border: 1px solid #ececec;
+          border-radius: 18px;
+          background: #fff;
+          padding: 8px;
+        }
+
+        .allCharts {
           display: grid;
           grid-template-columns: 1fr;
           gap: 12px;
         }
-        .chartBox {
-          border: 1px solid #e7e7e7;
-          border-radius: 16px;
-          padding: 8px;
-          background: #fff;
-        }
 
         .muted {
           opacity: 0.7;
-          font-weight: 700;
+          font-weight: 800;
+          padding: 6px 4px;
         }
 
         @media (max-width: 980px) {
-          .grid {
+          .kpiGrid {
             grid-template-columns: 1fr;
-          }
-        }
-        @media (max-width: 720px) {
-          .topbar {
-            align-items: flex-start;
-            flex-direction: column;
-          }
-          .navBtns {
-            width: 100%;
-          }
-          .navBtn {
-            width: 100%;
-            text-align: center;
           }
           .h1 {
             font-size: 34px;
+          }
+        }
+
+        @media (max-width: 760px) {
+          .navBar {
+            flex-direction: column;
+            align-items: stretch;
+            gap: 10px;
+          }
+          .navRight {
+            justify-content: stretch;
+            width: 100%;
+          }
+          .navActions {
+            width: 100%;
+          }
+          .navAction {
+            flex: 1;
+            text-align: center;
+          }
+          .compare {
+            width: 100%;
+            min-width: unset;
           }
         }
       `}</style>
