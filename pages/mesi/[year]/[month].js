@@ -1,3 +1,4 @@
+// ===================== month.js (PARTE 1/2) =====================
 import fs from "fs";
 import path from "path";
 import Link from "next/link";
@@ -45,6 +46,12 @@ export async function getStaticProps({ params }) {
     )
   ).sort();
 
+  // ---- prev/next mese (navigazione su tutti i mesi disponibili)
+  const allMonths = Array.from(new Set(rows.map((r) => String(r.date).slice(0, 7)))).sort();
+  const mix = allMonths.indexOf(ym);
+  const prevMonth = mix > 0 ? allMonths[mix - 1] : null;
+  const nextMonth = mix >= 0 && mix < allMonths.length - 1 ? allMonths[mix + 1] : null;
+
   return {
     props: {
       year,
@@ -52,6 +59,8 @@ export async function getStaticProps({ params }) {
       ym,
       days,
       monthsInYear,
+      prevMonth,
+      nextMonth,
     },
   };
 }
@@ -140,7 +149,20 @@ function circMeanDeg(arr) {
   return ((deg % 360) + 360) % 360;
 }
 
-const MONTHS_IT_FULL = ["Gennaio", "Febbraio", "Marzo", "Aprile", "Maggio", "Giugno", "Luglio", "Agosto", "Settembre", "Ottobre", "Novembre", "Dicembre"];
+const MONTHS_IT_FULL = [
+  "Gennaio",
+  "Febbraio",
+  "Marzo",
+  "Aprile",
+  "Maggio",
+  "Giugno",
+  "Luglio",
+  "Agosto",
+  "Settembre",
+  "Ottobre",
+  "Novembre",
+  "Dicembre",
+];
 function monthFullFromMm(mm) {
   const m = Number(mm);
   return MONTHS_IT_FULL[m - 1] || mm;
@@ -220,8 +242,17 @@ export default function MonthPage(props) {
   const year = props.year ?? "";
   const month = props.month ?? "";
   const ym = props.ym ?? "";
+  const prevMonth = props.prevMonth ?? null; // "YYYY-MM"
+  const nextMonth = props.nextMonth ?? null; // "YYYY-MM"
   const days = Array.isArray(props.days) ? props.days : [];
   const monthsInYear = Array.isArray(props.monthsInYear) ? props.monthsInYear : [];
+
+  function ymToHref(ymStr) {
+    if (!ymStr) return "#";
+    const yy = String(ymStr).slice(0, 4);
+    const mm = String(ymStr).slice(5, 7);
+    return `/mesi/${yy}/${mm}`;
+  }
 
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
@@ -286,10 +317,9 @@ export default function MonthPage(props) {
     const tmean = avgFinite(days.map((d) => d.tmean));
     const tmax = avgFinite(days.map((d) => d.tmax));
 
-    // >>> MODIFICA: totale mensile
+    // totale mensile
     const rain_total = sumFinite(days.map((d) => d.rain_total));
-
-    // lascio invariato (media dei rain-rate max giornalieri)
+    // media dei rain-rate max giornalieri
     const rainrate_max = avgFinite(days.map((d) => d.rainrate_max));
 
     const rh_min = avgFinite(days.map((d) => getRhMin(d)));
@@ -582,13 +612,38 @@ export default function MonthPage(props) {
 
   return (
     <div className="wrap">
-      <div className="topbar">
-        <Link className="back" href={`/anni/${year}`}>
-          ← Anno {year}
-        </Link>
-        <div className="brand">
-          <div className="brandTitle">Archivio Meteo</div>
-          <div className="brandSub">Collinas • mese • {ym}</div>
+      {/* NAVBAR MESE */}
+      <div className="navBar">
+        <div className="navLeft">
+          <Link className="iconBtn" href={`/anni/${year}`} aria-label="Torna all'anno">
+            ←
+          </Link>
+
+          <div className="crumb">
+            <Link className="crumbLink" href={`/anni/${year}`}>
+              {year}
+            </Link>
+            <span className="dot">•</span>
+            <span className="crumbHere">
+              {monthFullFromMm(month)} {year}
+            </span>
+          </div>
+        </div>
+
+        <div className="navRight">
+          <div className="navActions">
+            <Link className={`navAction ${!prevMonth ? "disabled" : ""}`} href={prevMonth ? ymToHref(prevMonth) : "#"} aria-disabled={!prevMonth}>
+              ← Mese precedente
+            </Link>
+
+            <Link className="navAction mid" href={`/anni/${year}`}>
+              Torna all’anno
+            </Link>
+
+            <Link className={`navAction ${!nextMonth ? "disabled" : ""}`} href={nextMonth ? ymToHref(nextMonth) : "#"} aria-disabled={!nextMonth}>
+              Mese successivo →
+            </Link>
+          </div>
         </div>
       </div>
 
@@ -851,7 +906,6 @@ export default function MonthPage(props) {
               <td className="strong">{fmt(monthAvgRow.tmean, 1)} °C</td>
               <td className="bR">{fmt(monthAvgRow.tmax, 1)} °C</td>
 
-              {/* >>> QUI ORA E' TOTALE MENSILE */}
               <td>{fmt(monthAvgRow.rain_total, 1)} mm</td>
               <td className="bR">{fmt(monthAvgRow.rainrate_max, 1)} mm/h</td>
 
@@ -863,9 +917,7 @@ export default function MonthPage(props) {
               <td>{fmt(monthAvgRow.gust_max, 1)} km/h</td>
               <td className="bR">
                 {Number.isFinite(n(monthAvgRow.wind_dir_mean_deg)) ? degToCardinal16(monthAvgRow.wind_dir_mean_deg) : "—"}
-                {Number.isFinite(n(monthAvgRow.wind_dir_mean_deg)) ? (
-                  <span style={{ opacity: 0.65 }}> ({Math.round(n(monthAvgRow.wind_dir_mean_deg))}°)</span>
-                ) : null}
+                {Number.isFinite(n(monthAvgRow.wind_dir_mean_deg)) ? <span style={{ opacity: 0.65 }}> ({Math.round(n(monthAvgRow.wind_dir_mean_deg))}°)</span> : null}
               </td>
 
               <td>{fmt(monthAvgRow.press_min, 1)} hPa</td>
@@ -880,13 +932,140 @@ export default function MonthPage(props) {
           </tfoot>
         </table>
       </section>
-
       <style jsx>{`
         .wrap {
           max-width: 1280px;
           margin: 0 auto;
           padding: 18px 10px 50px;
           background: #fff;
+        }
+
+        /* ---- NAVBAR MESE (stile simile alla pagina giorno) ---- */
+        .navBar {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          padding: 10px 2px 10px;
+          position: sticky;
+          top: 0;
+          z-index: 5;
+          backdrop-filter: blur(10px);
+          background: rgba(255, 255, 255, 0.85);
+          border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+          margin-bottom: 10px;
+        }
+
+        .navLeft {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          min-width: 0;
+        }
+        .iconBtn {
+          width: 36px;
+          height: 36px;
+          display: grid;
+          place-items: center;
+          text-decoration: none;
+          border: 1px solid #e7e7e7;
+          background: rgba(255, 255, 255, 0.92);
+          color: #0f172a;
+          border-radius: 12px;
+          font-weight: 950;
+          transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
+          flex: 0 0 auto;
+        }
+        .iconBtn:hover {
+          transform: translateY(-1px);
+          border-color: #d6d6d6;
+          background: #fff;
+        }
+
+        .crumb {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          flex-wrap: wrap;
+          min-width: 0;
+        }
+        .crumbLink {
+          text-decoration: none;
+          color: rgba(15, 23, 42, 0.78);
+          font-weight: 950;
+          border-bottom: 1px dashed rgba(15, 23, 42, 0.18);
+        }
+        .crumbLink:hover {
+          color: #0f172a;
+          border-bottom-color: rgba(15, 23, 42, 0.35);
+        }
+        .dot {
+          opacity: 0.4;
+          font-weight: 900;
+        }
+        .crumbHere {
+          color: #0f172a;
+          font-weight: 950;
+          white-space: nowrap;
+        }
+
+        .navRight {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          flex-wrap: wrap;
+          justify-content: flex-end;
+        }
+
+        .navActions {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          flex-wrap: wrap;
+          justify-content: flex-end;
+        }
+
+        .navAction {
+          text-decoration: none;
+          border: 1px solid #e7e7e7;
+          background: rgba(255, 255, 255, 0.92);
+          color: #0f172a;
+          padding: 10px 12px;
+          border-radius: 14px;
+          font-weight: 950;
+          white-space: nowrap;
+          transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
+        }
+        .navAction:hover {
+          transform: translateY(-1px);
+          border-color: #d6d6d6;
+          background: #fff;
+        }
+        .navAction.mid {
+          color: rgba(15, 23, 42, 0.78);
+        }
+        .navAction.disabled {
+          pointer-events: none;
+          opacity: 0.45;
+        }
+
+        @media (max-width: 760px) {
+          .navBar {
+            flex-direction: column;
+            align-items: stretch;
+            gap: 10px;
+          }
+          .navRight {
+            justify-content: stretch;
+            width: 100%;
+          }
+          .navActions {
+            width: 100%;
+          }
+          .navAction {
+            flex: 1;
+            text-align: center;
+          }
         }
 
         .topbar {

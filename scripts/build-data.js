@@ -1,3 +1,4 @@
+// ==================== build-data.js (FULL) ====================
 const fs = require("fs");
 const path = require("path");
 const { parse } = require("csv-parse/sync");
@@ -300,13 +301,7 @@ function cardinalToDeg(txt) {
   const s = alias[raw] || raw;
 
   // N=0, E=90, S=180, W=270
-  const order = [
-    "N", "NNE", "NE", "ENE",
-    "E", "ESE", "SE", "SSE",
-    "S", "SSW", "SW", "WSW",
-    "W", "WNW", "NW", "NNW",
-  ];
-
+  const order = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"];
   const idx = order.indexOf(s);
   if (idx === -1) return null;
 
@@ -330,27 +325,41 @@ function circularMeanDegMin(degs, minCount = MIN_SAMPLES_FOR_MEAN) {
   return meanDeg;
 }
 
-function rainDeltasFixed(obsRows, tickMm = RAIN_TICK_MM) {
+/**
+ * FIX PRECIPITAZIONI:
+ * - non fidarsi del "rain_rate_mmph" del CSV: può essere >0 anche con rain_acc_mm fermo (come nel tuo Maggio.csv).
+ * - quindi:
+ *   1) calcolo i delta da rain_acc_mm (mm/15min)
+ *   2) ricavo il rate "fisico" come delta*4 (mm/h)
+ *   3) rainrate_max e intraday rain_rate_mmph derivano SOLO da delta (zero delta => zero intensità)
+ */
+function rainDeltasFromAcc(obsRows, tickMm = RAIN_TICK_MM) {
   const deltas = [];
   let prev = NaN;
 
-  for (const r of obsRows) {
-    const acc = toNum(r.rain_acc_mm);
-    let d = NaN;
+  for (let i = 0; i < obsRows.length; i++) {
+    const acc = toNum(obsRows[i].rain_acc_mm);
+    let d = 0;
 
-    if (Number.isFinite(acc) && Number.isFinite(prev)) {
-      d = acc - prev;
-      if (d < 0) d = acc;
-    } else if (Number.isFinite(acc) && !Number.isFinite(prev)) {
-      d = acc;
+    if (!Number.isFinite(acc)) {
+      d = 0;
+    } else if (!Number.isFinite(prev)) {
+      // primo valore valido del giorno: baseline, non pioggia
+      d = 0;
+      prev = acc;
+    } else {
+      const diff = acc - prev;
+      if (diff >= 0) d = diff;
+      else d = acc; // reset contatore
+      prev = acc;
     }
 
     if (!Number.isFinite(d) || d < 0) d = 0;
     d = Math.floor(d / tickMm + 1e-9) * tickMm;
 
     deltas.push(d);
-    prev = acc;
   }
+
   return deltas;
 }
 
@@ -479,7 +488,6 @@ function buildOnce() {
       const dvals = hasObs ? obs.map((r) => toNum(r.wind_dir_deg)) : [];
       const uvvals = hasObs ? obs.map((r) => toNum(r.uv)) : [];
       const solvals = hasObs ? obs.map((r) => toNum(r.solar_wm2)) : [];
-      const rrvals = hasObs ? obs.map((r) => toNum(r.rain_rate_mmph)) : [];
 
       const tmin_calc = minv(tvals);
       const tmax_calc = maxv(tvals);
@@ -500,17 +508,24 @@ function buildOnce() {
 
       const wind_dir_mean_calc = circularMeanDegMin(dvals);
 
+      // ===== precip: tutto derivato da rain_acc_mm =====
       let deltas15 = [];
+      let rates15 = [];
       let rain_total_calc = null;
+      let rainrate_max_calc = null;
 
       if (hasObs) {
-        deltas15 = rainDeltasFixed(obs, RAIN_TICK_MM);
+        deltas15 = rainDeltasFromAcc(obs, RAIN_TICK_MM); // mm per 15min
         rain_total_calc = deltas15.reduce((s, x) => s + x, 0);
+
+        rates15 = deltas15.map((d) => d * 4); // mm/h
+        rainrate_max_calc = maxv(rates15);
       }
 
       const rain_total_ovr = pickOverrideNumber(overrideNum, "rain_total", "rain_total_mm");
       const rain_total = rain_total_ovr !== null ? rain_total_ovr : rain_total_calc;
 
+      // massimi su finestre (da deltas)
       const rain_15m_max = hasObs ? maxv(deltas15) : null;
       const rain_30m_max = hasObs ? rollingMaxSum(deltas15, 2) : null;
       const rain_1h_max = hasObs ? rollingMaxSum(deltas15, 4) : null;
@@ -519,7 +534,6 @@ function buildOnce() {
       const rain_12h_max = hasObs ? rollingMaxSum(deltas15, 48) : null;
       const rain_24h_max = hasObs ? rollingMaxSum(deltas15, 96) : null;
 
-      const rainrate_max_calc = maxv(rrvals);
       const uv_max = maxv(uvvals);
       const solar_max = maxv(solvals);
 
@@ -531,6 +545,7 @@ function buildOnce() {
 
       const gust_max = Number.isFinite(overrideNum.gustmax) ? overrideNum.gustmax : gust_max_calc;
 
+      // rainrate_max: prendo OVR se presente, altrimenti il calcolo fisico da delta*4
       const rainrate_max_ovr = pickOverrideNumber(
         overrideNum,
         "rainrate_max",
@@ -538,7 +553,7 @@ function buildOnce() {
         "rain_r_max",
         "rain_rate_mmph_max"
       );
-      const rainrate_max = rainrate_max_ovr !== null ? rainrate_max_ovr : rainrate_max_calc;
+      let rainrate_max = rainrate_max_ovr !== null ? rainrate_max_ovr : rainrate_max_calc;
 
       const wind_dir_mean_deg_ovr = pickOverrideDirDeg(
         overrideNum,
@@ -551,12 +566,19 @@ function buildOnce() {
       );
       const wind_dir_mean_deg = wind_dir_mean_deg_ovr !== null ? wind_dir_mean_deg_ovr : wind_dir_mean_calc;
 
+      // ===== CONSISTENZA: se accumulo nullo, intensità nullo =====
+      // (serve proprio per casi tipo Maggio: rain_rate_mmph nel CSV >0 ma rain_acc_mm fermo)
+      if (!(Number.isFinite(rain_total) && rain_total > 0)) {
+        rainrate_max = 0;
+      }
+
       daily.push({
         date,
 
         tmin,
         tmax,
         gust_max,
+
         rainrate_max,
         wind_dir_mean_deg,
 
@@ -593,6 +615,7 @@ function buildOnce() {
         mean_min_samples: MIN_SAMPLES_FOR_MEAN,
       });
 
+      // intraday: rain_rate_mmph DERIVATO dai delta (così nei grafici non appaiono spike “fantasma”)
       const intraday = obs.map((r, i) => ({
         t: `${date} ${String(r.time).slice(0, 5)}`,
         temp_c: numOrNull(r.temp_c),
@@ -605,9 +628,12 @@ function buildOnce() {
         press_hpa: numOrNull(r.press_hpa),
         uv: numOrNull(r.uv),
         solar_wm2: numOrNull(r.solar_wm2),
+
         rain_15m_mm: Number.isFinite(deltas15[i]) ? deltas15[i] : null,
         rain_acc_mm: numOrNull(r.rain_acc_mm),
-        rain_rate_mmph: numOrNull(r.rain_rate_mmph),
+
+        // qui non uso il campo del CSV: uso rate fisico dal delta
+        rain_rate_mmph: Number.isFinite(rates15[i]) ? rates15[i] : null,
       }));
 
       fs.writeFileSync(path.join(OUT_INTRADAY_DIR, `${date}.json`), JSON.stringify(intraday));
