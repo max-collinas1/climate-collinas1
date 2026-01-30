@@ -67,13 +67,37 @@ function ymLabel(year, month) {
   const m = Number(month);
   return `${MONTHS_IT_SHORT[(m || 1) - 1]} ${year}`;
 }
-function takeTop(arr, topN = 10) {
+
+function takeTop(arr, topN = 20) {
   if (!Array.isArray(arr)) return [];
   return arr.slice(0, topN);
 }
 
+// -------------------- NEW: choose correct daily scope --------------------
+function getDailyScope(records, yearSel, monthSel) {
+  const d = records?.daily;
+  if (!d) return null;
+
+  const hasNew = !!(d.by_month || d.by_year || d.by_year_month);
+
+  // se record.json è ancora vecchio, fallback al globale (e filtri non potranno funzionare bene)
+  if (!hasNew) return d;
+
+  const yAll = !yearSel || yearSel === "all";
+  const mAll = !monthSel || monthSel === "all";
+
+  if (yAll && mAll) return d;
+
+  if (yAll && !mAll) return d.by_month?.[monthSel] || null;
+
+  if (!yAll && mAll) return d.by_year?.[yearSel] || null;
+
+  // year + month
+  return d.by_year_month?.[yearSel]?.[monthSel] || null;
+}
+
 // -------------------- components --------------------
-function MiniRankTable({ rows, unit, digits = 1, kind, topN = 10 }) {
+function MiniRankTable({ rows, unit, digits = 1, kind, topN = 20 }) {
   const list = takeTop(rows, topN);
   const has = list.length > 0;
 
@@ -124,6 +148,7 @@ function MiniRankTable({ rows, unit, digits = 1, kind, topN = 10 }) {
               );
             }
 
+            // yearly
             return (
               <tr key={`${r.year}-${idx}`}>
                 <td className="tdVal">{vStr}</td>
@@ -171,9 +196,29 @@ function TabButton({ active, children, onClick }) {
   );
 }
 
-function MonthPicker({ value, onChange }) {
+function CatButton({ active, children, onClick }) {
+  return (
+    <button type="button" onClick={onClick} className={active ? "catBtn catBtnOn" : "catBtn"}>
+      {children}
+    </button>
+  );
+}
+
+function MonthPicker({ value, onChange, allowAll = true }) {
   return (
     <div className="monthPick">
+      {allowAll ? (
+        <button
+          type="button"
+          onClick={() => onChange("all")}
+          className={value === "all" ? "mBtn mBtnOn" : "mBtn"}
+          title="Tutti i mesi"
+          aria-label="Tutti i mesi"
+        >
+          Tutti
+        </button>
+      ) : null}
+
       {Array.from({ length: 12 }, (_, i) => {
         const mm = String(i + 1).padStart(2, "0");
         const active = mm === value;
@@ -194,138 +239,47 @@ function MonthPicker({ value, onChange }) {
   );
 }
 
-function SubTabButton({ active, children, onClick }) {
+function YearPicker({ value, onChange, years }) {
   return (
-    <button type="button" onClick={onClick} className={active ? "subBtn subBtnOn" : "subBtn"}>
-      {children}
-    </button>
+    <select className="yearSel" value={value} onChange={(e) => onChange(e.target.value)} aria-label="Seleziona anno">
+      <option value="all">Tutti gli anni</option>
+      {years.map((y) => (
+        <option key={y} value={y}>
+          {y}
+        </option>
+      ))}
+    </select>
   );
 }
-
-// -------------------- groups config --------------------
-// Ogni gruppo elenca le "card" da mostrare per DAILY / MONTHLY / YEARLY.
-// Se una chiave non esiste in record.json, la tabella risulta vuota (senza crash).
-
-const GROUPS = [
-  {
-    id: "temp",
-    label: "Temperature",
-    daily: [
-      { key: "tmax_abs_high", title: "Massime assolute più alte", sub: "Tmax giornaliera", unit: "°C", digits: 1 },
-      { key: "tmax_abs_low", title: "Massime assolute più basse", sub: "Tmax giornaliera", unit: "°C", digits: 1 },
-      { key: "tmin_abs_low", title: "Minime assolute più basse", sub: "Tmin giornaliera", unit: "°C", digits: 1 },
-      { key: "tmin_abs_high", title: "Minime assolute più alte", sub: "Tmin giornaliera", unit: "°C", digits: 1 },
-      { key: "tmean_high", title: "Temperature medie più alte", sub: "Tmedia giornaliera", unit: "°C", digits: 1 },
-      { key: "tmean_low", title: "Temperature medie più basse", sub: "Tmedia giornaliera", unit: "°C", digits: 1 },
-    ],
-    monthly: [
-      { key: "tmax_mean_high", title: "Massime medie più alte", sub: "Media delle Tmax giornaliere", unit: "°C", digits: 1 },
-      { key: "tmax_mean_low", title: "Massime medie più basse", sub: "Media delle Tmax giornaliere", unit: "°C", digits: 1 },
-      { key: "tmin_mean_low", title: "Minime medie più basse", sub: "Media delle Tmin giornaliere", unit: "°C", digits: 1 },
-      { key: "tmin_mean_high", title: "Minime medie più alte", sub: "Media delle Tmin giornaliere", unit: "°C", digits: 1 },
-      { key: "tmean_high", title: "Medie mensili più alte", sub: "Media delle Tmed giornaliere", unit: "°C", digits: 1 },
-      { key: "tmean_low", title: "Medie mensili più basse", sub: "Media delle Tmed giornaliere", unit: "°C", digits: 1 },
-    ],
-    yearly: [
-      { key: "tmax_abs_high", title: "Tmax assoluta più alta", sub: "Massimo dell’anno", unit: "°C", digits: 1 },
-      { key: "tmin_abs_low", title: "Tmin assoluta più bassa", sub: "Minimo dell’anno", unit: "°C", digits: 1 },
-      { key: "tmean_high", title: "Temperatura media annua più alta", sub: "Media annua Tmed", unit: "°C", digits: 1 },
-      { key: "tmean_low", title: "Temperatura media annua più bassa", sub: "Media annua Tmed", unit: "°C", digits: 1 },
-    ],
-  },
-
-  {
-    id: "rain",
-    label: "Precipitazioni",
-    daily: [
-      { key: "rain_total_high", title: "Precipitazioni massime", sub: "Totale giornaliero", unit: "mm", digits: 1 },
-      { key: "rainrate_max_high", title: "Rain rate massimo", sub: "Picco giornaliero", unit: "mm/h", digits: 1 },
-    ],
-    monthly: [
-      { key: "rain_total_high", title: "Precipitazioni massime", sub: "Totale mensile", unit: "mm", digits: 1 },
-      { key: "rainrate_max_high", title: "Rain rate massimo", sub: "Picco mensile", unit: "mm/h", digits: 1 },
-    ],
-    yearly: [
-      { key: "rain_total_high", title: "Pioggia annua massima", sub: "Totale annuo", unit: "mm", digits: 1 },
-      { key: "rainrate_max_high", title: "Rain rate massimo annuo", sub: "Picco annuo", unit: "mm/h", digits: 1 },
-    ],
-  },
-
-  {
-    id: "wind",
-    label: "Vento",
-    daily: [{ key: "gust_max_high", title: "Raffiche massime", sub: "Gust max giornaliero", unit: "km/h", digits: 1 }],
-    monthly: [{ key: "gust_max_high", title: "Raffiche massime", sub: "Gust max del mese", unit: "km/h", digits: 1 }],
-    yearly: [{ key: "gust_max_high", title: "Raffica massima annua", sub: "Gust max annuo", unit: "km/h", digits: 1 }],
-  },
-
-  {
-    id: "press",
-    label: "Pressione",
-    daily: [
-      { key: "press_min_low", title: "Pressione minima", sub: "Min giornaliera", unit: "hPa", digits: 1 },
-      { key: "press_max_high", title: "Pressione massima", sub: "Max giornaliera", unit: "hPa", digits: 1 },
-    ],
-    monthly: [],
-    yearly: [
-      { key: "press_min_low", title: "Pressione minima annua", sub: "Min annua", unit: "hPa", digits: 1 },
-      { key: "press_max_high", title: "Pressione massima annua", sub: "Max annua", unit: "hPa", digits: 1 },
-    ],
-  },
-
-  {
-    id: "hum",
-    label: "Umidità",
-    daily: [
-      { key: "rh_min_low", title: "Umidità minima", sub: "Min giornaliera", unit: "%", digits: 0 },
-      { key: "rh_max_high", title: "Umidità massima", sub: "Max giornaliera", unit: "%", digits: 0 },
-    ],
-    monthly: [],
-    yearly: [],
-  },
-
-  {
-    id: "rad",
-    label: "Rad/UV",
-    daily: [
-      { key: "uv_max_high", title: "UV massimo", sub: "Max giornaliero", unit: "", digits: 1 },
-      { key: "solar_max_high", title: "Radiazione massima", sub: "Max giornaliero", unit: "W/m²", digits: 0 },
-    ],
-    monthly: [],
-    yearly: [],
-  },
-];
 
 // -------------------- page --------------------
 export default function RecordsPage({ records }) {
   const [tab, setTab] = useState("daily"); // daily | monthly | yearly
-  const [mm, setMm] = useState("01");
-  const [group, setGroup] = useState("temp"); // temp | rain | wind | press | hum | rad
 
-  const topN = 10;
+  // filtri daily (anno/mese)
+  const [yearSel, setYearSel] = useState("all"); // all | "2021"...
+  const [monthSel, setMonthSel] = useState("all"); // all | "01".."12"
 
-  const activeGroup = useMemo(() => GROUPS.find((g) => g.id === group) || GROUPS[0], [group]);
+  // categorie daily
+  const [catDaily, setCatDaily] = useState("temp"); // temp | precip | wind | press | rh | rad
+
+  const topN = useMemo(() => {
+    const v = Number(records?.top_n);
+    return Number.isFinite(v) && v > 0 ? v : 20;
+  }, [records]);
+
+  const yearsAvail = useMemo(() => {
+    const ys = records?.daily?.by_year ? Object.keys(records.daily.by_year) : [];
+    return ys.sort();
+  }, [records]);
+
+  const dailyScope = useMemo(() => getDailyScope(records, yearSel, monthSel), [records, yearSel, monthSel]);
 
   const monthlySelected = useMemo(() => {
     if (!records?.monthly?.by_month) return null;
-    return records.monthly.by_month[mm] || null;
-  }, [records, mm]);
-
-  const cards = useMemo(() => {
-    if (!records) return [];
-    if (tab === "daily") return activeGroup.daily;
-    if (tab === "monthly") return activeGroup.monthly;
-    return activeGroup.yearly;
-  }, [records, tab, activeGroup]);
-
-  // funzione per estrarre i rows corretti in base a tab
-  function getRowsForKey(key) {
-    if (!records) return [];
-    if (tab === "daily") return records.daily?.[key] || [];
-    if (tab === "yearly") return records.yearly?.[key] || [];
-    // monthly: dipende dal mese selezionato
-    return monthlySelected?.[key] || [];
-  }
+    // monthly tab: mese dell’anno (tutti i gennaio, ecc.) -> qui mm è per tab monthly, non monthSel
+    return null;
+  }, [records]);
 
   if (!records) {
     return (
@@ -359,6 +313,10 @@ export default function RecordsPage({ records }) {
     );
   }
 
+  // monthly tab state (separato) - lasciato identico alla tua logica originale
+  const [mmMonthly, setMmMonthly] = useState("01"); // solo per tab mensili
+  const monthlyScope = records?.monthly?.by_month?.[mmMonthly] || null;
+
   return (
     <div className="wrap">
       <div className="topbar">
@@ -375,17 +333,21 @@ export default function RecordsPage({ records }) {
         <div className="heroTop">
           <div className="heroLeft">
             <div className="kicker">Record</div>
-            <h1 className="title">
-              {activeGroup.label} <span style={{ opacity: 0.65 }}>•</span> Top {topN}
-            </h1>
+            <h1 className="title">Record</h1>
             <div className="sub">
-              Aggiornato: <b>{fmtGeneratedAt(records.generated_at)}</b>
+              Prime <b>{topN}</b> posizioni • Aggiornato: <b>{fmtGeneratedAt(records.generated_at)}</b>
             </div>
           </div>
 
           <div className="heroRight">
             <div className="tabs">
-              <TabButton active={tab === "daily"} onClick={() => setTab("daily")}>
+              <TabButton
+                active={tab === "daily"}
+                onClick={() => {
+                  setTab("daily");
+                  setCatDaily("temp");
+                }}
+              >
                 Giornalieri
               </TabButton>
               <TabButton active={tab === "monthly"} onClick={() => setTab("monthly")}>
@@ -398,14 +360,46 @@ export default function RecordsPage({ records }) {
           </div>
         </div>
 
-        {/* sottotabs per parametro */}
-        <div className="subTabs" aria-label="Seleziona categoria record">
-          {GROUPS.map((g) => (
-            <SubTabButton key={g.id} active={group === g.id} onClick={() => setGroup(g.id)}>
-              {g.label}
-            </SubTabButton>
-          ))}
-        </div>
+        {/* --- FILTRI SOLO PER TAB DAILY --- */}
+        {tab === "daily" ? (
+          <div className="filterBar">
+            <div className="filterBox">
+              <div className="filterLabel">Anno</div>
+              <YearPicker value={yearSel} onChange={setYearSel} years={yearsAvail} />
+            </div>
+
+            <div className="filterBox grow">
+              <div className="filterLabel">Mese</div>
+              <MonthPicker value={monthSel} onChange={setMonthSel} allowAll />
+            </div>
+          </div>
+        ) : null}
+
+        {tab === "daily" ? (
+          <div className="catBar">
+            <div className="catLabel">Sezione</div>
+            <div className="catBtns">
+              <CatButton active={catDaily === "temp"} onClick={() => setCatDaily("temp")}>
+                Temperature
+              </CatButton>
+              <CatButton active={catDaily === "precip"} onClick={() => setCatDaily("precip")}>
+                Precipitazioni
+              </CatButton>
+              <CatButton active={catDaily === "wind"} onClick={() => setCatDaily("wind")}>
+                Vento
+              </CatButton>
+              <CatButton active={catDaily === "press"} onClick={() => setCatDaily("press")}>
+                Pressione
+              </CatButton>
+              <CatButton active={catDaily === "rh"} onClick={() => setCatDaily("rh")}>
+                Umidità
+              </CatButton>
+              <CatButton active={catDaily === "rad"} onClick={() => setCatDaily("rad")}>
+                Radiazione
+              </CatButton>
+            </div>
+          </div>
+        ) : null}
 
         {tab === "monthly" ? (
           <div className="monthBox">
@@ -413,35 +407,241 @@ export default function RecordsPage({ records }) {
               <div>
                 <div className="monthLabel">Seleziona mese</div>
                 <div className="monthSub">
-                  Classifiche relative a <b>{monthFullFromMM(mm)}</b>
+                  Classifiche relative a <b>{monthFullFromMM(mmMonthly)}</b>
                 </div>
               </div>
               <div className="pill">Mese dell’anno</div>
             </div>
-            <MonthPicker value={mm} onChange={setMm} />
+            <MonthPicker value={mmMonthly} onChange={setMmMonthly} allowAll={false} />
           </div>
         ) : null}
       </header>
+            {/* -------------------- DAILY: TEMPERATURE -------------------- */}
+      {tab === "daily" && catDaily === "temp" ? (
+        <section className="grid">
+          {/* 1° riga */}
+          <Card title="Temperature massime più alte" subtitle="Tmax giornaliera">
+            <MiniRankTable rows={dailyScope?.tmax_abs_high} unit="°C" digits={1} kind="daily" topN={topN} />
+          </Card>
 
-      {/* GRID CARDS */}
-      <section className="grid">
-        {cards.length ? (
-          cards.map((c) => (
-            <Card
-              key={`${tab}-${group}-${c.key}`}
-              title={tab === "monthly" ? `${c.title} (${monthShortFromMM(mm)})` : c.title}
-              subtitle={c.sub}
-            >
-              <MiniRankTable rows={getRowsForKey(c.key)} unit={c.unit} digits={c.digits} kind={tab} topN={topN} />
-            </Card>
-          ))
-        ) : (
-          <div className="empty">
-            Nessuna tabella per questa categoria in questa vista ({tab}).<br />
-            Se vuoi, possiamo aggiungere altri record anche per {activeGroup.label}.
-          </div>
-        )}
-      </section>
+          <Card title="Temperature medie più alte" subtitle="Tmedia giornaliera">
+            <MiniRankTable rows={dailyScope?.tmean_high} unit="°C" digits={1} kind="daily" topN={topN} />
+          </Card>
+
+          <Card title="Temperature minime più alte" subtitle="Tmin giornaliera">
+            <MiniRankTable rows={dailyScope?.tmin_abs_high} unit="°C" digits={1} kind="daily" topN={topN} />
+          </Card>
+
+          {/* 2° riga */}
+          <Card title="Temperature massime più basse" subtitle="Tmax giornaliera">
+            <MiniRankTable rows={dailyScope?.tmax_abs_low} unit="°C" digits={1} kind="daily" topN={topN} />
+          </Card>
+
+          <Card title="Temperature medie più basse" subtitle="Tmedia giornaliera">
+            <MiniRankTable rows={dailyScope?.tmean_low} unit="°C" digits={1} kind="daily" topN={topN} />
+          </Card>
+
+          <Card title="Temperature minime più basse" subtitle="Tmin giornaliera">
+            <MiniRankTable rows={dailyScope?.tmin_abs_low} unit="°C" digits={1} kind="daily" topN={topN} />
+          </Card>
+
+          {/* 3° riga */}
+          <Card title="Escursione termica giornaliera più alta" subtitle="Tmax − Tmin">
+            <MiniRankTable rows={dailyScope?.trange_high} unit="°C" digits={1} kind="daily" topN={topN} />
+          </Card>
+
+          <Card title="Escursione termica giornaliera più bassa" subtitle="Tmax − Tmin">
+            <MiniRankTable rows={dailyScope?.trange_low} unit="°C" digits={1} kind="daily" topN={topN} />
+          </Card>
+        </section>
+      ) : null}
+
+      {/* -------------------- DAILY: PRECIPITAZIONI -------------------- */}
+      {tab === "daily" && catDaily === "precip" ? (
+        <section className="grid">
+          <Card title="Precipitazioni massime" subtitle="Totale giornaliero">
+            <MiniRankTable rows={dailyScope?.rain_total_high} unit="mm" digits={1} kind="daily" topN={topN} />
+          </Card>
+
+          <Card title="Rain rate massimo" subtitle="Picco giornaliero">
+            <MiniRankTable rows={dailyScope?.rainrate_max_high} unit="mm/h" digits={1} kind="daily" topN={topN} />
+          </Card>
+
+          <Card title="Pioggia massima 15 min" subtitle="Somma su 15 minuti (intraday)">
+            <MiniRankTable rows={dailyScope?.rain_15m_high} unit="mm" digits={1} kind="daily" topN={topN} />
+          </Card>
+
+          <Card title="Pioggia massima 30 min" subtitle="Somma su 30 minuti (intraday)">
+            <MiniRankTable rows={dailyScope?.rain_30m_high} unit="mm" digits={1} kind="daily" topN={topN} />
+          </Card>
+
+          <Card title="Pioggia massima 1 ora" subtitle="Somma su 60 minuti (intraday)">
+            <MiniRankTable rows={dailyScope?.rain_1h_high} unit="mm" digits={1} kind="daily" topN={topN} />
+          </Card>
+
+          <Card title="Pioggia massima 6 ore" subtitle="Somma su 6 ore (intraday)">
+            <MiniRankTable rows={dailyScope?.rain_6h_high} unit="mm" digits={1} kind="daily" topN={topN} />
+          </Card>
+
+          <Card title="Pioggia massima 12 ore" subtitle="Somma su 12 ore (intraday)">
+            <MiniRankTable rows={dailyScope?.rain_12h_high} unit="mm" digits={1} kind="daily" topN={topN} />
+          </Card>
+        </section>
+      ) : null}
+
+      {/* -------------------- DAILY: VENTO -------------------- */}
+      {tab === "daily" && catDaily === "wind" ? (
+        <section className="grid">
+          <Card title="Raffiche massime" subtitle="Gust max giornaliero">
+            <MiniRankTable rows={dailyScope?.gust_max_high} unit="km/h" digits={1} kind="daily" topN={topN} />
+          </Card>
+
+          <Card title="Raffiche medie più alte" subtitle="Media giornaliera delle raffiche (intraday)">
+            <MiniRankTable rows={dailyScope?.gust_mean_high} unit="km/h" digits={1} kind="daily" topN={topN} />
+          </Card>
+
+          <Card title="Vento medio più alto" subtitle="Media giornaliera del vento (intraday)">
+            <MiniRankTable rows={dailyScope?.wind_avg_high} unit="km/h" digits={1} kind="daily" topN={topN} />
+          </Card>
+
+          <Card title="Vento massimo più alto" subtitle="Picco giornaliero del vento (intraday)">
+            <MiniRankTable rows={dailyScope?.wind_max_high} unit="km/h" digits={1} kind="daily" topN={topN} />
+          </Card>
+        </section>
+      ) : null}
+
+      {/* -------------------- DAILY: PRESSIONE -------------------- */}
+      {tab === "daily" && catDaily === "press" ? (
+        <section className="grid">
+          <Card title="Pressione minima" subtitle="Min giornaliera">
+            <MiniRankTable rows={dailyScope?.press_min_low} unit="hPa" digits={1} kind="daily" topN={topN} />
+          </Card>
+
+          <Card title="Pressione massima" subtitle="Max giornaliera">
+            <MiniRankTable rows={dailyScope?.press_max_high} unit="hPa" digits={1} kind="daily" topN={topN} />
+          </Card>
+
+          <Card title="Calo pressione (giorno → giorno+1)" subtitle="ΔP: oggi − domani (media press.)">
+            <MiniRankTable rows={dailyScope?.press_drop_nextday_high} unit="hPa" digits={1} kind="daily" topN={topN} />
+          </Card>
+
+          <Card title="Aumento pressione (giorno−1 → giorno)" subtitle="ΔP: oggi − ieri (media press.)">
+            <MiniRankTable rows={dailyScope?.press_rise_prevday_high} unit="hPa" digits={1} kind="daily" topN={topN} />
+          </Card>
+        </section>
+      ) : null}
+
+      {/* -------------------- DAILY: UMIDITÀ -------------------- */}
+      {tab === "daily" && catDaily === "rh" ? (
+        <section className="grid">
+          <Card title="Umidità minima" subtitle="Min giornaliera">
+            <MiniRankTable rows={dailyScope?.rh_min_low} unit="%" digits={0} kind="daily" topN={topN} />
+          </Card>
+
+          <Card title="Umidità massima" subtitle="Max giornaliera">
+            <MiniRankTable rows={dailyScope?.rh_max_high} unit="%" digits={0} kind="daily" topN={topN} />
+          </Card>
+
+          <Card title="Umidità media più alta" subtitle="Media giornaliera (derivata se manca)">
+            <MiniRankTable rows={dailyScope?.rh_mean_high} unit="%" digits={0} kind="daily" topN={topN} />
+          </Card>
+        </section>
+      ) : null}
+
+      {/* -------------------- DAILY: RADIAZIONE -------------------- */}
+      {tab === "daily" && catDaily === "rad" ? (
+        <section className="grid">
+          <Card title="UV massimo" subtitle="Max giornaliero">
+            <MiniRankTable rows={dailyScope?.uv_max_high} unit="" digits={1} kind="daily" topN={topN} />
+          </Card>
+
+          <Card title="Radiazione massima" subtitle="Max giornaliero">
+            <MiniRankTable rows={dailyScope?.solar_max_high} unit="W/m²" digits={0} kind="daily" topN={topN} />
+          </Card>
+        </section>
+      ) : null}
+
+      {/* -------------------- MONTHLY (come prima) -------------------- */}
+      {tab === "monthly" ? (
+        <section className="grid">
+          <Card title={`Massime medie più alte (${monthShortFromMM(mmMonthly)})`} subtitle="Media delle Tmax giornaliere">
+            <MiniRankTable rows={monthlyScope?.tmax_mean_high} unit="°C" digits={1} kind="monthly" topN={topN} />
+          </Card>
+
+          <Card title={`Massime medie più basse (${monthShortFromMM(mmMonthly)})`} subtitle="Media delle Tmax giornaliere">
+            <MiniRankTable rows={monthlyScope?.tmax_mean_low} unit="°C" digits={1} kind="monthly" topN={topN} />
+          </Card>
+
+          <Card title={`Minime medie più basse (${monthShortFromMM(mmMonthly)})`} subtitle="Media delle Tmin giornaliere">
+            <MiniRankTable rows={monthlyScope?.tmin_mean_low} unit="°C" digits={1} kind="monthly" topN={topN} />
+          </Card>
+
+          <Card title={`Minime medie più alte (${monthShortFromMM(mmMonthly)})`} subtitle="Media delle Tmin giornaliere">
+            <MiniRankTable rows={monthlyScope?.tmin_mean_high} unit="°C" digits={1} kind="monthly" topN={topN} />
+          </Card>
+
+          <Card title={`Medie mensili più alte (${monthShortFromMM(mmMonthly)})`} subtitle="Media delle Tmed giornaliere">
+            <MiniRankTable rows={monthlyScope?.tmean_high} unit="°C" digits={1} kind="monthly" topN={topN} />
+          </Card>
+
+          <Card title={`Medie mensili più basse (${monthShortFromMM(mmMonthly)})`} subtitle="Media delle Tmed giornaliere">
+            <MiniRankTable rows={monthlyScope?.tmean_low} unit="°C" digits={1} kind="monthly" topN={topN} />
+          </Card>
+
+          <Card title={`Precipitazioni massime (${monthShortFromMM(mmMonthly)})`} subtitle="Totale mensile">
+            <MiniRankTable rows={monthlyScope?.rain_total_high} unit="mm" digits={1} kind="monthly" topN={topN} />
+          </Card>
+
+          <Card title={`Raffiche massime (${monthShortFromMM(mmMonthly)})`} subtitle="Gust max del mese">
+            <MiniRankTable rows={monthlyScope?.gust_max_high} unit="km/h" digits={1} kind="monthly" topN={topN} />
+          </Card>
+
+          <Card title={`Rain rate massimo (${monthShortFromMM(mmMonthly)})`} subtitle="Picco mensile">
+            <MiniRankTable rows={monthlyScope?.rainrate_max_high} unit="mm/h" digits={1} kind="monthly" topN={topN} />
+          </Card>
+        </section>
+      ) : null}
+
+      {/* -------------------- YEARLY (come prima) -------------------- */}
+      {tab === "yearly" ? (
+        <section className="grid">
+          <Card title="Tmax assoluta più alta" subtitle="Massimo dell’anno">
+            <MiniRankTable rows={records.yearly?.tmax_abs_high} unit="°C" digits={1} kind="yearly" topN={topN} />
+          </Card>
+
+          <Card title="Tmin assoluta più bassa" subtitle="Minimo dell’anno">
+            <MiniRankTable rows={records.yearly?.tmin_abs_low} unit="°C" digits={1} kind="yearly" topN={topN} />
+          </Card>
+
+          <Card title="Temperatura media annua più alta" subtitle="Media annua Tmed giornaliere">
+            <MiniRankTable rows={records.yearly?.tmean_high} unit="°C" digits={1} kind="yearly" topN={topN} />
+          </Card>
+
+          <Card title="Temperatura media annua più bassa" subtitle="Media annua Tmed giornaliere">
+            <MiniRankTable rows={records.yearly?.tmean_low} unit="°C" digits={1} kind="yearly" topN={topN} />
+          </Card>
+
+          <Card title="Pioggia annua massima" subtitle="Totale annuo">
+            <MiniRankTable rows={records.yearly?.rain_total_high} unit="mm" digits={1} kind="yearly" topN={topN} />
+          </Card>
+
+          <Card title="Raffica massima annua" subtitle="Gust max annuo">
+            <MiniRankTable rows={records.yearly?.gust_max_high} unit="km/h" digits={1} kind="yearly" topN={topN} />
+          </Card>
+
+          <Card title="Rain rate massimo annuo" subtitle="Picco annuo">
+            <MiniRankTable rows={records.yearly?.rainrate_max_high} unit="mm/h" digits={1} kind="yearly" topN={topN} />
+          </Card>
+
+          <Card title="Pressione minima annua" subtitle="Min annua">
+            <MiniRankTable rows={records.yearly?.press_min_low} unit="hPa" digits={1} kind="yearly" topN={topN} />
+          </Card>
+
+          <Card title="Pressione massima annua" subtitle="Max annua">
+            <MiniRankTable rows={records.yearly?.press_max_high} unit="hPa" digits={1} kind="yearly" topN={topN} />
+          </Card>
+        </section>
+      ) : null}
 
       <style jsx>{baseCss}</style>
     </div>
@@ -465,33 +665,26 @@ const baseCss = `
   .brandSub { font-size:12px; opacity:.7; margin-top:2px; }
 
   .hero {
-    border:1px solid #ececec;
-    border-radius:18px;
-    background:#fff;
-    box-shadow:0 1px 0 rgba(0,0,0,.02), 0 12px 34px rgba(0,0,0,.04);
-    padding:18px;
+    border: 1px solid #ececec;
+    border-radius: 18px;
+    background: #fff;
+    box-shadow: 0 1px 0 rgba(0,0,0,0.02), 0 12px 34px rgba(0,0,0,0.04);
+    padding: 18px;
   }
 
   .heroTop { display:flex; justify-content:space-between; gap:16px; align-items:flex-start; }
 
   .kicker {
-    font-size:12px;
-    letter-spacing:.14em;
-    text-transform:uppercase;
-    opacity:.6;
-    margin-bottom:8px;
+    font-size: 12px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    opacity: 0.6;
+    margin-bottom: 8px;
   }
 
-  .title {
-    margin:0;
-    font-size:52px;
-    line-height:1;
-    letter-spacing:-.03em;
-  }
+  .title { margin:0; font-size:56px; line-height:1; letter-spacing:-0.03em; }
 
-  .sub { margin-top:8px; font-size:13px; opacity:.75; line-height:1.35; }
-
-  code { background:#f4f4f4; padding:2px 6px; border-radius:8px; }
+  .sub { margin-top: 8px; font-size: 13px; opacity: 0.75; line-height: 1.35; }
 
   .tabs { display:flex; gap:10px; flex-wrap:wrap; justify-content:flex-end; }
 
@@ -504,121 +697,160 @@ const baseCss = `
     font-size:13px;
     cursor:pointer;
     opacity:.9;
-    transition:background 120ms ease, transform 120ms ease, box-shadow 120ms ease, opacity 120ms ease;
+    transition: background 120ms ease, transform 120ms ease, box-shadow 120ms ease, opacity 120ms ease;
   }
-  .tabBtn:hover {
-    background:#f4f4f4;
-    transform:translateY(-1px);
-    box-shadow:0 8px 20px rgba(0,0,0,.06);
-    opacity:1;
+  .tabBtn:hover { background:#f4f4f4; transform: translateY(-1px); box-shadow:0 8px 20px rgba(0,0,0,0.06); opacity:1; }
+  .tabBtnOn { background:#111; color:#fff; border-color:#111; box-shadow:0 10px 24px rgba(0,0,0,0.10); opacity:1; }
+
+  /* --- NEW: year+month filter bar (daily) --- */
+  .filterBar{
+    margin-top: 14px;
+    border-top: 1px solid #efefef;
+    padding-top: 12px;
+    display:flex;
+    gap: 14px;
+    align-items: flex-end;
+    flex-wrap: wrap;
   }
-  .tabBtnOn {
-    background:#111;
-    color:#fff;
-    border-color:#111;
-    box-shadow:0 10px 24px rgba(0,0,0,.10);
-    opacity:1;
+  .filterBox{ display:flex; flex-direction:column; gap:8px; }
+  .filterBox.grow{ flex: 1; min-width: 320px; }
+  .filterLabel{
+    font-weight: 950;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    font-size: 12px;
+    opacity: 0.8;
+  }
+  .yearSel{
+    height: 40px;
+    padding: 0 12px;
+    border: 1px solid #ededed;
+    border-radius: 14px;
+    background: #fff;
+    font-weight: 900;
+    font-size: 14px;
   }
 
-  /* sottotabs categoria */
-  .subTabs {
-    margin-top:12px;
-    display:flex;
-    flex-wrap:wrap;
-    gap:10px;
-    border-top:1px solid #efefef;
-    padding-top:12px;
+  /* ---- category bar (Daily) ---- */
+  .catBar {
+    margin-top: 14px;
+    border-top: 1px solid #efefef;
+    padding-top: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
   }
-  .subBtn {
-    padding:8px 12px;
-    border:1px solid #ededed;
-    border-radius:999px;
-    background:#fff;
-    font-weight:950;
-    font-size:13px;
-    cursor:pointer;
-    opacity:.9;
-    transition:background 120ms ease, transform 120ms ease, box-shadow 120ms ease, opacity 120ms ease;
+  .catLabel {
+    font-weight: 950;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    font-size: 12px;
+    opacity: 0.8;
+    white-space: nowrap;
   }
-  .subBtn:hover {
-    background:#f4f4f4;
-    transform:translateY(-1px);
-    box-shadow:0 8px 20px rgba(0,0,0,.06);
-    opacity:1;
+  .catBtns { display:flex; gap:10px; flex-wrap:wrap; justify-content:flex-end; }
+  .catBtn {
+    padding: 8px 12px;
+    border: 1px solid #ededed;
+    border-radius: 999px;
+    background: #fff;
+    font-weight: 950;
+    font-size: 13px;
+    cursor: pointer;
+    opacity: 0.9;
+    transition: background 120ms ease, transform 120ms ease, box-shadow 120ms ease, opacity 120ms ease;
   }
-  .subBtnOn {
-    background:#111;
-    color:#fff;
-    border-color:#111;
-    box-shadow:0 10px 24px rgba(0,0,0,.10);
-    opacity:1;
-  }
+  .catBtn:hover { background:#f4f4f4; transform: translateY(-1px); box-shadow:0 8px 20px rgba(0,0,0,0.06); opacity:1; }
+  .catBtnOn { background:#111; color:#fff; border-color:#111; box-shadow:0 10px 24px rgba(0,0,0,0.10); opacity:1; }
 
   .monthBox { margin-top:14px; border-top:1px solid #efefef; padding-top:12px; }
   .monthBoxTop { display:flex; justify-content:space-between; align-items:flex-end; gap:14px; margin-bottom:10px; }
-  .monthLabel { font-weight:950; letter-spacing:.06em; text-transform:uppercase; font-size:12px; opacity:.8; }
+  .monthLabel {
+    font-weight: 950;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    font-size: 12px;
+    opacity: 0.8;
+  }
   .monthSub { margin-top:4px; font-size:12px; opacity:.72; }
-  .pill { border:1px solid #ededed; background:#fbfbfb; border-radius:999px; padding:6px 10px; font-size:12px; font-weight:900; opacity:.85; white-space:nowrap; }
+  .pill {
+    border: 1px solid #ededed;
+    background: #fbfbfb;
+    border-radius: 999px;
+    padding: 6px 10px;
+    font-size: 12px;
+    font-weight: 900;
+    opacity: 0.85;
+    white-space: nowrap;
+  }
 
   .monthPick { display:flex; flex-wrap:wrap; justify-content:center; gap:10px; }
   .mBtn {
-    padding:8px 12px;
-    border-radius:12px;
-    border:1px solid #ededed;
-    background:#fff;
+    display:inline-flex;
+    align-items:center;
+    gap:6px;
+    padding: 8px 12px;
+    border-radius: 12px;
+    border: 1px solid #ededed;
+    background: #fff;
+    text-decoration:none;
     color:#111;
-    font-weight:950;
-    font-size:14px;
+    font-weight: 950;
+    font-size: 14px;
     cursor:pointer;
-    transition:background 120ms ease, transform 120ms ease, box-shadow 120ms ease;
+    transition: background 120ms ease, transform 120ms ease, box-shadow 120ms ease;
   }
-  .mBtn:hover { background:#f4f4f4; transform:translateY(-1px); box-shadow:0 8px 20px rgba(0,0,0,.06); }
-  .mBtnOn { background:#111; color:#fff; border-color:#111; box-shadow:0 10px 24px rgba(0,0,0,.10); }
+  .mBtn:hover { background:#f4f4f4; transform: translateY(-1px); box-shadow:0 8px 20px rgba(0,0,0,0.06); }
+  .mBtnOn { background:#111; color:#fff; border-color:#111; box-shadow:0 10px 24px rgba(0,0,0,0.10); }
 
-  .cmd { margin-top:14px; padding:12px; border-radius:14px; background:#111; color:#fff; overflow:auto; font-size:13px; }
-
-  .grid {
-    margin-top:12px;
-    display:grid;
-    grid-template-columns:repeat(3, 1fr);
-    gap:12px;
+  .cmd {
+    margin-top: 14px;
+    padding: 12px;
+    border-radius: 14px;
+    background: #111;
+    color: #fff;
+    overflow: auto;
+    font-size: 13px;
   }
+  code { background:#f4f4f4; padding:2px 6px; border-radius:8px; }
+
+  .grid { margin-top: 12px; display:grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
 
   .card {
-    border:1px solid #e7e7e7;
-    border-radius:16px;
-    background:#fff;
-    box-shadow:0 1px 0 rgba(0,0,0,.02), 0 12px 34px rgba(0,0,0,.04);
-    overflow:hidden;
+    border: 1px solid #e7e7e7;
+    border-radius: 16px;
+    background: #fff;
+    box-shadow: 0 1px 0 rgba(0,0,0,0.02), 0 12px 34px rgba(0,0,0,0.04);
+    overflow: hidden;
   }
-  .cardHead { background:#111; color:#fff; padding:12px 12px 10px; }
+  .cardHead { background:#111; color:#fff; padding: 12px 12px 10px; }
   .cardTitle { font-weight:950; font-size:14px; letter-spacing:.01em; line-height:1.15; }
   .cardSub { margin-top:4px; font-size:12px; opacity:.85; line-height:1.2; }
-  .cardBody { padding:10px 12px 12px; }
-  .cardFoot { padding:10px 12px; border-top:1px solid #efefef; background:#fbfbfb; font-size:12px; opacity:.78; }
+  .cardBody { padding: 10px 12px 12px; }
 
   .miniTable { width:100%; border-collapse:collapse; }
   .miniTable thead th {
-    font-size:11px;
-    text-transform:uppercase;
-    letter-spacing:.08em;
-    opacity:.75;
-    padding:8px 6px;
-    border-bottom:1px solid #efefef;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    opacity: 0.75;
+    padding: 8px 6px;
+    border-bottom: 1px solid #efefef;
   }
   .thVal { text-align:left; }
   .thWhen { text-align:right; }
 
   .miniTable tbody td {
-    padding:8px 6px;
-    border-bottom:1px solid #f1f1f1;
-    font-size:13px;
-    white-space:nowrap;
+    padding: 8px 6px;
+    border-bottom: 1px solid #f1f1f1;
+    font-size: 13px;
+    white-space: nowrap;
   }
   .miniTable tbody tr:nth-child(even) td { background:#fcfcfc; }
   .miniTable tbody tr:hover td { background:#fafafa; }
 
-  .tdVal { font-weight:950; letter-spacing:-.01em; text-align:left; }
+  .tdVal { font-weight: 950; letter-spacing: -0.01em; text-align:left; }
   .tdWhen { text-align:right; }
   .tdEmpty { padding:10px 6px; font-size:13px; opacity:.7; }
 
@@ -631,26 +863,21 @@ const baseCss = `
     gap:6px;
     justify-content:flex-end;
   }
-  .rowLink:hover { text-decoration:underline; }
-  .extCell { font-size:12px; opacity:.65; transform:translateY(-1px); }
-
-  .empty {
-    grid-column: 1 / -1;
-    border:1px solid #e7e7e7;
-    border-radius:16px;
-    padding:16px;
-    background:#fbfbfb;
-    font-weight:900;
-    opacity:.8;
-  }
+  .rowLink:hover { text-decoration: underline; }
+  .extCell { font-size:12px; opacity:.65; transform: translateY(-1px); }
 
   @media (max-width: 1100px) {
-    .heroTop { flex-direction:column; }
-    .tabs { justify-content:flex-start; }
-    .grid { grid-template-columns:repeat(2, 1fr); }
+    .heroTop { flex-direction: column; }
+    .tabs { justify-content: flex-start; }
+    .filterBox.grow{ min-width: 260px; }
+    .catBar { flex-direction: column; align-items: flex-start; }
+    .catBtns { justify-content: flex-start; }
+    .grid { grid-template-columns: repeat(2, 1fr); }
   }
+
   @media (max-width: 640px) {
-    .title { font-size:44px; }
-    .grid { grid-template-columns:1fr; }
+    .title { font-size: 48px; }
+    .grid { grid-template-columns: 1fr; }
+    .filterBox.grow{ min-width: 0; width: 100%; }
   }
 `;

@@ -1,11 +1,13 @@
+// pages/index.js (FULL - compilabile)
 import fs from "fs";
 import path from "path";
 import Link from "next/link";
 import dynamic from "next/dynamic";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
 
+// -------------------- data load (SSG) --------------------
 function readDaily() {
   const filePath = path.join(process.cwd(), "data", "daily.json");
   if (!fs.existsSync(filePath)) return [];
@@ -16,31 +18,180 @@ function n(x) {
   const v = Number(x);
   return Number.isFinite(v) ? v : NaN;
 }
-function fmt(x, d = 1) {
-  const v = n(x);
-  if (!Number.isFinite(v)) return "—";
-  return v.toFixed(d);
-}
 function sum(arr) {
   return arr.reduce((s, x) => s + x, 0);
 }
 function avg(arr) {
   return arr.length ? sum(arr) / arr.length : NaN;
 }
+function fmt(x, d = 1) {
+  const v = n(x);
+  if (!Number.isFinite(v)) return "—";
+  return v.toFixed(d);
+}
+function round1(x) {
+  const v = Number(x);
+  if (!Number.isFinite(v)) return null;
+  return Math.round((v + Number.EPSILON) * 10) / 10;
+}
+function fmt1(x, fallback = "—") {
+  const r = round1(x);
+  return r === null ? fallback : r.toFixed(1);
+}
 function fmtDateISO(d) {
   if (!d) return "—";
   return String(d).slice(0, 10);
 }
-function clampInt(x, min, max) {
-  const v = Math.max(min, Math.min(max, x));
-  return v;
+function clamp01(x) {
+  if (!Number.isFinite(x)) return 0;
+  return Math.max(0, Math.min(1, x));
+}
+function fmtSigned(x, d = 1) {
+  const v = n(x);
+  if (!Number.isFinite(v)) return "—";
+  const s = v > 0 ? "+" : "";
+  return `${s}${v.toFixed(d)}`;
+}
+
+function pad2(x) {
+  return String(x).padStart(2, "0");
+}
+function dateToISO(d) {
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
+function isoDow(d) {
+  const day = d.getDay(); // 0 Sun..6 Sat
+  return day === 0 ? 7 : day; // 1..7 (Mon..Sun)
+}
+
+// direzione vento: N, NE, E, SE, S, SW, W, NW
+function degToCardinal8(v) {
+  const nn = Number(v);
+  if (!Number.isFinite(nn)) return "";
+  const d = ((nn % 360) + 360) % 360;
+  const ix = Math.round(d / 45) % 8;
+  return ["N", "NE", "E", "SE", "S", "SW", "W", "NW"][ix];
+}
+
+// assi "nice"
+function niceStep(range, targetTicks = 6) {
+  if (!Number.isFinite(range) || range <= 0) return 1;
+  const rough = range / targetTicks;
+  const pow10 = Math.pow(10, Math.floor(Math.log10(rough)));
+  const r = rough / pow10;
+  let step;
+  if (r <= 1) step = 1;
+  else if (r <= 2) step = 2;
+  else if (r <= 2.5) step = 2.5;
+  else if (r <= 5) step = 5;
+  else step = 10;
+  return step * pow10;
+}
+function axisNice(min, max, targetTicks = 6) {
+  if (!Number.isFinite(min) || !Number.isFinite(max) || min === max) return { min: 0, max: 1, interval: 0.2 };
+  const range = max - min;
+  const interval = niceStep(range, targetTicks);
+  const niceMin = Math.floor(min / interval) * interval;
+  const niceMax = Math.ceil(max / interval) * interval;
+  return { min: niceMin, max: niceMax, interval };
+}
+
+// dataZoom per grafico settimanale (time axis)
+function makeWeekDataZoom() {
+  return [
+    { type: "inside", xAxisIndex: 0, filterMode: "none", zoomOnMouseWheel: true, moveOnMouseWheel: true, moveOnMouseMove: true },
+    { type: "slider", xAxisIndex: 0, start: 0, end: 100, bottom: 8, height: 22, showDetail: false },
+  ];
+}
+
+// ultima settimana COMPLETA disponibile (Lun->Dom) basata su daily.json
+function findLastFullWeekISO(datesSet, lastDateISO) {
+  if (!lastDateISO) return [];
+  let cursor = new Date(`${lastDateISO}T12:00:00`);
+
+  for (let tries = 0; tries < 260; tries++) {
+    const dow = isoDow(cursor);
+    const sunday = new Date(cursor);
+    sunday.setDate(sunday.getDate() + (7 - dow));
+
+    const monday = new Date(sunday);
+    monday.setDate(monday.getDate() - 6);
+
+    const week = [];
+    let ok = true;
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(monday);
+      d.setDate(monday.getDate() + i);
+      const iso = dateToISO(d);
+      week.push(iso);
+      if (!datesSet.has(iso)) ok = false;
+    }
+
+    if (ok) return week;
+
+    cursor = new Date(monday);
+    cursor.setDate(cursor.getDate() - 7);
+  }
+  return [];
+}
+
+// -------------------- Protezione Civile (build-time fetch) --------------------
+async function fetchPcAlertForCollinas() {
+  const url = process.env.PC_ALERT_URL;
+  if (!url) {
+    return {
+      ok: false,
+      level: "verde",
+      title: "Avvisi Protezione Civile",
+      area: "Collinas",
+      from: null,
+      to: null,
+      url: null,
+      note: "PC_ALERT_URL non configurato",
+    };
+  }
+
+  try {
+    const res = await fetch(url, { headers: { "User-Agent": "meteo-collinas/1.0" } });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const j = await res.json();
+
+    const item = Array.isArray(j)
+      ? j.find((x) => String(x?.area || "").toLowerCase().includes("collinas")) || j[0]
+      : j;
+
+    const levelRaw = String(item?.level || "verde").toLowerCase();
+    const level =
+      levelRaw.includes("ross") ? "rosso" : levelRaw.includes("aranc") ? "arancione" : levelRaw.includes("giall") ? "giallo" : "verde";
+
+    return {
+      ok: true,
+      level,
+      title: String(item?.title || "Avviso Protezione Civile"),
+      area: String(item?.area || "Collinas"),
+      from: item?.from ?? null,
+      to: item?.to ?? null,
+      url: item?.url ?? null,
+      note: null,
+    };
+  } catch (e) {
+    return {
+      ok: false,
+      level: "verde",
+      title: "Avvisi Protezione Civile",
+      area: "Collinas",
+      from: null,
+      to: null,
+      url: null,
+      note: "Errore nel recupero avvisi (endpoint non raggiungibile o formato non valido).",
+    };
+  }
 }
 
 export async function getStaticProps() {
   const rows = readDaily().sort((a, b) => String(a?.date || "").localeCompare(String(b?.date || "")));
 
   const years = Array.from(new Set(rows.map((r) => String(r?.date || "").slice(0, 4)).filter(Boolean))).sort();
-
   const start = rows.length ? rows[0].date : null;
   const end = rows.length ? rows[rows.length - 1].date : null;
 
@@ -54,360 +205,330 @@ export async function getStaticProps() {
 
   const yearStats = years.map((y) => {
     const d = byYear.get(y) || [];
-
     const tmins = d.map((x) => n(x?.tmin)).filter(Number.isFinite);
     const tmaxs = d.map((x) => n(x?.tmax)).filter(Number.isFinite);
     const tmeans = d.map((x) => n(x?.tmean)).filter(Number.isFinite);
     const rains = d.map((x) => n(x?.rain_total)).filter(Number.isFinite);
     const gusts = d.map((x) => n(x?.gust_max)).filter(Number.isFinite);
 
-    const tminAbs = tmins.length ? Math.min(...tmins) : NaN;
-    const tmaxAbs = tmaxs.length ? Math.max(...tmaxs) : NaN;
-
     return {
       year: y,
       ndays: d.length,
-      tmeanAnn: avg(tmeans),
-      tminAbs,
-      tmaxAbs,
-      rainAnn: sum(rains),
+      tmin: tmins.length ? Math.min(...tmins) : NaN,
+      tmax: tmaxs.length ? Math.max(...tmaxs) : NaN,
+      tmean: avg(tmeans),
+      rain: sum(rains),
       rainyDays: rains.filter((x) => x > 0).length,
-      gustAbs: gusts.length ? Math.max(...gusts) : NaN,
+      gustMax: gusts.length ? Math.max(...gusts) : NaN,
     };
   });
 
-  // record teaser (all-time)
-  const allTmin = rows.map((r) => n(r?.tmin)).filter(Number.isFinite);
-  const allTmax = rows.map((r) => n(r?.tmax)).filter(Number.isFinite);
-  const allGust = rows.map((r) => n(r?.gust_max)).filter(Number.isFinite);
-  const allRain = rows.map((r) => n(r?.rain_total)).filter(Number.isFinite);
+  const allTmean = yearStats.map((y) => n(y.tmean)).filter(Number.isFinite);
+  const overallTmean = avg(allTmean);
 
-  const recordTeaser = {
-    tminAbs: allTmin.length ? Math.min(...allTmin) : NaN,
-    tmaxAbs: allTmax.length ? Math.max(...allTmax) : NaN,
-    gustAbs: allGust.length ? Math.max(...allGust) : NaN,
-    rainMaxDay: allRain.length ? Math.max(...allRain) : NaN,
-  };
+  const rainVals = yearStats.map((y) => n(y.rain)).filter(Number.isFinite);
+  const rainMin = rainVals.length ? Math.min(...rainVals) : 0;
+  const rainMax = rainVals.length ? Math.max(...rainVals) : 0;
+
+  const tmeanVals = yearStats.map((y) => n(y.tmean)).filter(Number.isFinite);
+  const tmeanMin = tmeanVals.length ? Math.min(...tmeanVals) : 0;
+  const tmeanMax = tmeanVals.length ? Math.max(...tmeanVals) : 0;
+
+  const dateSet = new Set(rows.map((r) => String(r?.date || "").slice(0, 10)).filter(Boolean));
+  const lastDateISO = rows.length ? String(rows[rows.length - 1]?.date || "").slice(0, 10) : null;
+  const weekDates = findLastFullWeekISO(dateSet, lastDateISO);
+
+  const lastYear = years.length ? years[years.length - 1] : null;
+  const lastYearLink = lastYear ? `/anni/${lastYear}` : "/anni";
+
+  const pcAlert = await fetchPcAlertForCollinas();
 
   return {
     props: {
       years,
-      totalDays: rows.length,
       start,
       end,
       yearStats,
-      recordTeaser,
+      overallTmean,
+      norm: { rainMin, rainMax, tmeanMin, tmeanMax },
+      weekDates,
+      lastYearLink,
+      pcAlert,
     },
+    revalidate: 300,
   };
 }
 
 export default function Home({
-  years = [],
-  totalDays = 0,
+  yearStats = [],
   start = null,
   end = null,
-  yearStats = [],
-  recordTeaser = { tminAbs: NaN, tmaxAbs: NaN, gustAbs: NaN, rainMaxDay: NaN },
+  overallTmean = NaN,
+  norm = { rainMin: 0, rainMax: 0, tmeanMin: 0, tmeanMax: 0 },
+  weekDates = [],
+  lastYearLink = "/anni",
+  pcAlert = { ok: false, level: "verde", title: "Avvisi Protezione Civile", area: "Collinas", from: null, to: null, url: null, note: null },
 }) {
-  const lastYear = yearStats.length ? yearStats[yearStats.length - 1].year : null;
+  const [q, setQ] = useState("");
 
-  // Quanti anni mostrare di default (home non deve diventare infinita)
-  const DEFAULT_VISIBLE_YEARS = 6;
+  const filtered = useMemo(() => {
+    const s = String(q || "").trim();
+    if (!s) return yearStats;
+    return yearStats.filter((y) => String(y.year).includes(s));
+  }, [q, yearStats]);
 
-  // Mostro gli ultimi N anni, ma se ne hai meno non rompo nulla
-  const maxVisible = useMemo(() => clampInt(DEFAULT_VISIBLE_YEARS, 1, Math.max(1, yearStats.length)), [yearStats.length]);
-  const [showAllYears, setShowAllYears] = useState(false);
-
-  // ordine: ultimi anni prima (più utile)
-  const yearsDesc = useMemo(() => [...yearStats].sort((a, b) => String(b.year).localeCompare(String(a.year))), [yearStats]);
-
-  const visibleYears = useMemo(() => {
-    if (showAllYears) return yearsDesc;
-    return yearsDesc.slice(0, maxVisible);
-  }, [yearsDesc, showAllYears, maxVisible]);
-
-  // TREND
-  const metrics = useMemo(
-    () => [
-      { key: "tmeanAnn", label: "Temperatura media annua", unit: "°C", decimals: 1, kind: "line" },
-      { key: "tminAbs", label: "Minima assoluta annua", unit: "°C", decimals: 1, kind: "line" },
-      { key: "tmaxAbs", label: "Massima assoluta annua", unit: "°C", decimals: 1, kind: "line" },
-      { key: "rainAnn", label: "Pioggia annua", unit: "mm", decimals: 1, kind: "bar" },
-      { key: "rainyDays", label: "Giorni piovosi annui", unit: "gg", decimals: 0, kind: "bar" },
-      { key: "gustAbs", label: "Raffica massima annua", unit: "km/h", decimals: 1, kind: "line" },
-    ],
-    []
-  );
-
-  const [metricKey, setMetricKey] = useState(metrics[0].key);
-  const metric = metrics.find((m) => m.key === metricKey) || metrics[0];
-
-  const trendOption = useMemo(() => {
-    // trend su tutti gli anni (ordine crescente per senso temporale)
-    const ysAsc = [...yearStats].sort((a, b) => String(a.year).localeCompare(String(b.year)));
-    const yearsX = ysAsc.map((y) => y.year);
-    const values = ysAsc.map((y) => {
-      const v = Number(y?.[metric.key]);
-      return Number.isFinite(v) ? v : null;
-    });
-
-    const isBar = metric.kind === "bar";
-
-    return {
-      grid: { left: 52, right: 18, top: 30, bottom: 42 },
-      tooltip: {
-        trigger: "axis",
-        valueFormatter: (v) => (v == null ? "—" : `${Number(v).toFixed(metric.decimals)} ${metric.unit}`),
-      },
-      xAxis: {
-        type: "category",
-        data: yearsX,
-        axisLabel: { interval: 0 },
-      },
-      yAxis: {
-        type: "value",
-        splitLine: { show: true },
-      },
-      series: [
-        isBar
-          ? { type: "bar", data: values, barMaxWidth: 34 }
-          : { type: "line", data: values, showSymbol: true, symbolSize: 7, smooth: true, connectNulls: false },
-      ],
-    };
-  }, [yearStats, metric]);
+  const weekLabel = useMemo(() => {
+    if (!Array.isArray(weekDates) || weekDates.length !== 7) return "Ultima settimana disponibile";
+    return `${weekDates[0]} → ${weekDates[6]}`;
+  }, [weekDates]);
 
   return (
     <div className="page">
-      <div className="container">
-        {/* HERO */}
-        <header className="hero">
-          <div className="heroInner">
-            <div className="heroLeft">
-              <div className="kicker">ARCHIVIO METEO</div>
-              <h1 className="title">Meteo Collinas</h1>
-              <p className="lead">
-                Storico meteo della stazione: riepiloghi annuali, dettagli mensili e pagina Record (in arrivo).
-              </p>
+      <header className="hero">
+        <div className="heroTop">
+          <div className="heroLeft">
+            <div className="kicker">ARCHIVIO METEO</div>
+            <h1 className="title">Meteo Collinas</h1>
 
-              <div className="chips">
-                <span className="chip">
-                  <span className="dot" /> Giornalieri + intraday
-                </span>
-                <span className="chip">
-                  <b>{totalDays || 0}</b>&nbsp;giorni archiviati
-                </span>
-                <span className="chip">
-                  Periodo: <b>{fmtDateISO(start)}</b> → <b>{fmtDateISO(end)}</b>
-                </span>
-              </div>
+            <div className="subline">Dati storici della stazione, organizzati per anno e mese.</div>
 
-              <div className="actions">
-                <Link href="/records" className="btnPrimary">
-                  Vedi record →
-                </Link>
-                <Link href={lastYear ? `/anni/${lastYear}` : "/anni"} className="btnGhost">
-                  Apri ultimo anno →
-                </Link>
-              </div>
-            </div>
-
-            <div className="heroRight">
-              <div className="kpiGrid">
-                <Kpi icon="📅" title="Anni disponibili" value={years.length ? String(years.length) : "—"} sub="anni con dati" />
-                <Kpi icon="🗓️" title="Giorni totali" value={totalDays ? String(totalDays) : "—"} sub="osservazioni" />
-                <Kpi icon="✅" title="Ultimo aggiornamento" value={fmtDateISO(end)} sub="ultimo giorno" small />
-                <Kpi icon="⏱️" title="Copertura" value={`${fmtDateISO(start)} → ${fmtDateISO(end)}`} sub="periodo" small />
-              </div>
+            <div className="howto" role="note">
+              <b>Come si usa:</b> sotto trovi gli anni. Premi <b>“Apri dettagli”</b> per vedere mesi e tabella giornaliera.
+              <span className="dot">•</span>
+              Periodo dati: <b>{fmtDateISO(start)}</b> → <b>{fmtDateISO(end)}</b>
             </div>
           </div>
 
-          {/* RECORD TEASER (compatto) */}
-          <div className="strip">
-            <div className="stripHead">
-              <div>
-                <div className="stripTitle">Record principali (anteprima)</div>
-                <div className="stripSub">Valori estremi più importanti, spiegati semplice.</div>
-              </div>
-              <Link href="/records" className="stripLink">
-                Vai ai record →
-              </Link>
-            </div>
-
-            <div className="miniGrid">
-              <MiniStat icon="🥶" label="Min assoluta" value={`${fmt(recordTeaser.tminAbs, 1)} °C`} />
-              <MiniStat icon="🔥" label="Max assoluta" value={`${fmt(recordTeaser.tmaxAbs, 1)} °C`} />
-              <MiniStat icon="💨" label="Raffica max" value={`${fmt(recordTeaser.gustAbs, 1)} km/h`} />
-              <MiniStat icon="🌧️" label="Pioggia max gg" value={`${fmt(recordTeaser.rainMaxDay, 1)} mm`} />
-            </div>
+          <div className="heroRight">
+            <PcAlertCard alert={pcAlert} />
           </div>
-        </header>
+        </div>
 
-        {/* TREND (uno solo, compatto) */}
-        <section className="section">
-          <div className="sectionHead">
-            <div>
-              <h2 className="h2">Trend nel tempo</h2>
-              <p className="hint">Seleziona un parametro: vedi come cambia anno per anno.</p>
-            </div>
-
-            <div className="controls">
-              <label className="ctrlLabel" htmlFor="metric">
-                Parametro
-              </label>
-              <select id="metric" className="select" value={metricKey} onChange={(e) => setMetricKey(e.target.value)}>
-                {metrics.map((m) => (
-                  <option key={m.key} value={m.key}>
-                    {m.label}
-                  </option>
-                ))}
-              </select>
-            </div>
+        <div className="embedWrap" aria-label="Widget WeatherLink">
+          <div className="embedFrame">
+            <iframe
+              src="https://www.weatherlink.com/embeddablePage/show/865c69d0529a4b2d907ab00a67d2935d/signature"
+              width="760"
+              height="200"
+              frameBorder="0"
+              title="WeatherLink Signature"
+            />
           </div>
 
-          <div className="trendCard">
-            <div className="trendTop">
-              <div className="trendTitle">{metric.label}</div>
-              <div className="trendUnit">Unità: {metric.unit}</div>
-            </div>
-            <div className="trendChart">
-              <ReactECharts option={trendOption} style={{ height: 300, width: "100%" }} />
-            </div>
+          <div className="quickNav" aria-label="Sezioni principali">
+            <Link href="/records" className="quickBtn">
+              Record <span aria-hidden="true">→</span>
+            </Link>
+            <Link href="/radar" className="quickBtn">
+              Radar <span aria-hidden="true">→</span>
+            </Link>
+            <Link href="/previsioni" className="quickBtn">
+              Grafici di previsione <span aria-hidden="true">→</span>
+            </Link>
           </div>
-        </section>
+        </div>
 
-        {/* ANNI (COMPATTI + MOSTRA ALTRI) */}
-        <section className="section">
-          <div className="sectionHead">
-            <div>
-              <h2 className="h2">Anni</h2>
-              <p className="hint">
-                Home compatta: qui vedi solo un riepilogo. Clicca l’anno per i dettagli.
-              </p>
-            </div>
+        <div className="weekWrap">
+          <WeekChart weekDates={weekDates} weekLabel={weekLabel} />
+        </div>
+      </header>
 
-            <div className="yearsActions">
-              {yearStats.length > maxVisible && (
-                <button className="btnToggle" onClick={() => setShowAllYears((s) => !s)}>
-                  {showAllYears ? "Mostra meno" : `Mostra tutti (${yearStats.length})`}
-                </button>
-              )}
-            </div>
+      <section className="section">
+        <div className="sectionHead">
+          <div>
+            <h2>Seleziona un anno</h2>
+            <div className="hint">Ogni scheda ha un pulsante dedicato: è quello che ti porta ai dettagli.</div>
           </div>
 
-          <div className="yearGridCompact">
-            {visibleYears.map((y) => (
-              <Link key={y.year} href={`/anni/${y.year}`} className="yearCardCompact" title={`Apri ${y.year}`}>
-                <div className="ycTop">
-                  <div className="ycYear">{y.year}</div>
-                  <div className="ycOpen">
-                    Apri <span className="arr">→</span>
-                  </div>
-                </div>
+          <div className="tools">
+            <label className="searchWrap" aria-label="Filtra anni">
+              <span className="searchLabel">Filtro</span>
+              <input className="search" placeholder="es. 2025" value={q} onChange={(e) => setQ(e.target.value)} inputMode="numeric" />
+            </label>
 
-                {/* SOLO 4 info: basta e avanza per la home */}
-                <div className="ycGrid">
-                  <Tiny label="Temp. media" value={`${fmt(y.tmeanAnn, 1)} °C`} />
-                  <Tiny label="Min / Max" value={`${fmt(y.tminAbs, 1)} / ${fmt(y.tmaxAbs, 1)} °C`} />
-                  <Tiny label="Pioggia annua" value={`${fmt(y.rainAnn, 1)} mm`} />
-                  <Tiny label="Raffica max" value={`${fmt(y.gustAbs, 1)} km/h`} />
-                </div>
+            <Link href="/anni" className="btnSoft">
+              Indice anni <span aria-hidden="true">→</span>
+            </Link>
 
-                <div className="ycFoot">
-                  <span className="ycDays">{y.ndays} giorni</span>
-                  <span className="ycRainy">{y.rainyDays} gg piovosi</span>
-                </div>
-              </Link>
-            ))}
-
-            {!yearStats.length && (
-              <div className="empty">
-                Nessun dato ancora. Metti i CSV in <code>data_raw/clean/AAAA</code> e lancia{" "}
-                <code>node ./scripts/build-data.js</code>.
-              </div>
-            )}
+            <Link href={lastYearLink} className="btnPrimary">
+              Entra nell’archivio <span aria-hidden="true">→</span>
+            </Link>
           </div>
-        </section>
-      </div>
+        </div>
+
+        <div className="grid">
+          {filtered.map((y) => (
+            <YearCard key={y.year} y={y} overallTmean={overallTmean} norm={norm} />
+          ))}
+
+          {!yearStats.length && (
+            <div className="empty">
+              Nessun dato ancora. Metti i CSV in <code>data_raw/clean/AAAA</code> e lancia <code>node ./scripts/build-data.js</code>.
+            </div>
+          )}
+
+          {yearStats.length > 0 && filtered.length === 0 && (
+            <div className="empty">
+              Nessun anno trovato per <code>{q}</code>. Cancella il filtro.
+            </div>
+          )}
+        </div>
+      </section>
 
       <style jsx>{`
         .page {
           min-height: 100vh;
-          background: radial-gradient(900px 420px at 15% 0%, rgba(59, 130, 246, 0.10), transparent 55%),
-            radial-gradient(900px 420px at 85% 10%, rgba(16, 185, 129, 0.08), transparent 60%),
+          background: radial-gradient(1200px 400px at 20% 0%, rgba(15, 23, 42, 0.05), transparent 60%),
+            radial-gradient(900px 350px at 90% 10%, rgba(2, 132, 199, 0.07), transparent 55%),
             linear-gradient(180deg, #ffffff, #f8fafc);
-          padding: 22px 14px 56px;
-        }
-        .container {
-          max-width: 1180px;
-          margin: 0 auto;
+          padding: 22px 16px 56px;
         }
 
-        /* HERO */
         .hero {
+          max-width: 1180px;
+          margin: 0 auto;
           border: 1px solid #e8e8e8;
-          border-radius: 26px;
+          border-radius: 24px;
           background: rgba(255, 255, 255, 0.86);
-          box-shadow: 0 12px 36px rgba(15, 23, 42, 0.08);
+          backdrop-filter: blur(8px);
+          box-shadow: 0 10px 30px rgba(15, 23, 42, 0.06);
           overflow: hidden;
         }
-        .heroInner {
+
+        .heroTop {
           display: grid;
-          grid-template-columns: 1.2fr 1fr;
-          gap: 18px;
-          padding: 24px;
+          grid-template-columns: 1.15fr 1fr;
+          gap: 16px;
+          padding: 22px;
         }
+
         .kicker {
           font-size: 12px;
-          letter-spacing: 0.16em;
+          letter-spacing: 0.14em;
           text-transform: uppercase;
           color: rgba(15, 23, 42, 0.62);
           font-weight: 900;
         }
+
         .title {
-          margin: 10px 0 0;
-          font-size: 56px;
-          line-height: 1;
-          letter-spacing: -0.03em;
+          margin: 8px 0 0;
+          font-size: 52px;
+          line-height: 1.02;
+          letter-spacing: -0.02em;
           font-weight: 950;
           color: #0f172a;
         }
-        .lead {
-          margin: 12px 0 0;
+
+        .subline {
+          margin-top: 10px;
           font-size: 14px;
           color: rgba(15, 23, 42, 0.72);
-          max-width: 60ch;
+          line-height: 1.45;
         }
-        .chips {
-          margin-top: 14px;
-          display: flex;
-          flex-wrap: wrap;
-          gap: 8px;
-        }
-        .chip {
-          display: inline-flex;
-          align-items: center;
-          gap: 8px;
-          border: 1px solid #e9e9e9;
-          background: rgba(255, 255, 255, 0.95);
-          padding: 7px 11px;
-          border-radius: 999px;
-          font-size: 13px;
-          color: rgba(15, 23, 42, 0.76);
-          box-shadow: 0 1px 0 rgba(0, 0, 0, 0.03);
-        }
+
         .dot {
-          width: 8px;
-          height: 8px;
-          border-radius: 999px;
-          background: #0f172a;
-          opacity: 0.8;
+          margin: 0 8px;
+          opacity: 0.5;
         }
-        .actions {
-          margin-top: 16px;
+
+        .howto {
+          margin-top: 14px;
+          border: 1px solid #ececec;
+          background: rgba(248, 250, 252, 0.85);
+          border-radius: 16px;
+          padding: 10px 12px;
+          font-size: 12px;
+          color: rgba(15, 23, 42, 0.74);
+          line-height: 1.45;
+        }
+
+        .heroRight {
           display: flex;
-          flex-wrap: wrap;
+          justify-content: flex-end;
+          align-items: flex-start;
+        }
+
+        .embedWrap {
+          border-top: 1px solid #efefef;
+          padding: 18px 22px;
+          background: linear-gradient(180deg, rgba(248, 250, 252, 0.65), rgba(255, 255, 255, 0.92));
+        }
+        .embedFrame {
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          overflow: hidden;
+        }
+        .embedFrame iframe {
+          border-radius: 16px;
+        }
+
+        .quickNav {
+          margin-top: 14px;
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
           gap: 10px;
         }
+
+        .quickBtn {
+          text-decoration: none;
+          color: #0f172a;
+          background: rgba(255, 255, 255, 0.96);
+          border: 1px solid #e7e7e7;
+          padding: 12px 14px;
+          border-radius: 16px;
+          font-weight: 950;
+          font-size: 13px;
+          transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          box-shadow: 0 1px 0 rgba(0, 0, 0, 0.02);
+          white-space: nowrap;
+        }
+        .quickBtn:hover {
+          transform: translateY(-1px);
+          background: #ffffff;
+          border-color: #d6d6d6;
+        }
+
+        .weekWrap {
+          padding: 0 22px 22px;
+        }
+
+        .section {
+          max-width: 1180px;
+          margin: 18px auto 0;
+        }
+        .sectionHead {
+          display: flex;
+          align-items: flex-end;
+          justify-content: space-between;
+          gap: 12px;
+          margin: 16px 0 10px;
+        }
+        h2 {
+          margin: 0;
+          font-size: 22px;
+          font-weight: 950;
+          letter-spacing: -0.01em;
+          color: #0f172a;
+        }
+        .hint {
+          margin-top: 4px;
+          font-size: 12px;
+          color: rgba(15, 23, 42, 0.66);
+          max-width: 720px;
+        }
+
+        .tools {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          flex-wrap: wrap;
+          justify-content: flex-end;
+        }
+
         .btnPrimary {
           text-decoration: none;
           color: #fff;
@@ -416,246 +537,62 @@ export default function Home({
           border-radius: 16px;
           font-weight: 950;
           font-size: 13px;
-          box-shadow: 0 10px 22px rgba(15, 23, 42, 0.22);
+          box-shadow: 0 10px 22px rgba(15, 23, 42, 0.18);
           transition: transform 140ms ease, background 140ms ease;
+          white-space: nowrap;
         }
         .btnPrimary:hover {
           transform: translateY(-1px);
           background: #0b1223;
         }
-        .btnGhost {
+
+        .btnSoft {
           text-decoration: none;
           color: #0f172a;
-          background: rgba(255, 255, 255, 0.9);
+          background: rgba(255, 255, 255, 0.96);
           border: 1px solid #e7e7e7;
           padding: 11px 14px;
           border-radius: 16px;
           font-weight: 950;
           font-size: 13px;
           transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
-        }
-        .btnGhost:hover {
-          transform: translateY(-1px);
-          border-color: #d6d6d6;
-          background: #ffffff;
-        }
-        .kpiGrid {
-          display: grid;
-          grid-template-columns: repeat(2, 1fr);
-          gap: 10px;
-          align-content: start;
-        }
-
-        /* RECORD STRIP */
-        .strip {
-          border-top: 1px solid #efefef;
-          padding: 18px 24px 22px;
-          background: linear-gradient(180deg, rgba(248, 250, 252, 0.7), rgba(255, 255, 255, 0.92));
-        }
-        .stripHead {
-          display: flex;
-          align-items: flex-start;
-          justify-content: space-between;
-          gap: 14px;
-        }
-        .stripTitle {
-          font-size: 16px;
-          font-weight: 950;
-          color: #0f172a;
-          letter-spacing: -0.01em;
-        }
-        .stripSub {
-          margin-top: 4px;
-          font-size: 12px;
-          color: rgba(15, 23, 42, 0.68);
-        }
-        .stripLink {
-          text-decoration: none;
-          color: #0f172a;
-          font-weight: 950;
-          font-size: 13px;
-          border: 1px solid #e7e7e7;
-          background: #fff;
-          padding: 10px 14px;
-          border-radius: 16px;
-          transition: transform 140ms ease, border-color 140ms ease;
           white-space: nowrap;
         }
-        .stripLink:hover {
+        .btnSoft:hover {
           transform: translateY(-1px);
-          border-color: #d2d2d2;
-        }
-        .miniGrid {
-          margin-top: 12px;
-          display: grid;
-          grid-template-columns: repeat(4, 1fr);
-          gap: 10px;
+          background: #ffffff;
+          border-color: #d6d6d6;
         }
 
-        /* SECTIONS */
-        .section {
-          margin-top: 18px;
-        }
-        .sectionHead {
-          display: flex;
-          align-items: flex-end;
-          justify-content: space-between;
-          gap: 12px;
-          margin: 14px 0 10px;
-          flex-wrap: wrap;
-        }
-        .h2 {
-          margin: 0;
-          font-size: 24px;
-          font-weight: 950;
-          letter-spacing: -0.02em;
-          color: #0f172a;
-        }
-        .hint {
-          margin: 6px 0 0;
-          font-size: 13px;
-          color: rgba(15, 23, 42, 0.66);
-        }
-
-        /* TREND */
-        .controls {
+        .searchWrap {
           display: flex;
           align-items: center;
-          gap: 10px;
-        }
-        .ctrlLabel {
-          font-size: 12px;
-          font-weight: 900;
-          color: rgba(15, 23, 42, 0.72);
-        }
-        .select {
+          gap: 8px;
           border: 1px solid #e7e7e7;
           background: rgba(255, 255, 255, 0.95);
-          border-radius: 14px;
-          padding: 10px 12px;
-          font-weight: 900;
-          color: #0f172a;
-          outline: none;
+          padding: 9px 10px;
+          border-radius: 16px;
+          box-shadow: 0 1px 0 rgba(0, 0, 0, 0.02);
         }
-        .trendCard {
-          border: 1px solid #e9e9e9;
-          border-radius: 22px;
-          background: rgba(255, 255, 255, 0.96);
-          box-shadow: 0 10px 26px rgba(15, 23, 42, 0.06);
-          padding: 14px;
-        }
-        .trendTop {
-          display: flex;
-          justify-content: space-between;
-          align-items: baseline;
-          gap: 10px;
-          padding: 4px 6px 10px;
-        }
-        .trendTitle {
-          font-size: 15px;
-          font-weight: 950;
-          color: #0f172a;
-        }
-        .trendUnit {
+        .searchLabel {
           font-size: 12px;
-          font-weight: 900;
-          color: rgba(15, 23, 42, 0.62);
+          font-weight: 950;
+          color: rgba(15, 23, 42, 0.7);
         }
-        .trendChart {
-          border-top: 1px solid #f1f1f1;
-          padding-top: 10px;
-        }
-
-        /* ANNI COMPATTI */
-        .yearsActions {
-          display: flex;
-          align-items: center;
-          gap: 10px;
-        }
-        .btnToggle {
-          border: 1px solid #e7e7e7;
-          background: rgba(255, 255, 255, 0.9);
-          border-radius: 14px;
-          padding: 10px 12px;
+        .search {
+          width: 110px;
+          border: none;
+          outline: none;
+          background: transparent;
+          font-size: 13px;
           font-weight: 950;
           color: #0f172a;
-          cursor: pointer;
-          transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
-        }
-        .btnToggle:hover {
-          transform: translateY(-1px);
-          border-color: #d6d6d6;
-          background: #fff;
         }
 
-        .yearGridCompact {
+        .grid {
           display: grid;
           grid-template-columns: repeat(3, 1fr);
           gap: 12px;
-        }
-
-        .yearCardCompact {
-          text-decoration: none;
-          color: inherit;
-          border: 1px solid #e9e9e9;
-          border-radius: 22px;
-          padding: 14px;
-          background: rgba(255, 255, 255, 0.96);
-          box-shadow: 0 10px 26px rgba(15, 23, 42, 0.06);
-          transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
-        }
-        .yearCardCompact:hover {
-          transform: translateY(-3px);
-          border-color: #d2d2d2;
-          box-shadow: 0 14px 34px rgba(15, 23, 42, 0.09);
-        }
-
-        .ycTop {
-          display: flex;
-          justify-content: space-between;
-          align-items: baseline;
-          gap: 10px;
-        }
-        .ycYear {
-          font-size: 30px;
-          font-weight: 950;
-          letter-spacing: -0.02em;
-          color: #0f172a;
-        }
-        .ycOpen {
-          font-size: 12px;
-          font-weight: 900;
-          color: rgba(15, 23, 42, 0.70);
-          border: 1px solid #e7e7e7;
-          background: #fff;
-          border-radius: 999px;
-          padding: 6px 10px;
-          white-space: nowrap;
-        }
-        .arr {
-          display: inline-block;
-          transform: translateY(0.5px);
-        }
-
-        .ycGrid {
-          margin-top: 12px;
-          display: grid;
-          grid-template-columns: repeat(2, 1fr);
-          gap: 10px;
-          border-top: 1px solid #f1f1f1;
-          padding-top: 12px;
-        }
-
-        .ycFoot {
-          margin-top: 12px;
-          padding-top: 10px;
-          border-top: 1px dashed #e7e7e7;
-          display: flex;
-          justify-content: space-between;
-          gap: 10px;
-          font-size: 12px;
-          font-weight: 900;
-          color: rgba(15, 23, 42, 0.62);
         }
 
         .empty {
@@ -675,16 +612,23 @@ export default function Home({
         }
 
         @media (max-width: 1080px) {
-          .heroInner {
+          .heroTop {
             grid-template-columns: 1fr;
           }
           .title {
             font-size: 44px;
           }
-          .miniGrid {
-            grid-template-columns: repeat(2, 1fr);
+          .embedFrame iframe {
+            width: 100%;
+            max-width: 760px;
           }
-          .yearGridCompact {
+          .grid {
+            grid-template-columns: 1fr;
+          }
+          .tools {
+            justify-content: flex-start;
+          }
+          .quickNav {
             grid-template-columns: 1fr;
           }
         }
@@ -693,145 +637,884 @@ export default function Home({
   );
 }
 
-function Kpi({ icon = "•", title, value, sub, small }) {
+// -------------------- YearCard --------------------
+function YearCard({ y, overallTmean, norm }) {
+  const tDelta = Number.isFinite(n(y.tmean)) && Number.isFinite(n(overallTmean)) ? n(y.tmean) - n(overallTmean) : NaN;
+  const labelDelta = !Number.isFinite(tDelta) ? null : tDelta >= 0.2 ? "Più caldo" : tDelta <= -0.2 ? "Più freddo" : "In linea";
+
+  const rainBar = (() => {
+    const v = n(y.rain);
+    const min = n(norm.rainMin);
+    const max = n(norm.rainMax);
+    const denom = max - min;
+    const t = denom > 0 ? (v - min) / denom : 0;
+    return clamp01(t);
+  })();
+
+  const tBar = (() => {
+    const v = n(y.tmean);
+    const min = n(norm.tmeanMin);
+    const max = n(norm.tmeanMax);
+    const denom = max - min;
+    const t = denom > 0 ? (v - min) / denom : 0;
+    return clamp01(t);
+  })();
+
   return (
-    <div className={`kpi ${small ? "small" : ""}`}>
-      <div className="kpiTop">
-        <span className="kpiIcon" aria-hidden="true">
-          {icon}
-        </span>
-        <div className="kpiLabel">{title}</div>
+    <article className="card" aria-label={`Anno ${y.year}`}>
+      <div className="top">
+        <div className="yr">{y.year}</div>
+
+        <div className="chips" aria-label="Sintesi anno">
+          <span className="chip">
+            <b>{y.ndays}</b> giorni
+          </span>
+          <span className="chip">
+            <b>{fmt(y.rain, 0)}</b> mm
+          </span>
+          <span className="chip">
+            <b>{fmt(y.tmean, 1)}</b> °C
+          </span>
+        </div>
       </div>
-      <div className={`kpiValue ${small ? "small" : ""}`}>{value}</div>
-      <div className="kpiSub">{sub}</div>
+
+      <div className="simple">
+        <div className="metric">
+          <div className="mTop">
+            <span className="mLabel">Pioggia</span>
+            <span className="mValue">{fmt(y.rain, 1)} mm</span>
+          </div>
+          <div className="track" aria-hidden="true">
+            <div className="fill" style={{ width: `${Math.round(rainBar * 100)}%` }} />
+          </div>
+        </div>
+
+        <div className="metric">
+          <div className="mTop">
+            <span className="mLabel">Temperatura media</span>
+            <span className="mValue">{fmt(y.tmean, 1)} °C</span>
+          </div>
+          <div className="track" aria-hidden="true">
+            <div className="fill" style={{ width: `${Math.round(tBar * 100)}%` }} />
+          </div>
+          <div className="note">{labelDelta ? `${labelDelta} (${fmtSigned(tDelta, 1)}° vs media archivio)` : "—"}</div>
+        </div>
+      </div>
+
+      <div className="details">
+        <div className="row">
+          <span>Tmin / Tmax</span>
+          <b>
+            {fmt(y.tmin, 1)} / {fmt(y.tmax, 1)} °C
+          </b>
+        </div>
+        <div className="row">
+          <span>Giorni piovosi</span>
+          <b>{Number.isFinite(n(y.rainyDays)) ? y.rainyDays : "—"}</b>
+        </div>
+        <div className="row">
+          <span>Raffica max</span>
+          <b>{fmt(y.gustMax, 1)} km/h</b>
+        </div>
+      </div>
+
+      <div className="actions">
+        <Link className="btn" href={`/anni/${y.year}`} aria-label={`Apri dettagli anno ${y.year}`}>
+          Apri dettagli <span aria-hidden="true">→</span>
+        </Link>
+        <div className="hint" aria-hidden="true">
+          mesi + tabella giornaliera
+        </div>
+      </div>
 
       <style jsx>{`
-        .kpi {
-          border: 1px solid #ececec;
-          border-radius: 18px;
-          padding: 12px;
+        .card {
+          border: 1px solid #e9e9e9;
+          border-radius: 22px;
+          padding: 14px;
           background: rgba(255, 255, 255, 0.96);
-          box-shadow: 0 1px 0 rgba(0, 0, 0, 0.02);
+          box-shadow: 0 6px 20px rgba(15, 23, 42, 0.05);
         }
-        .kpiTop {
+        .top {
+          display: grid;
+          gap: 8px;
+        }
+        .yr {
+          font-size: 34px;
+          font-weight: 950;
+          letter-spacing: -0.01em;
+          color: #0f172a;
+          line-height: 1;
+        }
+        .chips {
           display: flex;
+          flex-wrap: wrap;
+          gap: 6px;
+        }
+        .chip {
+          border: 1px solid #ececec;
+          background: rgba(248, 250, 252, 0.92);
+          padding: 5px 8px;
+          border-radius: 999px;
+          font-size: 11px;
+          font-weight: 900;
+          color: rgba(15, 23, 42, 0.78);
+          white-space: nowrap;
+        }
+        .simple {
+          margin-top: 10px;
+          border-top: 1px solid #f1f1f1;
+          padding-top: 10px;
+          display: grid;
+          gap: 10px;
+        }
+        .metric {
+          display: grid;
+          gap: 6px;
+        }
+        .mTop {
+          display: flex;
+          justify-content: space-between;
+          gap: 10px;
+          align-items: baseline;
+        }
+        .mLabel {
+          font-size: 12px;
+          font-weight: 950;
+          color: rgba(15, 23, 42, 0.72);
+        }
+        .mValue {
+          font-size: 12px;
+          font-weight: 950;
+          color: rgba(15, 23, 42, 0.88);
+          white-space: nowrap;
+        }
+        .track {
+          height: 10px;
+          border-radius: 999px;
+          background: #f1f5f9;
+          border: 1px solid #e5e7eb;
+          overflow: hidden;
+        }
+        .fill {
+          height: 100%;
+          border-radius: 999px;
+          background: rgba(15, 23, 42, 0.85);
+        }
+        .note {
+          font-size: 11px;
+          color: rgba(15, 23, 42, 0.6);
+          font-weight: 800;
+        }
+        .details {
+          margin-top: 10px;
+          border-top: 1px solid #f1f1f1;
+          padding-top: 8px;
+        }
+        .row {
+          display: flex;
+          justify-content: space-between;
+          gap: 10px;
+          padding: 8px 0;
+          border-top: 1px solid #f5f5f5;
+          font-size: 13px;
+        }
+        .row:first-child {
+          border-top: none;
+        }
+        .row span {
+          color: rgba(15, 23, 42, 0.68);
+          font-weight: 800;
+        }
+        .row b {
+          font-weight: 950;
+          color: #0f172a;
+          white-space: nowrap;
+        }
+        .actions {
+          margin-top: 12px;
+          border-top: 1px dashed #e7e7e7;
+          padding-top: 12px;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 10px;
+        }
+        .btn {
+          text-decoration: none;
+          color: #fff;
+          background: #0f172a;
+          padding: 10px 12px;
+          border-radius: 16px;
+          font-weight: 950;
+          font-size: 13px;
+          box-shadow: 0 10px 20px rgba(15, 23, 42, 0.16);
+          transition: transform 140ms ease, background 140ms ease;
+          display: inline-flex;
           align-items: center;
           gap: 8px;
         }
-        .kpiIcon {
-          width: 26px;
-          height: 26px;
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          border-radius: 10px;
-          background: rgba(15, 23, 42, 0.06);
-          border: 1px solid #ececec;
-          font-size: 14px;
+        .btn:hover {
+          transform: translateY(-1px);
+          background: #0b1223;
         }
-        .kpiLabel {
-          font-size: 12px;
-          color: rgba(15, 23, 42, 0.66);
-          font-weight: 900;
-        }
-        .kpiValue {
-          margin-top: 6px;
-          font-size: 26px;
-          font-weight: 950;
-          color: #0f172a;
-          letter-spacing: -0.01em;
-        }
-        .kpiValue.small {
-          font-size: 14px;
-          font-weight: 900;
-          line-height: 1.2;
-        }
-        .kpiSub {
-          margin-top: 3px;
+        .hint {
           font-size: 11px;
           color: rgba(15, 23, 42, 0.58);
           font-weight: 800;
+          white-space: nowrap;
         }
       `}</style>
-    </div>
+    </article>
   );
 }
 
-function MiniStat({ icon = "•", label, value }) {
+// -------------------- PC Alert Card --------------------
+function PcAlertCard({ alert }) {
+  const level = String(alert?.level || "verde").toLowerCase();
+  const badgeLabel =
+    level === "rosso" ? "Allerta rossa" : level === "arancione" ? "Allerta arancione" : level === "giallo" ? "Allerta gialla" : "Nessuna criticità";
+
   return (
-    <div className="mini">
-      <div className="miniTop">
-        <span className="miniIcon" aria-hidden="true">
-          {icon}
-        </span>
-        <div className="miniLabel">{label}</div>
+    <div className="pcCard" aria-label="Avvisi Protezione Civile">
+      <div className="pcHead">
+        <div>
+          <div className="pcTitle">Avvisi Protezione Civile (Sardegna)</div>
+          <div className="pcSub">
+            Area: <b>{alert?.area || "Collinas"}</b>
+          </div>
+        </div>
+
+        <div className={`badge ${level}`}>
+          <span className="dot" aria-hidden="true" />
+          {badgeLabel}
+        </div>
       </div>
-      <div className="miniValue">{value}</div>
+
+      <div className="pcBody">
+        <div className="pcMain">{alert?.title || "—"}</div>
+
+        <div className="pcMeta">
+          <span>
+            Da: <b>{alert?.from ? String(alert.from) : "—"}</b>
+          </span>
+          <span>
+            A: <b>{alert?.to ? String(alert.to) : "—"}</b>
+          </span>
+        </div>
+
+        {alert?.note ? <div className="pcNote">{alert.note}</div> : null}
+
+        {alert?.url ? (
+          <a className="pcLink" href={alert.url} target="_blank" rel="noreferrer">
+            Dettagli avviso <span aria-hidden="true">↗</span>
+          </a>
+        ) : (
+          <div className="pcLinkDisabled">Dettagli avviso ↗</div>
+        )}
+      </div>
 
       <style jsx>{`
-        .mini {
-          border: 1px solid #e9e9e9;
+        .pcCard {
+          width: 100%;
+          border: 1px solid #ececec;
+          background: rgba(255, 255, 255, 0.95);
           border-radius: 18px;
           padding: 12px;
-          background: rgba(255, 255, 255, 0.92);
           box-shadow: 0 1px 0 rgba(0, 0, 0, 0.02);
         }
-        .miniTop {
+        .pcHead {
           display: flex;
-          align-items: center;
-          gap: 8px;
+          justify-content: space-between;
+          align-items: flex-start;
+          gap: 10px;
         }
-        .miniIcon {
-          width: 26px;
-          height: 26px;
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          border-radius: 10px;
-          background: rgba(15, 23, 42, 0.06);
-          border: 1px solid #ececec;
+        .pcTitle {
           font-size: 14px;
-        }
-        .miniLabel {
-          font-size: 12px;
-          color: rgba(15, 23, 42, 0.72);
-          font-weight: 950;
-        }
-        .miniValue {
-          margin-top: 6px;
-          font-size: 18px;
           font-weight: 950;
           color: #0f172a;
-          letter-spacing: -0.01em;
+        }
+        .pcSub {
+          margin-top: 3px;
+          font-size: 11px;
+          color: rgba(15, 23, 42, 0.64);
+        }
+
+        .badge {
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          border: 1px solid #e7e7e7;
+          background: #fff;
+          padding: 8px 10px;
+          border-radius: 999px;
+          font-weight: 950;
+          font-size: 12px;
+          white-space: nowrap;
+        }
+        .badge .dot {
+          width: 10px;
+          height: 10px;
+          border-radius: 999px;
+          display: inline-block;
+        }
+        .badge.verde .dot {
+          background: #16a34a;
+        }
+        .badge.giallo .dot {
+          background: #facc15;
+        }
+        .badge.arancione .dot {
+          background: #f97316;
+        }
+        .badge.rosso .dot {
+          background: #dc2626;
+        }
+
+        .pcBody {
+          margin-top: 10px;
+          border-top: 1px solid #f1f1f1;
+          padding-top: 10px;
+          display: grid;
+          gap: 8px;
+        }
+        .pcMain {
+          font-weight: 950;
+          color: #0f172a;
+          font-size: 13px;
+        }
+        .pcMeta {
+          display: flex;
+          gap: 10px;
+          flex-wrap: wrap;
+          font-size: 11px;
+          color: rgba(15, 23, 42, 0.68);
+          font-weight: 800;
+        }
+        .pcNote {
+          font-size: 11px;
+          color: rgba(15, 23, 42, 0.62);
+          font-weight: 800;
+          background: rgba(248, 250, 252, 0.8);
+          border: 1px solid #ececec;
+          padding: 8px 10px;
+          border-radius: 14px;
+        }
+        .pcLink,
+        .pcLinkDisabled {
+          font-weight: 950;
+          font-size: 12px;
+          border: 1px solid #e7e7e7;
+          background: #fff;
+          padding: 10px 12px;
+          border-radius: 14px;
+          display: inline-flex;
+          justify-content: space-between;
+          align-items: center;
+        }
+        .pcLink {
+          text-decoration: none;
+          color: #0f172a;
+          transition: transform 140ms ease, border-color 140ms ease;
+        }
+        .pcLink:hover {
+          transform: translateY(-1px);
+          border-color: #d2d2d2;
+        }
+        .pcLinkDisabled {
+          opacity: 0.55;
         }
       `}</style>
     </div>
   );
 }
 
-function Tiny({ label, value }) {
+// -------------------- WeekChart (orario, aggregato) --------------------
+function WeekChart({ weekDates = [], weekLabel = "Ultima settimana disponibile" }) {
+  const GROUPS = useMemo(
+    () => [
+      { key: "temp", label: "Temperatura + Dew point" },
+      { key: "rain", label: "Precipitazioni (oraria + cumulata)" },
+      { key: "rh", label: "Umidità" },
+      { key: "wind", label: "Vento (medio + raffiche + direzione)" },
+      { key: "press", label: "Pressione" },
+      { key: "uv", label: "UV + Radiazione" },
+    ],
+    []
+  );
+
+  const [groupKey, setGroupKey] = useState("temp");
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState("");
+  const [data, setData] = useState(null);
+
+  useEffect(() => {
+    let alive = true;
+
+    async function run() {
+      setErr("");
+      setLoading(true);
+      setData(null);
+
+      try {
+        const dates = Array.isArray(weekDates) ? weekDates.filter(Boolean) : [];
+        if (dates.length !== 7) {
+          setErr("Settimana non disponibile (servono 7 giorni consecutivi Lun→Dom presenti nel daily).");
+          return;
+        }
+
+        // timeline fissa: Lun 00:00 -> Dom 23:00 (168 ore)
+        const startLocal = new Date(`${dates[0]}T00:00:00`);
+        const hrs = [];
+        for (let i = 0; i < 168; i++) {
+          const d = new Date(startLocal);
+          d.setHours(d.getHours() + i, 0, 0, 0);
+          hrs.push(d.getTime());
+        }
+
+        // bucket per ora
+        const buckets = new Map();
+        for (const h of hrs) {
+          buckets.set(h, {
+            temp_sum: 0,
+            temp_cnt: 0,
+            dew_sum: 0,
+            dew_cnt: 0,
+            rh_sum: 0,
+            rh_cnt: 0,
+            press_sum: 0,
+            press_cnt: 0,
+            wind_sum: 0,
+            wind_cnt: 0,
+            uv_sum: 0,
+            uv_cnt: 0,
+            solar_sum: 0,
+            solar_cnt: 0,
+            gust_max: -Infinity,
+            rainrate_max: -Infinity,
+            rain_hour_sum: 0,
+            dir_sin: 0,
+            dir_cos: 0,
+            dir_cnt: 0,
+          });
+        }
+
+        // carico i 7 intraday
+        for (const dISO of dates) {
+          const url = `/data/intraday/${dISO}.json`;
+          const res = await fetch(url, { cache: "no-store" });
+          if (!res.ok) continue;
+          const arr = await res.json();
+          if (!Array.isArray(arr)) continue;
+
+          for (const r of arr) {
+            const tt = r?.t ? String(r.t) : "";
+            if (!tt) continue;
+
+            // parse "YYYY-MM-DD HH:MM"
+            const m = tt.match(/^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})$/);
+            if (!m) continue;
+
+            const y = Number(m[1]);
+            const mo = Number(m[2]);
+            const da = Number(m[3]);
+            const hh = Number(m[4]);
+            const mi = Number(m[5]);
+
+            const t = new Date(y, mo - 1, da, hh, mi, 0, 0);
+            t.setMinutes(0, 0, 0); // bin orario
+            const hourMs = t.getTime();
+
+            const b = buckets.get(hourMs);
+            if (!b) continue;
+
+            const addMean = (keyBase, val) => {
+              const vv = Number(val);
+              if (!Number.isFinite(vv)) return;
+              b[`${keyBase}_sum`] += vv;
+              b[`${keyBase}_cnt`] += 1;
+            };
+
+            addMean("temp", r?.temp_c);
+            addMean("dew", r?.dewpoint_c);
+            addMean("rh", r?.rh_pct);
+            addMean("press", r?.press_hpa);
+            addMean("wind", r?.wind_kmh);
+            addMean("uv", r?.uv);
+            addMean("solar", r?.solar_wm2);
+
+            const gust = Number(r?.gust_kmh);
+            if (Number.isFinite(gust)) b.gust_max = Math.max(b.gust_max, gust);
+
+            const rr = Number(r?.rain_rate_mmph);
+            if (Number.isFinite(rr)) b.rainrate_max = Math.max(b.rainrate_max, rr);
+
+            const r15 = Number(r?.rain_15m_mm);
+            if (Number.isFinite(r15)) b.rain_hour_sum += r15;
+
+            const dir = Number(r?.wind_dir_deg);
+            if (Number.isFinite(dir)) {
+              const rad = (dir * Math.PI) / 180;
+              b.dir_cos += Math.cos(rad);
+              b.dir_sin += Math.sin(rad);
+              b.dir_cnt += 1;
+            }
+          }
+        }
+
+        const mean = (sum, cnt) => (cnt > 0 ? sum / cnt : null);
+
+        const temp = [];
+        const dew = [];
+        const rh = [];
+        const press = [];
+        const wind = [];
+        const gust = [];
+        const dirMean = [];
+        const rainH = [];
+        const rainCum = [];
+        const uv = [];
+        const solar = [];
+
+        let cum = 0;
+
+        for (const h of hrs) {
+          const b = buckets.get(h);
+
+          const tempV = mean(b.temp_sum, b.temp_cnt);
+          const dewV = mean(b.dew_sum, b.dew_cnt);
+          const rhV = mean(b.rh_sum, b.rh_cnt);
+          const pressV = mean(b.press_sum, b.press_cnt);
+          const windV = mean(b.wind_sum, b.wind_cnt);
+          const uvV = mean(b.uv_sum, b.uv_cnt);
+          const solarV = mean(b.solar_sum, b.solar_cnt);
+
+          const gustV = Number.isFinite(b.gust_max) ? b.gust_max : null;
+
+          let dirV = null;
+          if (b.dir_cnt > 0) {
+            const meanRad = Math.atan2(b.dir_sin / b.dir_cnt, b.dir_cos / b.dir_cnt);
+            let deg = (meanRad * 180) / Math.PI;
+            if (deg < 0) deg += 360;
+            dirV = deg;
+          }
+
+          const rainHour = Number.isFinite(b.rain_hour_sum) ? b.rain_hour_sum : 0;
+          cum += rainHour;
+
+          temp.push([h, tempV === null ? null : round1(tempV)]);
+          dew.push([h, dewV === null ? null : round1(dewV)]);
+          rh.push([h, rhV === null ? null : round1(rhV)]);
+          press.push([h, pressV === null ? null : round1(pressV)]);
+          wind.push([h, windV === null ? null : round1(windV)]);
+          gust.push([h, gustV === null ? null : round1(gustV)]);
+          dirMean.push([h, dirV === null ? null : round1(dirV)]);
+          rainH.push([h, round1(rainHour)]);
+          rainCum.push([h, round1(cum)]);
+          uv.push([h, uvV === null ? null : round1(uvV)]);
+          solar.push([h, solarV === null ? null : round1(solarV)]);
+        }
+
+        if (!alive) return;
+
+        setData({
+          temp,
+          dew,
+          rh,
+          press,
+          wind,
+          gust,
+          dirMean,
+          rainH,
+          rainCum,
+          rainTotalWeek: round1(cum),
+          uv,
+          solar,
+        });
+      } catch (e) {
+        if (!alive) return;
+        setErr("Errore nel caricamento/lettura dei JSON intraday.");
+      } finally {
+        if (alive) setLoading(false);
+      }
+    }
+
+    run();
+    return () => {
+      alive = false;
+    };
+  }, [weekDates]);
+
+  const option = useMemo(() => {
+    if (!data) return null;
+
+    const gridNoLegend = { left: 55, right: 30, top: 55, bottom: 55 };
+    const gridWithLegend = { left: 55, right: 55, top: 85, bottom: 55 };
+
+    const toolboxZoom = { feature: { dataZoom: { yAxisIndex: "none" }, restore: {} }, right: 10, top: 8 };
+
+    const xAxis = {
+      type: "time",
+      axisLabel: {
+        hideOverlap: true,
+        formatter: (val) => {
+          const d = new Date(val);
+          const dd = pad2(d.getDate());
+          const mm = pad2(d.getMonth() + 1);
+          const hh = pad2(d.getHours());
+          return `${dd}/${mm} ${hh}`;
+        },
+      },
+    };
+
+    const tooltipCommon = {
+      trigger: "axis",
+      valueFormatter: (v) => {
+        if (v === null || v === undefined) return "—";
+        const vv = Number(v);
+        return Number.isFinite(vv) ? vv.toFixed(1) : "—";
+      },
+    };
+
+    const minMaxFrom = (pairs) => {
+      const ys = (pairs || []).map((p) => Number(p?.[1])).filter(Number.isFinite);
+      if (!ys.length) return null;
+      return { min: Math.min(...ys), max: Math.max(...ys) };
+    };
+
+    if (groupKey === "temp") {
+      const mm = minMaxFrom([...data.temp, ...data.dew]) || { min: 0, max: 1 };
+      const ax = axisNice(mm.min - 1, mm.max + 1, 6);
+
+      return {
+        title: { text: "Temperatura e Punto di rugiada (orario)", left: "center", top: 10 },
+        grid: gridWithLegend,
+        toolbox: toolboxZoom,
+        dataZoom: makeWeekDataZoom(),
+        tooltip: tooltipCommon,
+        legend: { top: 40, left: "center" },
+        xAxis,
+        yAxis: {
+          type: "value",
+          name: "°C",
+          min: ax.min,
+          max: ax.max,
+          interval: ax.interval,
+          splitNumber: 6,
+          axisLabel: { formatter: (v) => Number(v).toFixed(1) }, // 1 decimale
+          splitLine: { show: true },
+        },
+        series: [
+          { name: "Temperatura (°C)", type: "line", data: data.temp, showSymbol: false, connectNulls: false, smooth: false, lineStyle: { width: 2 } },
+          { name: "Punto di rugiada (°C)", type: "line", data: data.dew, showSymbol: false, connectNulls: false, smooth: false, lineStyle: { width: 2 } },
+        ],
+      };
+    }
+
+    if (groupKey === "rain") {
+      const tWeek = data.rainTotalWeek;
+      return {
+        title: { text: `Precipitazioni (orario + cumulata) • Totale: ${fmt1(tWeek)} mm`, left: "center", top: 10 },
+        grid: gridWithLegend,
+        toolbox: toolboxZoom,
+        dataZoom: makeWeekDataZoom(),
+        tooltip: tooltipCommon,
+        legend: { top: 40, left: "center" },
+        xAxis,
+        yAxis: [
+          { type: "value", name: "mm/h", splitNumber: 6, axisLabel: { formatter: (v) => Number(v).toFixed(1) }, splitLine: { show: true } },
+          { type: "value", name: "mm cum.", position: "right", splitNumber: 6, axisLabel: { formatter: (v) => Number(v).toFixed(1) }, splitLine: { show: false } },
+        ],
+        series: [
+          { name: "Pioggia oraria (mm)", type: "bar", data: data.rainH, yAxisIndex: 0 },
+          { name: "Cumulata (mm)", type: "line", data: data.rainCum, yAxisIndex: 1, showSymbol: false, connectNulls: false, smooth: false, lineStyle: { width: 2 } },
+        ],
+      };
+    }
+
+    if (groupKey === "rh") {
+      return {
+        title: { text: "Umidità (media oraria)", left: "center", top: 10 },
+        grid: gridNoLegend,
+        toolbox: toolboxZoom,
+        dataZoom: makeWeekDataZoom(),
+        tooltip: tooltipCommon,
+        xAxis,
+        yAxis: { type: "value", name: "% RH", min: 0, max: 100, splitNumber: 6, axisLabel: { formatter: (v) => Number(v).toFixed(1) }, splitLine: { show: true } },
+        series: [{ name: "Umidità (%)", type: "line", data: data.rh, showSymbol: false, connectNulls: false, smooth: false, lineStyle: { width: 2 } }],
+      };
+    }
+
+    if (groupKey === "wind") {
+      return {
+        title: { text: "Vento (medio + raffiche + direzione) • orario", left: "center", top: 10 },
+        grid: gridWithLegend,
+        toolbox: toolboxZoom,
+        dataZoom: makeWeekDataZoom(),
+        tooltip: {
+          trigger: "axis",
+          formatter: (params) => {
+            const time = params?.[0]?.axisValueLabel ?? "";
+            const lines = [time];
+            for (const p of params || []) {
+              const v = p.data?.[1];
+              if (p.seriesName === "Direzione") {
+                lines.push(`${p.marker}${p.seriesName}: ${v == null ? "—" : degToCardinal8(v)}`);
+              } else {
+                lines.push(`${p.marker}${p.seriesName}: ${v == null ? "—" : Number(v).toFixed(1)}`);
+              }
+            }
+            return lines.join("<br/>");
+          },
+        },
+        legend: { top: 40, left: "center" },
+        xAxis,
+        yAxis: [
+          { type: "value", name: "km/h", splitNumber: 6, axisLabel: { formatter: (v) => Number(v).toFixed(1) }, splitLine: { show: true } },
+          { type: "value", name: "Dir", position: "right", min: 0, max: 360, interval: 45, axisLabel: { formatter: (v) => degToCardinal8(v) }, splitLine: { show: false } },
+        ],
+        series: [
+          { name: "Vento medio (km/h)", type: "line", data: data.wind, showSymbol: false, connectNulls: false, smooth: false, yAxisIndex: 0, lineStyle: { width: 2 } },
+          { name: "Raffiche (km/h)", type: "line", data: data.gust, showSymbol: false, connectNulls: false, smooth: false, yAxisIndex: 0, lineStyle: { width: 2 } },
+          { name: "Direzione", type: "scatter", data: data.dirMean, yAxisIndex: 1, symbolSize: 5 },
+        ],
+      };
+    }
+
+    if (groupKey === "press") {
+      const mm = minMaxFrom(data.press) || { min: 0, max: 1 };
+      const ax = axisNice(mm.min - 2, mm.max + 2, 6);
+
+      return {
+        title: { text: "Pressione (media oraria)", left: "center", top: 10 },
+        grid: gridNoLegend,
+        toolbox: toolboxZoom,
+        dataZoom: makeWeekDataZoom(),
+        tooltip: tooltipCommon,
+        xAxis,
+        yAxis: { type: "value", name: "hPa", min: ax.min, max: ax.max, interval: ax.interval, splitNumber: 6, axisLabel: { formatter: (v) => Number(v).toFixed(1) }, splitLine: { show: true } },
+        series: [{ name: "Pressione (hPa)", type: "line", data: data.press, showSymbol: false, connectNulls: false, smooth: false, lineStyle: { width: 2 } }],
+      };
+    }
+
+    return {
+      title: { text: "UV + Radiazione (media oraria)", left: "center", top: 10 },
+      grid: gridWithLegend,
+      toolbox: toolboxZoom,
+      dataZoom: makeWeekDataZoom(),
+      tooltip: tooltipCommon,
+      legend: { top: 40, left: "center" },
+      xAxis,
+      yAxis: [
+        { type: "value", name: "UV", min: 0, splitNumber: 6, axisLabel: { formatter: (v) => Number(v).toFixed(1) }, splitLine: { show: true } },
+        { type: "value", name: "W/m²", position: "right", min: 0, splitNumber: 6, axisLabel: { formatter: (v) => Number(v).toFixed(1) }, splitLine: { show: false } },
+      ],
+      series: [
+        { name: "UV", type: "line", data: data.uv, showSymbol: false, connectNulls: false, smooth: false, yAxisIndex: 0, lineStyle: { width: 2 } },
+        { name: "Radiazione (W/m²)", type: "line", data: data.solar, showSymbol: false, connectNulls: false, smooth: false, yAxisIndex: 1, lineStyle: { width: 2 } },
+      ],
+    };
+  }, [data, groupKey]);
+
   return (
-    <div className="t">
-      <div className="tl">{label}</div>
-      <div className="tv">{value}</div>
+    <div className="weekCard" aria-label="Grafico ultima settimana (orario)">
+      <div className="weekHead">
+        <div>
+          <div className="weekTitle">Ultima settimana (Lun → Dom)</div>
+          <div className="weekSub">
+            {weekLabel}. Valori <b>orari</b> (aggregati dai dati intraday).
+          </div>
+        </div>
+
+        <div className="menu">
+          <span className="menuLabel">Parametro</span>
+          <select className="select" value={groupKey} onChange={(e) => setGroupKey(e.target.value)}>
+            {GROUPS.map((g) => (
+              <option key={g.key} value={g.key}>
+                {g.label}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      <div className="chartArea">
+        {loading && <div className="msg">Caricamento…</div>}
+        {!loading && err && <div className="msg">{err}</div>}
+        {!loading && !err && option && <ReactECharts option={option} style={{ height: 360, width: "100%" }} notMerge={true} lazyUpdate={true} />}
+      </div>
+
       <style jsx>{`
-        .t {
-          border: 1px solid #efefef;
-          background: rgba(248, 250, 252, 0.65);
-          border-radius: 16px;
-          padding: 10px 12px;
+        .weekCard {
+          border: 1px solid #e8e8e8;
+          border-radius: 20px;
+          background: rgba(255, 255, 255, 0.95);
+          box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+          overflow: hidden;
         }
-        .tl {
-          font-size: 12px;
-          color: rgba(15, 23, 42, 0.64);
-          font-weight: 900;
+
+        .weekHead {
+          padding: 14px 14px 10px;
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-start;
+          gap: 12px;
+          border-bottom: 1px solid #f0f0f0;
         }
-        .tv {
-          margin-top: 6px;
+        .weekTitle {
           font-size: 14px;
           font-weight: 950;
           color: #0f172a;
-          letter-spacing: -0.01em;
+        }
+        .weekSub {
+          margin-top: 3px;
+          font-size: 11px;
+          color: rgba(15, 23, 42, 0.64);
+          max-width: 760px;
+        }
+
+        .menu {
+          display: grid;
+          gap: 6px;
+          justify-items: end;
+        }
+        .menuLabel {
+          font-size: 11px;
+          font-weight: 950;
+          color: rgba(15, 23, 42, 0.7);
+        }
+        .select {
+          border: 1px solid #e7e7e7;
+          background: #fff;
+          border-radius: 14px;
+          padding: 9px 10px;
+          font-size: 12px;
+          font-weight: 900;
+          color: #0f172a;
+          outline: none;
+        }
+
+        .chartArea {
+          padding: 8px 8px 2px;
+        }
+        .msg {
+          padding: 18px 14px 20px;
+          font-size: 12px;
+          color: rgba(15, 23, 42, 0.7);
+          font-weight: 800;
+        }
+
+        @media (max-width: 1080px) {
+          .weekHead {
+            flex-direction: column;
+            align-items: stretch;
+          }
+          .menu {
+            justify-items: start;
+          }
+          .select {
+            width: 100%;
+          }
         }
       `}</style>
     </div>
