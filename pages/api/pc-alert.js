@@ -24,7 +24,7 @@ const ZONE_LABEL = {
 const RISK_KEYS = ["idrogeologico", "idraulico", "temporali"];
 
 // hard cap per non impallare la home
-const HARD_DEADLINE_MS = 8000;
+const HARD_DEADLINE_MS = 12000;
 
 // cache in memoria
 const CACHE_TTL_MS = 3 * 60 * 1000;
@@ -51,6 +51,10 @@ function upperNoAccents(s) {
     .replace(/[ÙÚÛÜ]/g, "U");
 }
 
+function normOneLine(s) {
+  return upperNoAccents(s).replace(/\s+/g, " ").trim();
+}
+
 function extractFirst(text, re) {
   const m = String(text || "").match(re);
   return m ? String(m[1] || "").trim() : null;
@@ -73,9 +77,16 @@ function nowEuropeRomeParts() {
   const parts = Object.fromEntries(
     fmt.formatToParts(new Date()).map((p) => [p.type, p.value])
   );
-  return { y: +parts.year, mo: +parts.month, d: +parts.day, hh: +parts.hour, mm: +parts.minute };
+  return {
+    y: +parts.year,
+    mo: +parts.month,
+    d: +parts.day,
+    hh: +parts.hour,
+    mm: +parts.minute,
+  };
 }
 
+// Chiave "wall clock" (Roma) comparabile senza timezone-bug
 function wallClockKey(y, mo, d, hh, mm) {
   return Date.UTC(y, mo - 1, d, hh, mm, 0, 0);
 }
@@ -101,6 +112,9 @@ function levelRank(lvl) {
 function isAlertLevel(lvl) {
   return levelRank(lvl) > 0;
 }
+function maxLevel(a, b) {
+  return levelRank(a) >= levelRank(b) ? a : b;
+}
 function labelForLevel(lvl) {
   const L = String(lvl || "verde").toLowerCase();
   if (L === "giallo") return "Allerta gialla";
@@ -113,11 +127,12 @@ function areaLabel() {
   return `Collinas (${ZONE_LABEL[TARGET_ZONE] || TARGET_ZONE} - ${TARGET_ZONE})`;
 }
 
-function baseGreen(note, extra = {}) {
+// In caso di errore: NON verde finto
+function baseUnavailable(note, extra = {}) {
   return {
-    ok: true,
-    overall: "verde",
-    level: "verde",
+    ok: false,
+    overall: null,
+    level: null,
     area: areaLabel(),
     title: "Avvisi Protezione Civile",
     url: SOURCE_PAGE,
@@ -128,7 +143,7 @@ function baseGreen(note, extra = {}) {
     current: null,
     current_alerts: { idrogeologico: null, idraulico: null, temporali: null },
     next_alerts: { idrogeologico: null, idraulico: null, temporali: null },
-    note: note || "Condizione attuale: Nessuna allerta in corso.",
+    note: note || "Dati Protezione Civile non disponibili.",
     ...extra,
   };
 }
@@ -161,7 +176,8 @@ async function fetchText(url) {
   return await r.text();
 }
 
-async function fetchPdfBuffer(url) {
+// scarica PDF come Uint8Array (poi proviamo anche Buffer se serve)
+async function fetchPdfBytes(url) {
   const r = await fetchWithTimeout(
     url,
     {
@@ -177,7 +193,26 @@ async function fetchPdfBuffer(url) {
   );
   if (!r.ok) throw new Error(`HTTP ${r.status} nel download PDF`);
   const ab = await r.arrayBuffer();
-  return Buffer.from(ab);
+  return new Uint8Array(ab);
+}
+
+async function parsePdfText(bytes) {
+  // prova Uint8Array, poi fallback Buffer
+  try {
+    const parsed = await pdfParse(bytes);
+    return pickText(parsed.text);
+  } catch (e1) {
+    try {
+      const parsed = await pdfParse(Buffer.from(bytes));
+      return pickText(parsed.text);
+    } catch (e2) {
+      // rialzo l'errore originale ma includo info
+      const msg = `pdf-parse failed: ${e1?.message || e1} | fallback failed: ${e2?.message || e2}`;
+      const err = new Error(msg);
+      err.cause = e1;
+      throw err;
+    }
+  }
 }
 
 // -------------------- HTML link picking --------------------
@@ -228,28 +263,80 @@ function extractPdfLinksFromHtml(html, baseUrl) {
   };
 }
 
-// -------------------- BCR (testuale) -> ATTENZIONE + fascia avviso --------------------
-// Nel PDF BCR/ACR il testo contiene:
-// "Inizio avviso: 31/01/2026 15:00 Fine avviso: 01/02/2026 09:00"
-// e, per Campidano SARD-B, la fase operativa "ATTENZIONE".
-function parseBcrAttentionAndWindow(text) {
+// -------------------- BCR parsing robusto --------------------
+function phaseToLevel(phase) {
+  const P = normOneLine(phase);
+  if (P.includes("ALLARME")) return "rosso";
+  if (P.includes("PREALLARME")) return "arancione";
+  if (P.includes("ATTENZIONE")) return "giallo";
+  return "verde";
+}
+
+function findPhaseForZone(text, zone = TARGET_ZONE) {
+  const t = pickText(text);
+  const lines = t.split("\n").map((x) => x.trim()).filter(Boolean);
+
+  // normalizza target: accetta "SARD-B", "SARD B", "SARDB"
+  const zoneNorm = normOneLine(zone).replace(/[^A-Z0-9]/g, ""); // SARDB
+  const lineHasZone = (ln) => {
+    const n = normOneLine(ln).replace(/[^A-Z0-9]/g, "");
+    return n.includes(zoneNorm);
+  };
+
+  const hasKeyword = (s) =>
+    s.includes("ATTENZIONE") || s.includes("PREALLARME") || s.includes("ALLARME");
+
+  // strategia: trova indice riga con zona, poi guarda riga stessa e vicine
+  for (let i = 0; i < lines.length; i++) {
+    if (!lineHasZone(lines[i])) continue;
+
+    const window = [
+      lines[i - 2],
+      lines[i - 1],
+      lines[i],
+      lines[i + 1],
+      lines[i + 2],
+    ].filter(Boolean);
+
+    const joined = normOneLine(window.join(" "));
+    if (hasKeyword(joined)) {
+      if (joined.includes("ALLARME")) return "ALLARME";
+      if (joined.includes("PREALLARME")) return "PREALLARME";
+      if (joined.includes("ATTENZIONE")) return "ATTENZIONE";
+    }
+  }
+
+  // fallback: nel testo completo, se c'è zona e keyword (meno preciso ma meglio di niente)
+  const all = normOneLine(t);
+  const allCompact = all.replace(/[^A-Z0-9]/g, ""); // senza spazi/simboli
+  if (allCompact.includes(zoneNorm)) {
+    if (all.includes("ALLARME")) return "ALLARME";
+    if (all.includes("PREALLARME")) return "PREALLARME";
+    if (all.includes("ATTENZIONE")) return "ATTENZIONE";
+  }
+
+  return null;
+}
+
+function parseBcrWindowAndLevel(text) {
   const t = pickText(text);
 
-  const valid_from = extractFirst(t, /Inizio validit[àa]:\s*([0-9.]{10}\s*[0-9:]{4,5})/i);
-  const valid_to = extractFirst(t, /Fine validit[àa]:\s*([0-9.]{10}\s*[0-9:]{4,5})/i);
+  const valid_from = extractFirst(
+    t,
+    /Inizio validit[àa]:\s*([0-9.]{10}\s*[0-9:]{4,5})/i
+  );
+  const valid_to = extractFirst(
+    t,
+    /Fine validit[àa]:\s*([0-9.]{10}\s*[0-9:]{4,5})/i
+  );
 
   const avv_from = extractFirst(t, /Inizio avviso:\s*([0-9/]{10}\s*[0-9:]{4,5})/i);
   const avv_to = extractFirst(t, /Fine avviso:\s*([0-9/]{10}\s*[0-9:]{4,5})/i);
 
-  // verifica che per SARD-B compaia "ATTENZIONE"
-  const hasSardB = /Campidano\s*\n\s*SARD-B/i.test(t) || /Campidano\s+SARD-B/i.test(t) || /\bSARD-B\b/i.test(t);
-  const hasAttenzione = /\bATTENZIONE\b/i.test(t);
+  const phase = findPhaseForZone(t, TARGET_ZONE);
+  const level = phaseToLevel(phase);
 
-  // Non posso leggere i colori senza canvas: uso la semantica
-  // ATTENZIONE -> giallo
-  const sardBOverall = hasSardB && hasAttenzione ? "giallo" : "verde";
-
-  return { valid_from, valid_to, avv_from, avv_to, sardBOverall };
+  return { valid_from, valid_to, avv_from, avv_to, phase, level };
 }
 
 function computeStatusFromSpan(span, nowKey) {
@@ -270,72 +357,68 @@ async function computeAlert(debug) {
       const links = extractPdfLinksFromHtml(html, SOURCE_PAGE);
 
       if (!links.pressUrl && !links.bcrUrl) {
-        const out = baseGreen("Non trovo PDF utili nella pagina Regione (HTML cambiato?).", debug ? { debug: { links } } : {});
+        const out = baseUnavailable(
+          "Non trovo PDF utili nella pagina Regione (HTML cambiato?).",
+          debug ? { debug: { links } } : {}
+        );
         _cache = { ts: Date.now(), data: out };
         return out;
       }
 
-      // 1) scarico BCR (serve per ATTENZIONE + fascia avviso)
+      // 1) BCR
       let bcr = null;
+      let bcrText = null;
+
       if (links.bcrUrl) {
-        const buf = await fetchPdfBuffer(links.bcrUrl);
-        const parsed = await pdfParse(buf);
-        const text = pickText(parsed.text);
+        const bytes = await fetchPdfBytes(links.bcrUrl);
+        bcrText = await parsePdfText(bytes);
 
         const metaTitle =
-          extractFirst(text, /(AVVISO DI CRITICIT[ÀA][^\n]+)/i) || "Avviso di criticità";
+          extractFirst(bcrText, /(AVVISO DI CRITICIT[ÀA][^\n]+)/i) || "Avviso di criticità";
 
         const bcrCode =
-          extractFirst(text, /\b(BCR\/\d+\s+del\s+\d{2}\.\d{2}\.\d{4})\b/i) ||
-          extractFirst(text, /\b(BCR\/\d+)\b/i) ||
+          extractFirst(bcrText, /\b(BCR\/\d+\s+del\s+\d{2}\.\d{2}\.\d{4})\b/i) ||
+          extractFirst(bcrText, /\b(BCR\/\d+)\b/i) ||
           null;
 
-        const b = parseBcrAttentionAndWindow(text);
+        const p = parseBcrWindowAndLevel(bcrText);
 
         bcr = {
           title: bcrCode ? `${metaTitle} — ${bcrCode}` : metaTitle,
           url: links.bcrUrl,
-          valid_from: b.valid_from || null,
-          valid_to: b.valid_to || null,
-          avv_from: b.avv_from || null,
-          avv_to: b.avv_to || null,
-          overall: b.sardBOverall || "verde",
+          valid_from: p.valid_from || null,
+          valid_to: p.valid_to || null,
+          avv_from: p.avv_from || null,
+          avv_to: p.avv_to || null,
+          overall: p.level || "verde",
+          phase: p.phase || null,
         };
       }
 
-      // 2) scarico comunicato (solo per titolo + validità “testuale” e link principale)
+      // 2) Comunicato
       let press = null;
       if (links.pressUrl) {
-        const buf = await fetchPdfBuffer(links.pressUrl);
-        const parsed = await pdfParse(buf);
-        const text = pickText(parsed.text);
+        const bytes = await fetchPdfBytes(links.pressUrl);
+        const text = await parsePdfText(bytes);
+
         const title =
           extractFirst(text, /(COMUNICATO STAMPA[\s\S]*?AVVISO DI CRITICIT[ÀA][^\n]*)/i) ||
           extractFirst(text, /(COMUNICATO STAMPA[^\n]*)/i) ||
           "Comunicato stampa";
 
-        const valid_from =
-          extractFirst(text, /a\s+partire\s+dalle\s+ore\s+\d{1,2}[:.]\d{2}\s+del\s+(\d{2}\.\d{2}\.\d{4}\s+\d{1,2}[:.]\d{2})/i) ||
-          extractFirst(text, /a\s+partire\s+dalle\s+ore\s+(\d{1,2}[:.]\d{2}\s+del\s+\d{2}\.\d{2}\.\d{4})/i) ||
-          null;
-
-        // fallback: spesso il comunicato ha già righe pulite nel tuo caso
-        const vf = extractFirst(text, /a\s+partire\s+dalle\s+ore\s+(\d{1,2}[:.]\d{2})\s+del\s+(\d{2}\.\d{2}\.\d{4})/i);
-        const vt = extractFirst(text, /sino\s+alle\s+(\d{1,2}[:.]\d{2})\s+del\s+(\d{2}\.\d{2}\.\d{4})/i);
-
-        const validFrom2 = vf ? `${vf.split(/\s+/)[1]} ${vf.split(/\s+/)[0]}` : null; // non usato
-        const valid_to = vt ? `${vt.split(/\s+/)[1]} ${vt.split(/\s+/)[0]}` : null; // non usato
-
-        // meglio: ricostruisco come facevi tu
-        const m1 = text.match(/a\s+partire\s+dalle\s+ore\s+(\d{1,2}[:.]\d{2})\s+del\s+(\d{2}\.\d{2}\.\d{4})/i);
-        const m2 = text.match(/sino\s+alle\s+(\d{1,2}[:.]\d{2})\s+del\s+(\d{2}\.\d{2}\.\d{4})/i);
+        const m1 = text.match(
+          /a\s+partire\s+dalle\s+ore\s+(\d{1,2}[:.]\d{2})\s+del\s+(\d{2}\.\d{2}\.\d{4})/i
+        );
+        const m2 = text.match(
+          /sino\s+alle\s+(\d{1,2}[:.]\d{2})\s+del\s+(\d{2}\.\d{2}\.\d{4})/i
+        );
         const vfrom = m1 ? `${m1[2]} ${m1[1].replace(".", ":")}` : null;
         const vto = m2 ? `${m2[2]} ${m2[1].replace(".", ":")}` : null;
 
         press = { title, url: links.pressUrl, valid_from: vfrom, valid_to: vto };
       }
 
-      // 3) costruisco stato “corrente / previsto” usando la fascia avviso del BCR
+      // 3) stato corrente / previsto (fascia BCR)
       const now = nowEuropeRomeParts();
       const nowKey = wallClockKey(now.y, now.mo, now.d, now.hh, now.mm);
 
@@ -353,35 +436,35 @@ async function computeAlert(debug) {
         }
       }
 
-      const bcrOverall = bcr?.overall || "verde";
+      const docLevel = bcr?.overall || "verde";
       const status = computeStatusFromSpan(span, nowKey);
 
-      // Assunzione coerente con intestazione: rischio idrogeologico + idraulico (non temporali)
-      const riskLevels =
-        bcrOverall === "giallo"
-          ? { idrogeologico: "giallo", idraulico: "giallo", temporali: "verde" }
-          : { idrogeologico: "verde", idraulico: "verde", temporali: "verde" };
+      // livello attuale: docLevel solo se fascia "avviso" è corrente
+      const overall = isAlertLevel(docLevel) && status.isCurrent ? docLevel : "verde";
 
-      const overall =
-        bcrOverall === "giallo" && status.isCurrent ? "giallo" : "verde";
-
+      // rischi (per ora: idro + idraulico, temporali null come facevi tu)
       const current_alerts = {
-        idrogeologico: overall === "giallo" ? { level: "giallo", from: span?.from || null, to: span?.to || null } : null,
-        idraulico: overall === "giallo" ? { level: "giallo", from: span?.from || null, to: span?.to || null } : null,
+        idrogeologico: isAlertLevel(overall) ? { level: overall, from: span?.from || null, to: span?.to || null } : null,
+        idraulico: isAlertLevel(overall) ? { level: overall, from: span?.from || null, to: span?.to || null } : null,
         temporali: null,
       };
 
+      const nextLevel = isAlertLevel(docLevel) && status.isFuture ? docLevel : "verde";
       const next_alerts = {
-        idrogeologico: bcrOverall === "giallo" && status.isFuture ? { level: "giallo", from: span?.from || null, to: span?.to || null } : null,
-        idraulico: bcrOverall === "giallo" && status.isFuture ? { level: "giallo", from: span?.from || null, to: span?.to || null } : null,
+        idrogeologico: isAlertLevel(nextLevel) ? { level: nextLevel, from: span?.from || null, to: span?.to || null } : null,
+        idraulico: isAlertLevel(nextLevel) ? { level: nextLevel, from: span?.from || null, to: span?.to || null } : null,
         temporali: null,
       };
 
       let note = "Condizione attuale: Nessuna allerta in corso.";
-      if (overall === "giallo") {
-        note = `Condizione attuale: ${labelForLevel("giallo")} (Idrogeologico + Idraulico)${span ? ` dalle ${span.from.slice(11)} alle ${span.to.slice(11)}` : ""}.`;
-      } else if (bcrOverall === "giallo" && status.isFuture) {
-        note = `Allerte previste: ${labelForLevel("giallo")} (Idrogeologico + Idraulico)${span ? ` dalle ${span.from.slice(11)} alle ${span.to.slice(11)}` : ""}.`;
+      if (isAlertLevel(overall)) {
+        note = `Condizione attuale: ${labelForLevel(overall)} (Idrogeologico + Idraulico) fino alle ${
+          span ? `${span.to.slice(11)} del ${span.to.slice(0, 10)}` : "—"
+        }.`;
+      } else if (isAlertLevel(nextLevel)) {
+        note = `Allerte previste: ${labelForLevel(nextLevel)} (Idrogeologico + Idraulico) dalle ${
+          span ? `${span.from.slice(11)} del ${span.from.slice(0, 10)}` : "—"
+        } alle ${span ? `${span.to.slice(11)} del ${span.to.slice(0, 10)}` : "—"}.`;
       }
 
       const out = {
@@ -390,19 +473,15 @@ async function computeAlert(debug) {
         level: overall,
         area: areaLabel(),
 
-        // titolo: meglio BCR (più “operativo”), ma se manca uso comunicato
         title: bcr?.title || press?.title || "Avvisi Protezione Civile",
-
-        // link dettagli: se c’è comunicato, meglio quello; altrimenti BCR/pagina
         url: press?.url || bcr?.url || SOURCE_PAGE,
 
-        // validità: preferisci comunicato se presente
         valid_from: press?.valid_from || bcr?.valid_from || null,
         valid_to: press?.valid_to || bcr?.valid_to || null,
         from: press?.valid_from || bcr?.valid_from || null,
         to: press?.valid_to || bcr?.valid_to || null,
 
-        current: overall === "giallo" && span ? { from: span.from, to: span.to, overall, risks: riskLevels } : null,
+        current: isAlertLevel(overall) && span ? { from: span.from, to: span.to, overall } : null,
         current_alerts,
         next_alerts,
         note,
@@ -410,12 +489,28 @@ async function computeAlert(debug) {
         sources: {
           page: SOURCE_PAGE,
           press: press ? { url: press.url, title: press.title } : null,
-          bcr: bcr ? { url: bcr.url, title: bcr.title, avv_from: bcr.avv_from, avv_to: bcr.avv_to } : null,
+          bcr: bcr
+            ? {
+                url: bcr.url,
+                title: bcr.title,
+                avv_from: bcr.avv_from,
+                avv_to: bcr.avv_to,
+                phase: bcr.phase,
+                overall: bcr.overall,
+              }
+            : null,
         },
 
-        ...(debug ? { debug: { links, bcr, press, span, now } } : {}),
+        ...(debug ? { debug: { links, bcr, span, now } } : {}),
       };
 
+      _cache = { ts: Date.now(), data: out };
+      return out;
+    } catch (e) {
+      console.error("pc-alert computeAlert error:", e);
+      const out = baseUnavailable(`Errore nel recupero avvisi Protezione Civile. (${e?.message || String(e)})`, {
+        stack: process.env.NODE_ENV === "development" ? e?.stack || null : null,
+      });
       _cache = { ts: Date.now(), data: out };
       return out;
     } finally {
@@ -430,10 +525,13 @@ async function computeAlert(debug) {
 export default async function handler(req, res) {
   const debug = String(req.query?.debug || "") === "1";
 
+  // evita cache Vercel/CDN
+  res.setHeader("Cache-Control", "no-store, max-age=0");
+
   const deadline = new Promise((resolve) => {
     setTimeout(() => {
-      if (_cache.data) resolve({ ..._cache.data, note: "Risposta da cache (timeout parsing)." });
-      else resolve(baseGreen("Timeout parsing: risposta di sicurezza."));
+      if (_cache.data) resolve({ ..._cache.data, note: `${_cache.data.note} (Risposta da cache: timeout)` });
+      else resolve(baseUnavailable("Timeout parsing: dati Protezione Civile non disponibili."));
     }, HARD_DEADLINE_MS);
   });
 
@@ -446,8 +544,9 @@ export default async function handler(req, res) {
     const data = await Promise.race([computeAlert(debug), deadline]);
     return res.status(200).json(data);
   } catch (e) {
+    console.error("pc-alert handler error:", e);
     return res.status(200).json(
-      baseGreen(`Eccezione: ${e?.message || String(e)}`, {
+      baseUnavailable(`Errore nel recupero avvisi Protezione Civile. (${e?.message || String(e)})`, {
         stack: process.env.NODE_ENV === "development" ? e?.stack || null : null,
       })
     );
