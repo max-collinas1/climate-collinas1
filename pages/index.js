@@ -138,10 +138,6 @@ function findLastFullWeekISO(datesSet, lastDateISO) {
 // -------------------- Protezione Civile (build-time fetch) --------------------
 async function fetchPcAlertForCollinas() {
   try {
-    // Chiama la tua API interna che già:
-    // - trova il PDF dinamico dalla pagina Regione
-    // - parse il PDF
-    // - ritorna level/area/from/to/url
     const res = await fetch("http://localhost:3000/api/pc-alert", {
       headers: { "User-Agent": "meteo-collinas/1.0" },
     });
@@ -868,10 +864,16 @@ function YearCard({ y, overallTmean, norm }) {
 function PcAlertCard({ alert }) {
   const level = String(alert?.level || "verde").toLowerCase();
   const badgeLabel =
-    level === "rosso" ? "Allerta rossa" : level === "arancione" ? "Allerta arancione" : level === "giallo" ? "Allerta gialla" : "Nessuna criticità";
+    level === "rosso"
+      ? "Allerta rossa"
+      : level === "arancione"
+      ? "Allerta arancione"
+      : level === "giallo"
+      ? "Allerta gialla"
+      : "Nessuna criticità";
 
   return (
-    <div className="pcCard" aria-label="Avvisi Protezione Civile">
+    <div className={`pcCard ${level}`} aria-label="Avvisi Protezione Civile">
       <div className="pcHead">
         <div>
           <div className="pcTitle">Avvisi Protezione Civile (Sardegna)</div>
@@ -899,14 +901,13 @@ function PcAlertCard({ alert }) {
         </div>
 
         {alert?.next ? (
-  	 <div className="pcNote">
-    	  <b>Prossima allerta:</b> {String(alert.next.level || "").toUpperCase()}{" "}
-    	  dalle <b>{String(alert.next.from || "—").slice(11)}</b> alle <b>{String(alert.next.to || "—").slice(11)}</b>
-         </div>
+          <div className="pcNote">
+            <b>Prossima allerta:</b> {String(alert.next.level || "").toUpperCase()} dalle <b>{String(alert.next.from || "—").slice(11)}</b> alle{" "}
+            <b>{String(alert.next.to || "—").slice(11)}</b>
+          </div>
         ) : alert?.note ? (
-         <div className="pcNote">{alert.note}</div>
+          <div className="pcNote">{alert.note}</div>
         ) : null}
-
 
         {alert?.url ? (
           <a className="pcLink" href={alert.url} target="_blank" rel="noreferrer">
@@ -926,6 +927,25 @@ function PcAlertCard({ alert }) {
           padding: 12px;
           box-shadow: 0 1px 0 rgba(0, 0, 0, 0.02);
         }
+
+        /* ---- THEMING: tutto il riquadro prende il colore ---- */
+        .pcCard.giallo {
+          border-color: rgba(250, 204, 21, 0.55);
+          background: rgba(250, 204, 21, 0.18);
+        }
+        .pcCard.arancione {
+          border-color: rgba(249, 115, 22, 0.55);
+          background: rgba(249, 115, 22, 0.16);
+        }
+        .pcCard.rosso {
+          border-color: rgba(220, 38, 38, 0.55);
+          background: rgba(220, 38, 38, 0.14);
+        }
+        .pcCard.verde {
+          border-color: rgba(22, 163, 74, 0.32);
+          background: rgba(22, 163, 74, 0.06);
+        }
+
         .pcHead {
           display: flex;
           justify-content: space-between;
@@ -940,15 +960,15 @@ function PcAlertCard({ alert }) {
         .pcSub {
           margin-top: 3px;
           font-size: 11px;
-          color: rgba(15, 23, 42, 0.64);
+          color: rgba(15, 23, 42, 0.7);
         }
 
         .badge {
           display: inline-flex;
           align-items: center;
           gap: 8px;
-          border: 1px solid #e7e7e7;
-          background: #fff;
+          border: 1px solid rgba(15, 23, 42, 0.12);
+          background: rgba(255, 255, 255, 0.85);
           padding: 8px 10px;
           border-radius: 999px;
           font-weight: 950;
@@ -976,7 +996,7 @@ function PcAlertCard({ alert }) {
 
         .pcBody {
           margin-top: 10px;
-          border-top: 1px solid #f1f1f1;
+          border-top: 1px solid rgba(15, 23, 42, 0.08);
           padding-top: 10px;
           display: grid;
           gap: 8px;
@@ -991,24 +1011,26 @@ function PcAlertCard({ alert }) {
           gap: 10px;
           flex-wrap: wrap;
           font-size: 11px;
-          color: rgba(15, 23, 42, 0.68);
+          color: rgba(15, 23, 42, 0.72);
           font-weight: 800;
         }
+
         .pcNote {
           font-size: 11px;
-          color: rgba(15, 23, 42, 0.62);
-          font-weight: 800;
-          background: rgba(248, 250, 252, 0.8);
-          border: 1px solid #ececec;
+          color: rgba(15, 23, 42, 0.74);
+          font-weight: 850;
+          background: rgba(255, 255, 255, 0.55);
+          border: 1px solid rgba(15, 23, 42, 0.12);
           padding: 8px 10px;
           border-radius: 14px;
         }
+
         .pcLink,
         .pcLinkDisabled {
           font-weight: 950;
           font-size: 12px;
-          border: 1px solid #e7e7e7;
-          background: #fff;
+          border: 1px solid rgba(15, 23, 42, 0.12);
+          background: rgba(255, 255, 255, 0.78);
           padding: 10px 12px;
           border-radius: 14px;
           display: inline-flex;
@@ -1018,11 +1040,12 @@ function PcAlertCard({ alert }) {
         .pcLink {
           text-decoration: none;
           color: #0f172a;
-          transition: transform 140ms ease, border-color 140ms ease;
+          transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
         }
         .pcLink:hover {
           transform: translateY(-1px);
-          border-color: #d2d2d2;
+          border-color: rgba(15, 23, 42, 0.2);
+          background: rgba(255, 255, 255, 0.9);
         }
         .pcLinkDisabled {
           opacity: 0.55;
@@ -1066,7 +1089,6 @@ function WeekChart({ weekDates = [], weekLabel = "Ultima settimana disponibile" 
           return;
         }
 
-        // timeline fissa: Lun 00:00 -> Dom 23:00 (168 ore)
         const startLocal = new Date(`${dates[0]}T00:00:00`);
         const hrs = [];
         for (let i = 0; i < 168; i++) {
@@ -1075,7 +1097,6 @@ function WeekChart({ weekDates = [], weekLabel = "Ultima settimana disponibile" 
           hrs.push(d.getTime());
         }
 
-        // bucket per ora
         const buckets = new Map();
         for (const h of hrs) {
           buckets.set(h, {
@@ -1102,7 +1123,6 @@ function WeekChart({ weekDates = [], weekLabel = "Ultima settimana disponibile" 
           });
         }
 
-        // carico i 7 intraday
         for (const dISO of dates) {
           const url = `/data/intraday/${dISO}.json`;
           const res = await fetch(url, { cache: "no-store" });
@@ -1114,7 +1134,6 @@ function WeekChart({ weekDates = [], weekLabel = "Ultima settimana disponibile" 
             const tt = r?.t ? String(r.t) : "";
             if (!tt) continue;
 
-            // parse "YYYY-MM-DD HH:MM"
             const m = tt.match(/^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})$/);
             if (!m) continue;
 
@@ -1125,7 +1144,7 @@ function WeekChart({ weekDates = [], weekLabel = "Ultima settimana disponibile" 
             const mi = Number(m[5]);
 
             const t = new Date(y, mo - 1, da, hh, mi, 0, 0);
-            t.setMinutes(0, 0, 0); // bin orario
+            t.setMinutes(0, 0, 0);
             const hourMs = t.getTime();
 
             const b = buckets.get(hourMs);
@@ -1304,7 +1323,7 @@ function WeekChart({ weekDates = [], weekLabel = "Ultima settimana disponibile" 
           max: ax.max,
           interval: ax.interval,
           splitNumber: 6,
-          axisLabel: { formatter: (v) => Number(v).toFixed(1) }, // 1 decimale
+          axisLabel: { formatter: (v) => Number(v).toFixed(1) },
           splitLine: { show: true },
         },
         series: [
