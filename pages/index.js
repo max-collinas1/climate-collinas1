@@ -137,53 +137,48 @@ function findLastFullWeekISO(datesSet, lastDateISO) {
 
 // -------------------- Protezione Civile (build-time fetch) --------------------
 async function fetchPcAlertForCollinas() {
-  const url = process.env.PC_ALERT_URL;
-  if (!url) {
-    return {
-      ok: false,
-      level: "verde",
-      title: "Avvisi Protezione Civile",
-      area: "Collinas",
-      from: null,
-      to: null,
-      url: null,
-      note: "PC_ALERT_URL non configurato",
-    };
-  }
-
   try {
-    const res = await fetch(url, { headers: { "User-Agent": "meteo-collinas/1.0" } });
+    // Chiama la tua API interna che già:
+    // - trova il PDF dinamico dalla pagina Regione
+    // - parse il PDF
+    // - ritorna level/area/from/to/url
+    const res = await fetch("http://localhost:3000/api/pc-alert", {
+      headers: { "User-Agent": "meteo-collinas/1.0" },
+    });
+
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const j = await res.json();
 
-    const item = Array.isArray(j)
-      ? j.find((x) => String(x?.area || "").toLowerCase().includes("collinas")) || j[0]
-      : j;
-
-    const levelRaw = String(item?.level || "verde").toLowerCase();
+    const levelRaw = String(j?.level || "verde").toLowerCase();
     const level =
-      levelRaw.includes("ross") ? "rosso" : levelRaw.includes("aranc") ? "arancione" : levelRaw.includes("giall") ? "giallo" : "verde";
+      levelRaw.includes("ross")
+        ? "rosso"
+        : levelRaw.includes("aranc")
+        ? "arancione"
+        : levelRaw.includes("giall")
+        ? "giallo"
+        : "verde";
 
     return {
-      ok: true,
+      ok: Boolean(j?.ok),
       level,
-      title: String(item?.title || "Avviso Protezione Civile"),
-      area: String(item?.area || "Collinas"),
-      from: item?.from ?? null,
-      to: item?.to ?? null,
-      url: item?.url ?? null,
-      note: null,
+      title: String(j?.title || "Avvisi Protezione Civile"),
+      area: String(j?.area || "Collinas (Campidano - SARD-B)"),
+      from: j?.from ?? null,
+      to: j?.to ?? null,
+      url: j?.url ?? null,
+      note: j?.note ?? null,
     };
   } catch (e) {
     return {
       ok: false,
       level: "verde",
       title: "Avvisi Protezione Civile",
-      area: "Collinas",
+      area: "Collinas (Campidano - SARD-B)",
       from: null,
       to: null,
       url: null,
-      note: "Errore nel recupero avvisi (endpoint non raggiungibile o formato non valido).",
+      note: "Errore nel recupero avvisi Protezione Civile.",
     };
   }
 }
@@ -903,7 +898,15 @@ function PcAlertCard({ alert }) {
           </span>
         </div>
 
-        {alert?.note ? <div className="pcNote">{alert.note}</div> : null}
+        {alert?.next ? (
+  	 <div className="pcNote">
+    	  <b>Prossima allerta:</b> {String(alert.next.level || "").toUpperCase()}{" "}
+    	  dalle <b>{String(alert.next.from || "—").slice(11)}</b> alle <b>{String(alert.next.to || "—").slice(11)}</b>
+         </div>
+        ) : alert?.note ? (
+         <div className="pcNote">{alert.note}</div>
+        ) : null}
+
 
         {alert?.url ? (
           <a className="pcLink" href={alert.url} target="_blank" rel="noreferrer">

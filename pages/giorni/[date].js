@@ -62,6 +62,10 @@ function fmt1(x, fallback = "—") {
   const r = round1(x);
   return r === null ? fallback : r.toFixed(1);
 }
+function fmt2(x, fallback = "—") {
+  const n = toNull(x);
+  return n === null ? fallback : n.toFixed(2);
+}
 
 // compatibilità: se nel daily hai "rain" invece di "rain_total"
 function getRainTotal(d) {
@@ -104,7 +108,7 @@ function axisNice(min, max, targetTicks = 6) {
 // direzione vento: N, NE, E, SE, S, SW, W, NW
 function degToCardinal8(v) {
   const n = Number(v);
-  if (!Number.isFinite(n)) return "";
+  if (!Number.isFinite(n)) return "—";
   const d = ((n % 360) + 360) % 360;
   const ix = Math.round(d / 45) % 8;
   return ["N", "NE", "E", "SE", "S", "SW", "W", "NW"][ix];
@@ -301,7 +305,10 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
     return acc;
   });
 
-  const chartStyle = { height: 280, width: "100%" };
+  // altezza grafici
+  const CHART_H = 360;
+  const chartStyle = { height: CHART_H, width: "100%" };
+
   const N = labels.length;
   const DZ = makeDataZoom(N, 144);
 
@@ -503,40 +510,73 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
     if (targetDate) router.push(`/giorni/${targetDate}`);
   }
 
+  // ---- tabella intraday ----
+  const [showTable, setShowTable] = useState(false);
+
+  const tableRows = useMemo(() => {
+    return labels.map((hhmm, i) => {
+      const t = byHHMM.get(hhmm) || null;
+      const wd = windDir[i];
+      return {
+        time: hhmm,
+        temp: temp[i],
+        dew: dew[i],
+        rh: rh[i],
+        press: press[i],
+        wind: wind[i],
+        gust: gust[i],
+        dirDeg: wd,
+        dirCard: degToCardinal8(wd),
+        rain15: rain15[i],
+        rainCum: rainCum[i],
+        uv: uv[i],
+        solar: solar[i],
+        _has: !!t,
+      };
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [day.date]);
+
   return (
     <main className="page">
       <div className="container">
-        {/* NAVBAR (spaziato, no “PrevMeseNext” appiccicato) */}
+        {/* NAVBAR (Home nello stesso breadcrumb + tasti veri) */}
         <div className="navBar">
           <div className="navLeft">
-            <Link className="iconBtn" href={`/mesi/${year}/${month}`} aria-label="Torna al mese">
-              ←
-            </Link>
-
             <div className="crumb">
+              <Link className="crumbBtn" href="/" aria-label="Home">
+                ← Home
+              </Link>
+
+              <span className="dot">•</span>
+
               <Link className="crumbLink" href={`/anni/${year}`}>
                 {year}
               </Link>
+
               <span className="dot">•</span>
+
               <Link className="crumbLink" href={`/mesi/${year}/${month}`}>
                 {formatMonthIT(ym)}
               </Link>
+
               <span className="dot">•</span>
+
               <span className="crumbHere">{formatDateIT(day.date)}</span>
             </div>
           </div>
 
           <div className="navRight">
             <div className="navActions">
-              <Link className={`navAction ${!prev ? "disabled" : ""}`} href={prev ? `/giorni/${prev}` : "#"} aria-disabled={!prev}>
+              <Link className={`navBtn ${!prev ? "disabled" : ""}`} href={prev ? `/giorni/${prev}` : "#"} aria-disabled={!prev}>
                 ← Giorno precedente
               </Link>
 
-              <Link className="navAction mid" href={`/mesi/${year}/${month}`}>
+              <Link className="navBtn subtle" href={`/mesi/${year}/${month}`}>
                 Torna al mese
               </Link>
 
-              <Link className={`navAction ${!next ? "disabled" : ""}`} href={next ? `/giorni/${next}` : "#"} aria-disabled={!next}>
+              <Link className={`navBtn ${!next ? "disabled" : ""}`} href={next ? `/giorni/${next}` : "#"} aria-disabled={!next}>
                 Giorno successivo →
               </Link>
             </div>
@@ -639,6 +679,59 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
                   ))}
                 </div>
               )}
+
+              {/* ✅ TABELLA DATI */}
+              <div className="tablePanel">
+                <button className="tableToggle" onClick={() => setShowTable((v) => !v)}>
+                  {showTable ? "Nascondi tabella dati giornalieri" : "Mostra tabella dati giornalieri"}
+                </button>
+
+                {showTable && (
+                  <div className="tableWrap">
+                    <table className="dataTable">
+                      <thead>
+                        <tr>
+                          <th>Ora</th>
+                          <th>T (°C)</th>
+                          <th>Td (°C)</th>
+                          <th>UR (%)</th>
+                          <th>Press (hPa)</th>
+                          <th>Vento (km/h)</th>
+                          <th>Raff. (km/h)</th>
+                          <th>Dir</th>
+                          <th>Pioggia 15m (mm)</th>
+                          <th>Cumulata (mm)</th>
+                          <th>UV</th>
+                          <th>Rad (W/m²)</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {tableRows.map((r) => (
+                          <tr key={r.time} className={!r._has ? "missing" : ""}>
+                            <td className="mono">{r.time}</td>
+                            <td>{r.temp == null ? "—" : fmt1(r.temp)}</td>
+                            <td>{r.dew == null ? "—" : fmt1(r.dew)}</td>
+                            <td>{r.rh == null ? "—" : fmt1(r.rh)}</td>
+                            <td>{r.press == null ? "—" : fmt1(r.press)}</td>
+                            <td>{r.wind == null ? "—" : fmt1(r.wind)}</td>
+                            <td>{r.gust == null ? "—" : fmt1(r.gust)}</td>
+                            <td className="mono">
+                              {r.dirDeg == null ? "—" : `${r.dirCard} (${Math.round(r.dirDeg)}°)`}
+                            </td>
+                            <td>{r.rain15 == null ? "—" : fmt2(r.rain15)}</td>
+                            <td>{r.rainCum == null ? "—" : fmt2(r.rainCum)}</td>
+                            <td>{r.uv == null ? "—" : fmt1(r.uv)}</td>
+                            <td>{r.solar == null ? "—" : fmt1(r.solar)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    <div className="tableHint">
+                      Nota: le righe “sbiadite” indicano assenza dato a quell’orario (slot 15-min senza record).
+                    </div>
+                  </div>
+                )}
+              </div>
             </>
           )}
         </section>
@@ -676,36 +769,35 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
         .navLeft {
           display: flex;
           align-items: center;
-          gap: 10px;
           min-width: 0;
-        }
-        .iconBtn {
-          width: 36px;
-          height: 36px;
-          display: grid;
-          place-items: center;
-          text-decoration: none;
-          border: 1px solid #e7e7e7;
-          background: rgba(255, 255, 255, 0.92);
-          color: #0f172a;
-          border-radius: 12px;
-          font-weight: 950;
-          transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
-          flex: 0 0 auto;
-        }
-        .iconBtn:hover {
-          transform: translateY(-1px);
-          border-color: #d6d6d6;
-          background: #fff;
         }
 
         .crumb {
           display: flex;
           align-items: center;
-          gap: 8px;
+          gap: 10px;
           flex-wrap: wrap;
           min-width: 0;
         }
+
+        /* Home come tasto nel breadcrumb */
+        .crumbBtn {
+          text-decoration: none;
+          border: 1px solid #e7e7e7;
+          background: rgba(255, 255, 255, 0.92);
+          color: #0f172a;
+          padding: 8px 10px;
+          border-radius: 14px;
+          font-weight: 950;
+          white-space: nowrap;
+          transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
+        }
+        .crumbBtn:hover {
+          transform: translateY(-1px);
+          border-color: #d6d6d6;
+          background: #fff;
+        }
+
         .crumbLink {
           text-decoration: none;
           color: rgba(15, 23, 42, 0.78);
@@ -717,7 +809,7 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
           border-bottom-color: rgba(15, 23, 42, 0.35);
         }
         .dot {
-          opacity: 0.4;
+          opacity: 0.35;
           font-weight: 900;
         }
         .crumbHere {
@@ -742,7 +834,8 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
           justify-content: flex-end;
         }
 
-        .navAction {
+        /* ✅ link = tasti veri */
+        .navBtn {
           text-decoration: none;
           border: 1px solid #e7e7e7;
           background: rgba(255, 255, 255, 0.92);
@@ -752,16 +845,21 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
           font-weight: 950;
           white-space: nowrap;
           transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          gap: 8px;
         }
-        .navAction:hover {
+        .navBtn:hover {
           transform: translateY(-1px);
           border-color: #d6d6d6;
           background: #fff;
         }
-        .navAction.mid {
+        .navBtn.subtle {
           color: rgba(15, 23, 42, 0.78);
+          background: rgba(248, 250, 252, 0.8);
         }
-        .navAction.disabled {
+        .navBtn.disabled {
           pointer-events: none;
           opacity: 0.45;
         }
@@ -944,12 +1042,78 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
           padding: 6px 4px;
         }
 
+        /* ---- TABELLA ---- */
+        .tablePanel {
+          margin-top: 12px;
+          border-top: 1px solid rgba(15, 23, 42, 0.08);
+          padding-top: 12px;
+        }
+        .tableToggle {
+          border: 1px solid #e7e7e7;
+          background: rgba(248, 250, 252, 0.8);
+          border-radius: 14px;
+          padding: 10px 12px;
+          font-weight: 950;
+          color: #0f172a;
+          cursor: pointer;
+          transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
+        }
+        .tableToggle:hover {
+          transform: translateY(-1px);
+          border-color: #d6d6d6;
+          background: #fff;
+        }
+        .tableWrap {
+          margin-top: 10px;
+          border: 1px solid #ececec;
+          border-radius: 16px;
+          background: #fff;
+          overflow: auto;
+        }
+        .dataTable {
+          width: 100%;
+          border-collapse: collapse;
+          font-size: 12px;
+        }
+        .dataTable th,
+        .dataTable td {
+          padding: 10px 10px;
+          border-bottom: 1px solid #f0f0f0;
+          text-align: left;
+          white-space: nowrap;
+        }
+        .dataTable thead th {
+          position: sticky;
+          top: 0;
+          background: #ffffff;
+          z-index: 1;
+          font-weight: 950;
+          color: rgba(15, 23, 42, 0.78);
+          border-bottom: 1px solid #e9e9e9;
+        }
+        .mono {
+          font-variant-numeric: tabular-nums;
+          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        }
+        .missing {
+          opacity: 0.55;
+        }
+        .tableHint {
+          padding: 10px 12px;
+          font-size: 11px;
+          font-weight: 800;
+          color: rgba(15, 23, 42, 0.55);
+        }
+
         @media (max-width: 980px) {
           .kpiGrid {
             grid-template-columns: 1fr;
           }
           .h1 {
             font-size: 34px;
+          }
+          :global(.echarts-for-react) {
+            height: 320px !important;
           }
         }
 
@@ -966,7 +1130,7 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
           .navActions {
             width: 100%;
           }
-          .navAction {
+          .navBtn {
             flex: 1;
             text-align: center;
           }
