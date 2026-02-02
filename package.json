@@ -7,7 +7,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "build:data": "node scripts/build-data.js"
+    "build:data": "node scripts/build-data.js && node scripts/build-records.js",
+    "build:records": "node scripts/build-records.js",
+    "build:all": "npm run build:data && npm run build:records"
   },
   "dependencies": {
     "chart.js": "^4.5.1",
