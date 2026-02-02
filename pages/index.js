@@ -4,6 +4,7 @@ import path from "path";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/router";
 
 const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
 
@@ -59,10 +60,6 @@ function pad2(x) {
 function dateToISO(d) {
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 }
-function isoDow(d) {
-  const day = d.getDay(); // 0 Sun..6 Sat
-  return day === 0 ? 7 : day; // 1..7 (Mon..Sun)
-}
 
 // direzione vento: N, NE, E, SE, S, SW, W, NW
 function degToCardinal8(v) {
@@ -104,24 +101,27 @@ function makeWeekDataZoom() {
   ];
 }
 
-// ultima settimana COMPLETA disponibile (Lun->Dom) basata su daily.json
-function findLastFullWeekISO(datesSet, lastDateISO) {
+/**
+ * Ultimi 7 giorni CONSECUTIVI presenti nel daily.
+ * - Non richiede Lun→Dom
+ * - Cerca una finestra di 7 giorni consecutivi terminante su lastDateISO.
+ * - Se manca anche 1 giorno, scorre indietro di 1 giorno e riprova.
+ */
+function findLast7ConsecutiveISO(datesSet, lastDateISO) {
   if (!lastDateISO) return [];
   let cursor = new Date(`${lastDateISO}T12:00:00`);
 
+  // max ~260 tentativi (quasi 9 mesi di buchi)
   for (let tries = 0; tries < 260; tries++) {
-    const dow = isoDow(cursor);
-    const sunday = new Date(cursor);
-    sunday.setDate(sunday.getDate() + (7 - dow));
-
-    const monday = new Date(sunday);
-    monday.setDate(monday.getDate() - 6);
+    const end = new Date(cursor);
+    const start = new Date(cursor);
+    start.setDate(start.getDate() - 6);
 
     const week = [];
     let ok = true;
     for (let i = 0; i < 7; i++) {
-      const d = new Date(monday);
-      d.setDate(monday.getDate() + i);
+      const d = new Date(start);
+      d.setDate(start.getDate() + i);
       const iso = dateToISO(d);
       week.push(iso);
       if (!datesSet.has(iso)) ok = false;
@@ -129,9 +129,11 @@ function findLastFullWeekISO(datesSet, lastDateISO) {
 
     if (ok) return week;
 
-    cursor = new Date(monday);
-    cursor.setDate(cursor.getDate() - 7);
+    // scorro indietro di 1 giorno e riprovo
+    cursor = new Date(end);
+    cursor.setDate(cursor.getDate() - 1);
   }
+
   return [];
 }
 
@@ -182,7 +184,9 @@ async function fetchPcAlertForCollinas() {
 export async function getStaticProps() {
   const rows = readDaily().sort((a, b) => String(a?.date || "").localeCompare(String(b?.date || "")));
 
-  const years = Array.from(new Set(rows.map((r) => String(r?.date || "").slice(0, 4)).filter(Boolean))).sort();
+  // anni in ordine: più recente -> meno recente
+  const years = Array.from(new Set(rows.map((r) => String(r?.date || "").slice(0, 4)).filter(Boolean))).sort((a, b) => b.localeCompare(a));
+
   const start = rows.length ? rows[0].date : null;
   const end = rows.length ? rows[rows.length - 1].date : null;
 
@@ -227,23 +231,26 @@ export async function getStaticProps() {
 
   const dateSet = new Set(rows.map((r) => String(r?.date || "").slice(0, 10)).filter(Boolean));
   const lastDateISO = rows.length ? String(rows[rows.length - 1]?.date || "").slice(0, 10) : null;
-  const weekDates = findLastFullWeekISO(dateSet, lastDateISO);
 
-  const lastYear = years.length ? years[years.length - 1] : null;
-  const lastYearLink = lastYear ? `/anni/${lastYear}` : "/anni";
+  // ✅ Ultimi 7 giorni consecutivi realmente disponibili nel daily
+  let weekDates = findLast7ConsecutiveISO(dateSet, lastDateISO);
+
+  // fallback estremo: se ci sono buchi enormi, prendo comunque le ultime 7 date presenti (non consecutive)
+  if (!weekDates.length) {
+    const uniqSorted = Array.from(dateSet).sort();
+    weekDates = uniqSorted.slice(-7);
+  }
 
   const pcAlert = await fetchPcAlertForCollinas();
 
   return {
     props: {
-      years,
       start,
       end,
       yearStats,
       overallTmean,
       norm: { rainMin, rainMax, tmeanMin, tmeanMax },
       weekDates,
-      lastYearLink,
       pcAlert,
     },
     revalidate: 300,
@@ -257,7 +264,6 @@ export default function Home({
   overallTmean = NaN,
   norm = { rainMin: 0, rainMax: 0, tmeanMin: 0, tmeanMax: 0 },
   weekDates = [],
-  lastYearLink = "/anni",
   pcAlert = { ok: false, level: "verde", title: "Avvisi Protezione Civile", area: "Collinas", from: null, to: null, url: null, note: null },
 }) {
   const [q, setQ] = useState("");
@@ -269,8 +275,10 @@ export default function Home({
   }, [q, yearStats]);
 
   const weekLabel = useMemo(() => {
-    if (!Array.isArray(weekDates) || weekDates.length !== 7) return "Ultima settimana disponibile";
-    return `${weekDates[0]} → ${weekDates[6]}`;
+    if (!Array.isArray(weekDates) || weekDates.length < 2) return "Ultimi giorni disponibili";
+    const a = weekDates[0];
+    const b = weekDates[weekDates.length - 1];
+    return `${a} → ${b}`;
   }, [weekDates]);
 
   return (
@@ -284,7 +292,7 @@ export default function Home({
             <div className="subline">Dati storici della stazione, organizzati per anno e mese.</div>
 
             <div className="howto" role="note">
-              <b>Come si usa:</b> sotto trovi gli anni. Premi <b>“Apri dettagli”</b> per vedere mesi e tabella giornaliera.
+              <b>Come si usa:</b> sotto trovi gli anni. Puoi cliccare direttamente una scheda per aprire l’anno (il pulsante “Apri dettagli” resta disponibile).
               <span className="dot">•</span>
               Periodo dati: <b>{fmtDateISO(start)}</b> → <b>{fmtDateISO(end)}</b>
             </div>
@@ -296,6 +304,19 @@ export default function Home({
         </div>
 
         <div className="embedWrap" aria-label="Widget WeatherLink">
+          {/* barra link sopra il widget (stile bottoni) */}
+          <nav className="quickBar" aria-label="Sezioni principali">
+            <Link href="/records" className="quickPill">
+              Record
+            </Link>
+            <Link href="/radar" className="quickPill">
+              Radar
+            </Link>
+            <Link href="/previsioni" className="quickPill">
+              Grafici di previsione
+            </Link>
+          </nav>
+
           <div className="embedFrame">
             <iframe
               src="https://www.weatherlink.com/embeddablePage/show/865c69d0529a4b2d907ab00a67d2935d/signature"
@@ -304,18 +325,6 @@ export default function Home({
               frameBorder="0"
               title="WeatherLink Signature"
             />
-          </div>
-
-          <div className="quickNav" aria-label="Sezioni principali">
-            <Link href="/records" className="quickBtn">
-              Record <span aria-hidden="true">→</span>
-            </Link>
-            <Link href="/radar" className="quickBtn">
-              Radar <span aria-hidden="true">→</span>
-            </Link>
-            <Link href="/previsioni" className="quickBtn">
-              Grafici di previsione <span aria-hidden="true">→</span>
-            </Link>
           </div>
         </div>
 
@@ -328,7 +337,7 @@ export default function Home({
         <div className="sectionHead">
           <div>
             <h2>Seleziona un anno</h2>
-            <div className="hint">Ogni scheda ha un pulsante dedicato: è quello che ti porta ai dettagli.</div>
+            <div className="hint">Clicca una scheda per entrare nell’anno. Gli anni sono ordinati dal più recente al meno recente.</div>
           </div>
 
           <div className="tools">
@@ -336,14 +345,6 @@ export default function Home({
               <span className="searchLabel">Filtro</span>
               <input className="search" placeholder="es. 2025" value={q} onChange={(e) => setQ(e.target.value)} inputMode="numeric" />
             </label>
-
-            <Link href="/anni" className="btnSoft">
-              Indice anni <span aria-hidden="true">→</span>
-            </Link>
-
-            <Link href={lastYearLink} className="btnPrimary">
-              Entra nell’archivio <span aria-hidden="true">→</span>
-            </Link>
           </div>
         </div>
 
@@ -441,9 +442,51 @@ export default function Home({
 
         .embedWrap {
           border-top: 1px solid #efefef;
-          padding: 18px 22px;
+          padding: 16px 22px 18px;
           background: linear-gradient(180deg, rgba(248, 250, 252, 0.65), rgba(255, 255, 255, 0.92));
         }
+
+        /* ---- barra link sopra al widget (stile come screenshot: bottoni, niente puntini/frecce) ---- */
+        .quickBar {
+          margin: 0 auto 12px;
+          width: min(760px, 100%);
+          display: flex;
+          gap: 10px;
+          justify-content: center;
+          align-items: center;
+          flex-wrap: wrap;
+        }
+
+        .quickPill {
+          text-decoration: none;
+          color: #0f172a;
+          background: rgba(255, 255, 255, 0.96);
+          border: 1px solid #d7d7d7;
+          padding: 12px 16px;
+          border-radius: 18px;
+          font-weight: 950;
+          font-size: 14px;
+          line-height: 1;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          white-space: nowrap;
+          box-shadow: 0 1px 0 rgba(0, 0, 0, 0.03);
+          transition: transform 140ms ease, border-color 140ms ease, background 140ms ease, box-shadow 140ms ease;
+        }
+
+        .quickPill:hover {
+          transform: translateY(-1px);
+          background: #ffffff;
+          border-color: #bfbfbf;
+          box-shadow: 0 6px 18px rgba(15, 23, 42, 0.08);
+        }
+
+        .quickPill:focus-visible {
+          outline: none;
+          box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.22), 0 6px 18px rgba(15, 23, 42, 0.08);
+        }
+
         .embedFrame {
           display: flex;
           justify-content: center;
@@ -452,35 +495,6 @@ export default function Home({
         }
         .embedFrame iframe {
           border-radius: 16px;
-        }
-
-        .quickNav {
-          margin-top: 14px;
-          display: grid;
-          grid-template-columns: repeat(3, 1fr);
-          gap: 10px;
-        }
-
-        .quickBtn {
-          text-decoration: none;
-          color: #0f172a;
-          background: rgba(255, 255, 255, 0.96);
-          border: 1px solid #e7e7e7;
-          padding: 12px 14px;
-          border-radius: 16px;
-          font-weight: 950;
-          font-size: 13px;
-          transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          box-shadow: 0 1px 0 rgba(0, 0, 0, 0.02);
-          white-space: nowrap;
-        }
-        .quickBtn:hover {
-          transform: translateY(-1px);
-          background: #ffffff;
-          border-color: #d6d6d6;
         }
 
         .weekWrap {
@@ -518,41 +532,6 @@ export default function Home({
           gap: 10px;
           flex-wrap: wrap;
           justify-content: flex-end;
-        }
-
-        .btnPrimary {
-          text-decoration: none;
-          color: #fff;
-          background: #0f172a;
-          padding: 11px 14px;
-          border-radius: 16px;
-          font-weight: 950;
-          font-size: 13px;
-          box-shadow: 0 10px 22px rgba(15, 23, 42, 0.18);
-          transition: transform 140ms ease, background 140ms ease;
-          white-space: nowrap;
-        }
-        .btnPrimary:hover {
-          transform: translateY(-1px);
-          background: #0b1223;
-        }
-
-        .btnSoft {
-          text-decoration: none;
-          color: #0f172a;
-          background: rgba(255, 255, 255, 0.96);
-          border: 1px solid #e7e7e7;
-          padding: 11px 14px;
-          border-radius: 16px;
-          font-weight: 950;
-          font-size: 13px;
-          transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
-          white-space: nowrap;
-        }
-        .btnSoft:hover {
-          transform: translateY(-1px);
-          background: #ffffff;
-          border-color: #d6d6d6;
         }
 
         .searchWrap {
@@ -619,9 +598,6 @@ export default function Home({
           .tools {
             justify-content: flex-start;
           }
-          .quickNav {
-            grid-template-columns: 1fr;
-          }
         }
       `}</style>
     </div>
@@ -630,6 +606,24 @@ export default function Home({
 
 // -------------------- YearCard --------------------
 function YearCard({ y, overallTmean, norm }) {
+  const router = useRouter();
+  const href = `/anni/${y.year}`;
+
+  const onCardClick = (e) => {
+    if (e?.target && typeof e.target.closest === "function") {
+      const a = e.target.closest("a");
+      if (a) return;
+    }
+    router.push(href);
+  };
+
+  const onCardKeyDown = (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      router.push(href);
+    }
+  };
+
   const tDelta = Number.isFinite(n(y.tmean)) && Number.isFinite(n(overallTmean)) ? n(y.tmean) - n(overallTmean) : NaN;
   const labelDelta = !Number.isFinite(tDelta) ? null : tDelta >= 0.2 ? "Più caldo" : tDelta <= -0.2 ? "Più freddo" : "In linea";
 
@@ -652,7 +646,7 @@ function YearCard({ y, overallTmean, norm }) {
   })();
 
   return (
-    <article className="card" aria-label={`Anno ${y.year}`}>
+    <article className="card" aria-label={`Anno ${y.year}`} role="link" tabIndex={0} onClick={onCardClick} onKeyDown={onCardKeyDown}>
       <div className="top">
         <div className="yr">{y.year}</div>
 
@@ -710,7 +704,7 @@ function YearCard({ y, overallTmean, norm }) {
       </div>
 
       <div className="actions">
-        <Link className="btn" href={`/anni/${y.year}`} aria-label={`Apri dettagli anno ${y.year}`}>
+        <Link className="btn" href={href} aria-label={`Apri dettagli anno ${y.year}`}>
           Apri dettagli <span aria-hidden="true">→</span>
         </Link>
         <div className="hint" aria-hidden="true">
@@ -725,7 +719,19 @@ function YearCard({ y, overallTmean, norm }) {
           padding: 14px;
           background: rgba(255, 255, 255, 0.96);
           box-shadow: 0 6px 20px rgba(15, 23, 42, 0.05);
+          cursor: pointer;
+          transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
+          outline: none;
         }
+        .card:hover {
+          transform: translateY(-1px);
+          border-color: #d6d6d6;
+          background: rgba(255, 255, 255, 0.99);
+        }
+        .card:focus-visible {
+          box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.22), 0 10px 22px rgba(15, 23, 42, 0.08);
+        }
+
         .top {
           display: grid;
           gap: 8px;
@@ -1056,7 +1062,7 @@ function PcAlertCard({ alert }) {
 }
 
 // -------------------- WeekChart (orario, aggregato) --------------------
-function WeekChart({ weekDates = [], weekLabel = "Ultima settimana disponibile" }) {
+function WeekChart({ weekDates = [], weekLabel = "Ultimi giorni disponibili" }) {
   const GROUPS = useMemo(
     () => [
       { key: "temp", label: "Temperatura + Dew point" },
@@ -1085,7 +1091,7 @@ function WeekChart({ weekDates = [], weekLabel = "Ultima settimana disponibile" 
       try {
         const dates = Array.isArray(weekDates) ? weekDates.filter(Boolean) : [];
         if (dates.length !== 7) {
-          setErr("Settimana non disponibile (servono 7 giorni consecutivi Lun→Dom presenti nel daily).");
+          setErr("Periodo non disponibile (servono 7 giorni consecutivi presenti nel daily).");
           return;
         }
 
@@ -1439,10 +1445,10 @@ function WeekChart({ weekDates = [], weekLabel = "Ultima settimana disponibile" 
   }, [data, groupKey]);
 
   return (
-    <div className="weekCard" aria-label="Grafico ultima settimana (orario)">
+    <div className="weekCard" aria-label="Grafico ultimi 7 giorni (orario)">
       <div className="weekHead">
         <div>
-          <div className="weekTitle">Ultima settimana (Lun → Dom)</div>
+          <div className="weekTitle">Ultimi 7 giorni disponibili</div>
           <div className="weekSub">
             {weekLabel}. Valori <b>orari</b> (aggregati dai dati intraday).
           </div>

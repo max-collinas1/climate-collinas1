@@ -21,6 +21,10 @@ const QH_PER_DAY = 96; // 24h * 4
 const MIN_COVERAGE = 0.9; // 90%
 const MIN_SAMPLES_FOR_MEAN = Math.ceil(QH_PER_DAY * MIN_COVERAGE); // 87
 
+// ✅ copertura minima per statistiche “sensibili” (min/max e anche UV/RAD medie)
+const MIN_COVERAGE_STATS = 0.95; // 0.90 oppure 0.95
+const MIN_SAMPLES_FOR_STATS = Math.ceil(QH_PER_DAY * MIN_COVERAGE_STATS); // 92 se 0.95
+
 // ==================== utils ====================
 function listFiles(dir) {
   const out = [];
@@ -327,7 +331,7 @@ function circularMeanDegMin(degs, minCount = MIN_SAMPLES_FOR_MEAN) {
 
 /**
  * FIX PRECIPITAZIONI:
- * - non fidarsi del "rain_rate_mmph" del CSV: può essere >0 anche con rain_acc_mm fermo (come nel tuo Maggio.csv).
+ * - non fidarsi del "rain_rate_mmph" del CSV: può essere >0 anche con rain_acc_mm fermo.
  * - quindi:
  *   1) calcolo i delta da rain_acc_mm (mm/15min)
  *   2) ricavo il rate "fisico" come delta*4 (mm/h)
@@ -489,6 +493,18 @@ function buildOnce() {
       const uvvals = hasObs ? obs.map((r) => toNum(r.uv)) : [];
       const solvals = hasObs ? obs.map((r) => toNum(r.solar_wm2)) : [];
 
+      // ✅ conteggi validi (rispetto ai 96 campioni attesi)
+      const rhCount = rhvals.filter(Number.isFinite).length;
+      const pCount = pvals.filter(Number.isFinite).length;
+      const uvCount = uvvals.filter(Number.isFinite).length;
+      const solCount = solvals.filter(Number.isFinite).length;
+
+      // ✅ “statistiche sensibili” (min/max e anche UV/RAD medie) SOLO se copertura >= soglia
+      const rhOkStats = rhCount >= MIN_SAMPLES_FOR_STATS;
+      const pOkStats = pCount >= MIN_SAMPLES_FOR_STATS;
+      const uvOkStats = uvCount >= MIN_SAMPLES_FOR_STATS;
+      const solOkStats = solCount >= MIN_SAMPLES_FOR_STATS;
+
       const tmin_calc = minv(tvals);
       const tmax_calc = maxv(tvals);
 
@@ -498,13 +514,15 @@ function buildOnce() {
       const wind_avg = meanMin(wvals);
       const press_avg = meanMin(pvals);
 
-      const rh_min = minv(rhvals);
-      const rh_max = maxv(rhvals);
+      // ✅ estremi condizionati alla copertura
+      const rh_min = rhOkStats ? minv(rhvals) : null;
+      const rh_max = rhOkStats ? maxv(rhvals) : null;
 
       const wind_max = maxv(wvals);
       const gust_max_calc = maxv(gvals);
-      const press_min = minv(pvals);
-      const press_max = maxv(pvals);
+
+      const press_min = pOkStats ? minv(pvals) : null;
+      const press_max = pOkStats ? maxv(pvals) : null;
 
       const wind_dir_mean_calc = circularMeanDegMin(dvals);
 
@@ -534,11 +552,12 @@ function buildOnce() {
       const rain_12h_max = hasObs ? rollingMaxSum(deltas15, 48) : null;
       const rain_24h_max = hasObs ? rollingMaxSum(deltas15, 96) : null;
 
-      const uv_max = maxv(uvvals);
-      const solar_max = maxv(solvals);
+      // ✅ UV/Solar: max e medie SOLO se copertura ok (altrimenti null)
+      const uv_max = uvOkStats ? maxv(uvvals) : null;
+      const solar_max = solOkStats ? maxv(solvals) : null;
 
-      const uv_mean_pos = meanPositive(uvvals);
-      const solar_mean_pos = meanPositive(solvals);
+      const uv_mean_pos = uvOkStats ? meanPositive(uvvals) : null;
+      const solar_mean_pos = solOkStats ? meanPositive(solvals) : null;
 
       const tmin = Number.isFinite(overrideNum.tmin) ? overrideNum.tmin : tmin_calc;
       const tmax = Number.isFinite(overrideNum.tmax) ? overrideNum.tmax : tmax_calc;
@@ -567,7 +586,6 @@ function buildOnce() {
       const wind_dir_mean_deg = wind_dir_mean_deg_ovr !== null ? wind_dir_mean_deg_ovr : wind_dir_mean_calc;
 
       // ===== CONSISTENZA: se accumulo nullo, intensità nullo =====
-      // (serve proprio per casi tipo Maggio: rain_rate_mmph nel CSV >0 ma rain_acc_mm fermo)
       if (!(Number.isFinite(rain_total) && rain_total > 0)) {
         rainrate_max = 0;
       }
@@ -613,9 +631,20 @@ function buildOnce() {
         has_obs: hasObs,
         obs_count: obs.length,
         mean_min_samples: MIN_SAMPLES_FOR_MEAN,
+        stats_min_samples: MIN_SAMPLES_FOR_STATS,
+        coverage_stats: {
+          rh_ok: rhOkStats,
+          press_ok: pOkStats,
+          uv_ok: uvOkStats,
+          solar_ok: solOkStats,
+          rh_count: rhCount,
+          press_count: pCount,
+          uv_count: uvCount,
+          solar_count: solCount,
+        },
       });
 
-      // intraday: rain_rate_mmph DERIVATO dai delta (così nei grafici non appaiono spike “fantasma”)
+      // intraday: rain_rate_mmph DERIVATO dai delta
       const intraday = obs.map((r, i) => ({
         t: `${date} ${String(r.time).slice(0, 5)}`,
         temp_c: numOrNull(r.temp_c),
@@ -632,7 +661,6 @@ function buildOnce() {
         rain_15m_mm: Number.isFinite(deltas15[i]) ? deltas15[i] : null,
         rain_acc_mm: numOrNull(r.rain_acc_mm),
 
-        // qui non uso il campo del CSV: uso rate fisico dal delta
         rain_rate_mmph: Number.isFinite(rates15[i]) ? rates15[i] : null,
       }));
 
