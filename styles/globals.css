@@ -16,13 +16,21 @@ body {
   overflow-x: hidden;
 }
 
+/* Base desktop */
+html {
+  font-size: 16px;
+  -webkit-text-size-adjust: 100%;
+}
+
 body {
   color: var(--foreground);
   background: var(--background);
   font-family: Arial, Helvetica, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+
   font-size: 14px; /* base desktop */
+  line-height: 1.45;
 }
 
 * {
@@ -43,13 +51,15 @@ a {
 }
 
 /* ============================================================
-   MOBILE / TABLET (touch devices)
-   Aumenta la leggibilità mantenendo layout desktop
-   Funziona anche con viewport width=1200
+   MOBILE / TABLET
+   (1) max-width => affidabile
+   (2) pointer/hover => fallback per touch device
    ============================================================ */
-@media (pointer: coarse) {
+
+/* Mobile classico */
+@media (max-width: 768px) {
   html {
-    font-size: 125%;
+    font-size: 18px; /* alza la base */
   }
 
   body {
@@ -58,15 +68,18 @@ a {
   }
 
   h1 {
-    font-size: 64px !important;
+    font-size: 40px !important;
+    line-height: 1.15;
   }
 
   h2 {
     font-size: 28px !important;
+    line-height: 1.2;
   }
 
   h3 {
     font-size: 22px !important;
+    line-height: 1.25;
   }
 
   p,
@@ -74,11 +87,11 @@ a {
   .hint,
   .note,
   .msg {
-    font-size: 15px !important;
+    font-size: 16px !important;
   }
 
   .chip {
-    font-size: 14px !important;
+    font-size: 15px !important;
   }
 
   button,
@@ -88,5 +101,17 @@ a {
   .quickPill {
     font-size: 16px !important;
     padding: 14px 16px;
+  }
+}
+
+/* Touch device fallback (tablet/phone anche con viewport “strana”) */
+@media (hover: none) and (pointer: coarse) {
+  html {
+    font-size: 18px;
+  }
+
+  body {
+    font-size: 18px;
+    line-height: 1.6;
   }
 }
