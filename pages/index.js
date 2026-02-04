@@ -1,4 +1,4 @@
-// pages/index.js (FULL - compilabile)
+// pages/index.js (FULL - compilabile)  ✅ SENZA riquadro allerte
 import fs from "fs";
 import path from "path";
 import Link from "next/link";
@@ -129,7 +129,7 @@ function findLast7ConsecutiveISO(datesSet, lastDateISO) {
 
     if (ok) return week;
 
-    // scorro indietro di 1 giorno e riprovo
+    // scorro indietro di 1 giorno e riprova
     cursor = new Date(end);
     cursor.setDate(cursor.getDate() - 1);
   }
@@ -137,50 +137,7 @@ function findLast7ConsecutiveISO(datesSet, lastDateISO) {
   return [];
 }
 
-// -------------------- Protezione Civile (build-time fetch) --------------------
-async function fetchPcAlertForCollinas() {
-  try {
-    const res = await fetch("http://localhost:3000/api/pc-alert", {
-      headers: { "User-Agent": "meteo-collinas/1.0" },
-    });
-
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const j = await res.json();
-
-    const levelRaw = String(j?.level || "verde").toLowerCase();
-    const level =
-      levelRaw.includes("ross")
-        ? "rosso"
-        : levelRaw.includes("aranc")
-        ? "arancione"
-        : levelRaw.includes("giall")
-        ? "giallo"
-        : "verde";
-
-    return {
-      ok: Boolean(j?.ok),
-      level,
-      title: String(j?.title || "Avvisi Protezione Civile"),
-      area: String(j?.area || "Collinas (Campidano - SARD-B)"),
-      from: j?.from ?? null,
-      to: j?.to ?? null,
-      url: j?.url ?? null,
-      note: j?.note ?? null,
-    };
-  } catch (e) {
-    return {
-      ok: false,
-      level: "verde",
-      title: "Avvisi Protezione Civile",
-      area: "Collinas (Campidano - SARD-B)",
-      from: null,
-      to: null,
-      url: null,
-      note: "Errore nel recupero avvisi Protezione Civile.",
-    };
-  }
-}
-
+// -------------------- getStaticProps --------------------
 export async function getStaticProps() {
   const rows = readDaily().sort((a, b) => String(a?.date || "").localeCompare(String(b?.date || "")));
 
@@ -241,8 +198,6 @@ export async function getStaticProps() {
     weekDates = uniqSorted.slice(-7);
   }
 
-  const pcAlert = await fetchPcAlertForCollinas();
-
   return {
     props: {
       start,
@@ -251,7 +206,6 @@ export async function getStaticProps() {
       overallTmean,
       norm: { rainMin, rainMax, tmeanMin, tmeanMax },
       weekDates,
-      pcAlert,
     },
     revalidate: 300,
   };
@@ -264,7 +218,6 @@ export default function Home({
   overallTmean = NaN,
   norm = { rainMin: 0, rainMax: 0, tmeanMin: 0, tmeanMax: 0 },
   weekDates = [],
-  pcAlert = { ok: false, level: "verde", title: "Avvisi Protezione Civile", area: "Collinas", from: null, to: null, url: null, note: null },
 }) {
   const [q, setQ] = useState("");
 
@@ -298,9 +251,8 @@ export default function Home({
             </div>
           </div>
 
-          <div className="heroRight">
-            <PcAlertCard alert={pcAlert} />
-          </div>
+          {/* ✅ riquadro allerte RIMOSSO */}
+          <div className="heroRight" />
         </div>
 
         <div className="embedWrap" aria-label="Widget WeatherLink">
@@ -438,6 +390,7 @@ export default function Home({
           display: flex;
           justify-content: flex-end;
           align-items: flex-start;
+          min-height: 1px; /* evita layout shift, ma non mostra nulla */
         }
 
         .embedWrap {
@@ -446,7 +399,6 @@ export default function Home({
           background: linear-gradient(180deg, rgba(248, 250, 252, 0.65), rgba(255, 255, 255, 0.92));
         }
 
-        /* ---- barra link sopra al widget (stile come screenshot: bottoni, niente puntini/frecce) ---- */
         .quickBar {
           margin: 0 auto 12px;
           width: min(760px, 100%);
@@ -866,201 +818,6 @@ function YearCard({ y, overallTmean, norm }) {
   );
 }
 
-// -------------------- PC Alert Card --------------------
-function PcAlertCard({ alert }) {
-  const level = String(alert?.level || "verde").toLowerCase();
-  const badgeLabel =
-    level === "rosso"
-      ? "Allerta rossa"
-      : level === "arancione"
-      ? "Allerta arancione"
-      : level === "giallo"
-      ? "Allerta gialla"
-      : "Nessuna criticità";
-
-  return (
-    <div className={`pcCard ${level}`} aria-label="Avvisi Protezione Civile">
-      <div className="pcHead">
-        <div>
-          <div className="pcTitle">Avvisi Protezione Civile (Sardegna)</div>
-          <div className="pcSub">
-            Area: <b>{alert?.area || "Collinas"}</b>
-          </div>
-        </div>
-
-        <div className={`badge ${level}`}>
-          <span className="dot" aria-hidden="true" />
-          {badgeLabel}
-        </div>
-      </div>
-
-      <div className="pcBody">
-        <div className="pcMain">{alert?.title || "—"}</div>
-
-        <div className="pcMeta">
-          <span>
-            Da: <b>{alert?.from ? String(alert.from) : "—"}</b>
-          </span>
-          <span>
-            A: <b>{alert?.to ? String(alert.to) : "—"}</b>
-          </span>
-        </div>
-
-        {alert?.next ? (
-          <div className="pcNote">
-            <b>Prossima allerta:</b> {String(alert.next.level || "").toUpperCase()} dalle <b>{String(alert.next.from || "—").slice(11)}</b> alle{" "}
-            <b>{String(alert.next.to || "—").slice(11)}</b>
-          </div>
-        ) : alert?.note ? (
-          <div className="pcNote">{alert.note}</div>
-        ) : null}
-
-        {alert?.url ? (
-          <a className="pcLink" href={alert.url} target="_blank" rel="noreferrer">
-            Dettagli avviso <span aria-hidden="true">↗</span>
-          </a>
-        ) : (
-          <div className="pcLinkDisabled">Dettagli avviso ↗</div>
-        )}
-      </div>
-
-      <style jsx>{`
-        .pcCard {
-          width: 100%;
-          border: 1px solid #ececec;
-          background: rgba(255, 255, 255, 0.95);
-          border-radius: 18px;
-          padding: 12px;
-          box-shadow: 0 1px 0 rgba(0, 0, 0, 0.02);
-        }
-
-        /* ---- THEMING: tutto il riquadro prende il colore ---- */
-        .pcCard.giallo {
-          border-color: rgba(250, 204, 21, 0.55);
-          background: rgba(250, 204, 21, 0.18);
-        }
-        .pcCard.arancione {
-          border-color: rgba(249, 115, 22, 0.55);
-          background: rgba(249, 115, 22, 0.16);
-        }
-        .pcCard.rosso {
-          border-color: rgba(220, 38, 38, 0.55);
-          background: rgba(220, 38, 38, 0.14);
-        }
-        .pcCard.verde {
-          border-color: rgba(22, 163, 74, 0.32);
-          background: rgba(22, 163, 74, 0.06);
-        }
-
-        .pcHead {
-          display: flex;
-          justify-content: space-between;
-          align-items: flex-start;
-          gap: 10px;
-        }
-        .pcTitle {
-          font-size: 14px;
-          font-weight: 950;
-          color: #0f172a;
-        }
-        .pcSub {
-          margin-top: 3px;
-          font-size: 11px;
-          color: rgba(15, 23, 42, 0.7);
-        }
-
-        .badge {
-          display: inline-flex;
-          align-items: center;
-          gap: 8px;
-          border: 1px solid rgba(15, 23, 42, 0.12);
-          background: rgba(255, 255, 255, 0.85);
-          padding: 8px 10px;
-          border-radius: 999px;
-          font-weight: 950;
-          font-size: 12px;
-          white-space: nowrap;
-        }
-        .badge .dot {
-          width: 10px;
-          height: 10px;
-          border-radius: 999px;
-          display: inline-block;
-        }
-        .badge.verde .dot {
-          background: #16a34a;
-        }
-        .badge.giallo .dot {
-          background: #facc15;
-        }
-        .badge.arancione .dot {
-          background: #f97316;
-        }
-        .badge.rosso .dot {
-          background: #dc2626;
-        }
-
-        .pcBody {
-          margin-top: 10px;
-          border-top: 1px solid rgba(15, 23, 42, 0.08);
-          padding-top: 10px;
-          display: grid;
-          gap: 8px;
-        }
-        .pcMain {
-          font-weight: 950;
-          color: #0f172a;
-          font-size: 13px;
-        }
-        .pcMeta {
-          display: flex;
-          gap: 10px;
-          flex-wrap: wrap;
-          font-size: 11px;
-          color: rgba(15, 23, 42, 0.72);
-          font-weight: 800;
-        }
-
-        .pcNote {
-          font-size: 11px;
-          color: rgba(15, 23, 42, 0.74);
-          font-weight: 850;
-          background: rgba(255, 255, 255, 0.55);
-          border: 1px solid rgba(15, 23, 42, 0.12);
-          padding: 8px 10px;
-          border-radius: 14px;
-        }
-
-        .pcLink,
-        .pcLinkDisabled {
-          font-weight: 950;
-          font-size: 12px;
-          border: 1px solid rgba(15, 23, 42, 0.12);
-          background: rgba(255, 255, 255, 0.78);
-          padding: 10px 12px;
-          border-radius: 14px;
-          display: inline-flex;
-          justify-content: space-between;
-          align-items: center;
-        }
-        .pcLink {
-          text-decoration: none;
-          color: #0f172a;
-          transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
-        }
-        .pcLink:hover {
-          transform: translateY(-1px);
-          border-color: rgba(15, 23, 42, 0.2);
-          background: rgba(255, 255, 255, 0.9);
-        }
-        .pcLinkDisabled {
-          opacity: 0.55;
-        }
-      `}</style>
-    </div>
-  );
-}
-
 // -------------------- WeekChart (orario, aggregato) --------------------
 function WeekChart({ weekDates = [], weekLabel = "Ultimi giorni disponibili" }) {
   const GROUPS = useMemo(
@@ -1131,8 +888,10 @@ function WeekChart({ weekDates = [], weekLabel = "Ultimi giorni disponibili" }) 
 
         for (const dISO of dates) {
           const url = `/data/intraday/${dISO}.json`;
+          // eslint-disable-next-line no-await-in-loop
           const res = await fetch(url, { cache: "no-store" });
           if (!res.ok) continue;
+          // eslint-disable-next-line no-await-in-loop
           const arr = await res.json();
           if (!Array.isArray(arr)) continue;
 
@@ -1190,7 +949,7 @@ function WeekChart({ weekDates = [], weekLabel = "Ultimi giorni disponibili" }) 
           }
         }
 
-        const mean = (sum, cnt) => (cnt > 0 ? sum / cnt : null);
+        const mean = (sumV, cntV) => (cntV > 0 ? sumV / cntV : null);
 
         const temp = [];
         const dew = [];

@@ -2,26 +2,24 @@
   "name": "meteo-collinas",
   "version": "0.1.0",
   "private": true,
-  "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
-    "lint": "eslint",
-    "build:data": "node scripts/build-data.js && node scripts/build-records.js",
-    "build:records": "node scripts/build-records.js",
-    "build:all": "npm run build:data && npm run build:records"
-  },
+"scripts": {
+  "dev": "next dev --webpack",
+  "build": "next build --webpack",
+  "start": "next start",
+  "lint": "eslint",
+  "build:data": "node scripts/build-data.js && node scripts/build-records.js",
+  "build:records": "node scripts/build-records.js",
+  "build:all": "npm run build:data && npm run build:records"
+}
+,
   "dependencies": {
     "chart.js": "^4.5.1",
     "cheerio": "^1.2.0",
     "csv-parse": "^6.1.0",
     "echarts": "^6.0.0",
     "echarts-for-react": "^3.0.5",
-    "fast-xml-parser": "^5.3.4",
     "jszip": "^3.10.1",
     "next": "16.1.1",
-    "pdf-parse": "^1.1.1",
-    "pdfjs-dist": "^3.11.174",
     "plotly.js": "^3.3.1",
     "react": "19.2.3",
     "react-chartjs-2": "^5.3.1",
