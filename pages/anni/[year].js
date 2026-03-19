@@ -3,31 +3,59 @@ import path from "path";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { useEffect, useMemo, useState } from "react";
+import SiteLayout from "../../components/SiteLayout";
 
 const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
 
 function readDaily() {
   const filePath = path.join(process.cwd(), "data", "daily.json");
-  return JSON.parse(fs.readFileSync(filePath, "utf8"));
+  if (!fs.existsSync(filePath)) return [];
+  const raw = JSON.parse(fs.readFileSync(filePath, "utf8"));
+  return Array.isArray(raw) ? raw : [];
 }
 
 export async function getStaticPaths() {
   const rows = readDaily();
-  const years = Array.from(new Set(rows.map((r) => String(r.date).slice(0, 4)))).sort();
-  return { paths: years.map((y) => ({ params: { year: y } })), fallback: false };
+
+  const years = Array.from(
+    new Set(
+      rows
+        .map((r) => String(r?.date ?? "").trim())
+        .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d))
+        .map((d) => d.slice(0, 4))
+    )
+  ).sort();
+
+  return {
+    paths: years.map((y) => ({ params: { year: y } })),
+    fallback: false,
+  };
 }
 
 export async function getStaticProps({ params }) {
   const rows = readDaily();
-  const year = String(params.year);
+  const year = String(params?.year ?? "");
 
   const days = rows
-    .filter((r) => String(r.date).startsWith(year + "-"))
+    .filter((r) => String(r?.date ?? "").startsWith(year + "-"))
     .sort((a, b) => String(a.date).localeCompare(String(b.date)));
 
-  const monthsInYear = Array.from(new Set(days.map((d) => String(d.date).slice(0, 7)))).sort();
+  const monthsInYear = Array.from(
+    new Set(
+      days
+        .map((d) => String(d?.date ?? ""))
+        .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d))
+        .map((d) => d.slice(0, 7))
+    )
+  ).sort();
 
-  return { props: { year, days, monthsInYear } };
+  return {
+    props: {
+      year,
+      days,
+      monthsInYear,
+    },
+  };
 }
 
 // -------------------- helpers --------------------
@@ -36,16 +64,19 @@ function n(x) {
   const v = Number(x);
   return Number.isFinite(v) ? v : NaN;
 }
+
 function fmt(x, d = 1) {
   const v = n(x);
   if (!Number.isFinite(v)) return "—";
   return v.toFixed(d);
 }
+
 function fmtInt(x) {
   const v = n(x);
   if (!Number.isFinite(v)) return "—";
   return String(Math.round(v));
 }
+
 function sumFinite(arr) {
   let s = 0;
   let ok = false;
@@ -58,6 +89,7 @@ function sumFinite(arr) {
   }
   return ok ? s : NaN;
 }
+
 function avgFinite(arr) {
   let s = 0;
   let c = 0;
@@ -70,6 +102,7 @@ function avgFinite(arr) {
   }
   return c ? s / c : NaN;
 }
+
 function minFinite(arr) {
   let m = Infinity;
   let ok = false;
@@ -82,6 +115,7 @@ function minFinite(arr) {
   }
   return ok ? m : NaN;
 }
+
 function maxFinite(arr) {
   let m = -Infinity;
   let ok = false;
@@ -95,7 +129,31 @@ function maxFinite(arr) {
   return ok ? m : NaN;
 }
 
-// umidità (compat)
+function getMaxRecord(rows, keyOrGetter) {
+  let best = null;
+  for (const row of rows || []) {
+    const value = typeof keyOrGetter === "function" ? n(keyOrGetter(row)) : n(row?.[keyOrGetter]);
+    if (!Number.isFinite(value)) continue;
+    if (!best || value > best.value) {
+      best = { value, date: String(row?.date ?? "") };
+    }
+  }
+  return best;
+}
+
+function getMinRecord(rows, keyOrGetter) {
+  let best = null;
+  for (const row of rows || []) {
+    const value = typeof keyOrGetter === "function" ? n(keyOrGetter(row)) : n(row?.[keyOrGetter]);
+    if (!Number.isFinite(value)) continue;
+    if (!best || value < best.value) {
+      best = { value, date: String(row?.date ?? "") };
+    }
+  }
+  return best;
+}
+
+// umidità compat
 function getRhMin(d) {
   const a = n(d?.rh_min);
   if (Number.isFinite(a)) return a;
@@ -103,6 +161,7 @@ function getRhMin(d) {
   if (Number.isFinite(b)) return b;
   return NaN;
 }
+
 function getRhMax(d) {
   const a = n(d?.rh_max);
   if (Number.isFinite(a)) return a;
@@ -110,6 +169,7 @@ function getRhMax(d) {
   if (Number.isFinite(b)) return b;
   return NaN;
 }
+
 function getRhMean(d) {
   const a = n(d?.rh_mean);
   if (Number.isFinite(a)) return a;
@@ -127,7 +187,7 @@ function degToCardinal16(v) {
   return ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"][ix];
 }
 
-// media circolare semplice
+// media circolare
 function circularMeanDeg(values) {
   const vals = (values || []).map(n).filter(Number.isFinite);
   if (!vals.length) return NaN;
@@ -139,6 +199,7 @@ function circularMeanDeg(values) {
     sx += Math.cos(rad);
     sy += Math.sin(rad);
   }
+
   const meanRad = Math.atan2(sy / vals.length, sx / vals.length);
   let meanDeg = (meanRad * 180) / Math.PI;
   if (meanDeg < 0) meanDeg += 360;
@@ -165,17 +226,32 @@ function monthShort(ym) {
   const mm = Number(String(ym).slice(5, 7));
   return MONTHS_IT_SHORT[mm - 1] || String(ym).slice(5, 7);
 }
+
 function monthFull(ym) {
   const mm = Number(String(ym).slice(5, 7));
   return MONTHS_IT_FULL[mm - 1] || String(ym).slice(5, 7);
 }
+
 function monthNum(ym) {
   return String(ym).slice(5, 7);
+}
+
+function formatDateIt(dateStr) {
+  const s = String(dateStr ?? "");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return "—";
+  const [y, m, d] = s.split("-");
+  const mName = MONTHS_IT_FULL[Number(m) - 1] || m;
+  return `${Number(d)} ${mName} ${y}`;
+}
+
+function dayHref(dateStr) {
+  return `/giorni/${String(dateStr ?? "")}`;
 }
 
 function seriesLine(arr) {
   return arr.map((v) => (Number.isFinite(n(v)) ? n(v) : null));
 }
+
 function cumulative(arr) {
   let s = 0;
   let started = false;
@@ -190,13 +266,14 @@ function cumulative(arr) {
   });
 }
 
-// -------------------- page --------------------
 export default function YearOverviewPage(props) {
   const year = props.year ?? "";
   const days = Array.isArray(props.days) ? props.days : [];
   const monthsInYear = Array.isArray(props.monthsInYear) ? props.monthsInYear : [];
 
   const [mounted, setMounted] = useState(false);
+  const [showRecords, setShowRecords] = useState(false);
+
   useEffect(() => setMounted(true), []);
 
   const byMonth = useMemo(() => {
@@ -215,39 +292,34 @@ export default function YearOverviewPage(props) {
     return months.map((ym) => {
       const arr = byMonth.get(ym) || [];
 
-      // Temperature
       const tmin_abs = minFinite(arr.map((d) => d.tmin));
       const tmax_abs = maxFinite(arr.map((d) => d.tmax));
       const tmin_mean = avgFinite(arr.map((d) => d.tmin));
       const tmean = avgFinite(arr.map((d) => d.tmean));
       const tmax_mean = avgFinite(arr.map((d) => d.tmax));
 
-      // Pioggia
       const rainSum = sumFinite(arr.map((d) => d.rain_total));
-      const rainyDays = arr.map((d) => n(d.rain_total)).filter((x) => Number.isFinite(x) && x >= 1).length;
+      const rainDailyMax = maxFinite(arr.map((d) => d.rain_total));
+      const rainyDays = arr.map((d) => n(d.rain_total)).filter((x) => Number.isFinite(x) && x > 1).length;
       const rainrate_max = maxFinite(arr.map((d) => d.rainrate_max));
 
-      // Umidità (medie + assoluti)
       const rh_min_mean = avgFinite(arr.map((d) => getRhMin(d)));
       const rh_mean = avgFinite(arr.map((d) => getRhMean(d)));
       const rh_max_mean = avgFinite(arr.map((d) => getRhMax(d)));
       const rh_min_abs = minFinite(arr.map((d) => getRhMin(d)));
       const rh_max_abs = maxFinite(arr.map((d) => getRhMax(d)));
 
-      // Vento
       const wind_mean = avgFinite(arr.map((d) => d.wind_avg));
       const gust_mean = avgFinite(arr.map((d) => d.gust_max));
       const gust_max = maxFinite(arr.map((d) => d.gust_max));
       const wind_dir_mean_deg = circularMeanDeg(arr.map((d) => d.wind_dir_mean_deg));
 
-      // Pressione (medie + assoluti)
       const press_min_mean = avgFinite(arr.map((d) => d.press_min));
       const press_mean = avgFinite(arr.map((d) => d.press_avg));
       const press_max_mean = avgFinite(arr.map((d) => d.press_max));
       const press_min_abs = minFinite(arr.map((d) => d.press_min));
       const press_max_abs = maxFinite(arr.map((d) => d.press_max));
 
-      // UV/Rad (medie positive + max assoluti + media dei massimi)
       const uv_mean = avgFinite(arr.map((d) => d.uv_mean_pos));
       const uv_max = maxFinite(arr.map((d) => d.uv_max));
       const uv_max_mean = avgFinite(arr.map((d) => d.uv_max));
@@ -267,6 +339,7 @@ export default function YearOverviewPage(props) {
         tmax_mean,
 
         rainSum,
+        rainDailyMax,
         rainrate_max,
         rainyDays,
 
@@ -298,41 +371,28 @@ export default function YearOverviewPage(props) {
   }, [months, byMonth]);
 
   const annual = useMemo(() => {
-    const ndays = days.length;
-
-    // Temperature
-    const tmin_abs = minFinite(days.map((d) => d.tmin));
-    const tmax_abs = maxFinite(days.map((d) => d.tmax));
     const tmin_mean = avgFinite(days.map((d) => d.tmin));
     const tmean = avgFinite(days.map((d) => d.tmean));
     const tmax_mean = avgFinite(days.map((d) => d.tmax));
 
-    // Pioggia
     const rainSum = sumFinite(days.map((d) => d.rain_total));
-    const rainyDays = days.map((d) => n(d.rain_total)).filter((x) => Number.isFinite(x) && x >= 1).length;
+    const rainDailyMax = maxFinite(days.map((d) => d.rain_total));
+    const rainyDays = days.map((d) => n(d.rain_total)).filter((x) => Number.isFinite(x) && x > 1).length;
     const rainrate_max = maxFinite(days.map((d) => d.rainrate_max));
 
-    // Umidità
     const rh_min_mean = avgFinite(days.map((d) => getRhMin(d)));
     const rh_mean = avgFinite(days.map((d) => getRhMean(d)));
     const rh_max_mean = avgFinite(days.map((d) => getRhMax(d)));
-    const rh_min_abs = minFinite(days.map((d) => getRhMin(d)));
-    const rh_max_abs = maxFinite(days.map((d) => getRhMax(d)));
 
-    // Vento
     const wind_mean = avgFinite(days.map((d) => d.wind_avg));
     const gust_mean = avgFinite(days.map((d) => d.gust_max));
     const gust_max = maxFinite(days.map((d) => d.gust_max));
     const wind_dir_mean_deg = circularMeanDeg(days.map((d) => d.wind_dir_mean_deg));
 
-    // Pressione
     const press_min_mean = avgFinite(days.map((d) => d.press_min));
     const press_mean = avgFinite(days.map((d) => d.press_avg));
     const press_max_mean = avgFinite(days.map((d) => d.press_max));
-    const press_min_abs = minFinite(days.map((d) => d.press_min));
-    const press_max_abs = maxFinite(days.map((d) => d.press_max));
 
-    // UV/Rad
     const uv_mean = avgFinite(days.map((d) => d.uv_mean_pos));
     const uv_max = maxFinite(days.map((d) => d.uv_max));
     const uv_max_mean = avgFinite(days.map((d) => d.uv_max));
@@ -342,63 +402,155 @@ export default function YearOverviewPage(props) {
     const solar_max_mean = avgFinite(days.map((d) => d.solar_max));
 
     return {
-      ndays,
-
-      tmin_abs,
-      tmean,
-      tmax_abs,
       tmin_mean,
+      tmean,
       tmax_mean,
 
       rainSum,
+      rainDailyMax,
       rainyDays,
       rainrate_max,
 
-      rh_mean,
       rh_min_mean,
+      rh_mean,
       rh_max_mean,
-      rh_min_abs,
-      rh_max_abs,
 
       wind_mean,
       gust_mean,
       gust_max,
       wind_dir_mean_deg,
 
-      press_mean,
       press_min_mean,
+      press_mean,
       press_max_mean,
-      press_min_abs,
-      press_max_abs,
 
       uv_mean,
       uv_max,
       uv_max_mean,
+
       solar_mean,
       solar_max,
       solar_max_mean,
     };
   }, [days]);
 
-  // -------------------- charts --------------------
+  const annualRecords = useMemo(() => {
+    const rows = [
+      {
+        label: "Temperatura massima giornaliera",
+        min: getMinRecord(days, "tmax"),
+        max: getMaxRecord(days, "tmax"),
+        unit: "°C",
+      },
+      {
+        label: "Temperatura minima giornaliera",
+        min: getMinRecord(days, "tmin"),
+        max: getMaxRecord(days, "tmin"),
+        unit: "°C",
+      },
+      {
+        label: "Pioggia giornaliera",
+        min: getMinRecord(days, "rain_total"),
+        max: getMaxRecord(days, "rain_total"),
+        unit: "mm",
+      },
+      {
+        label: "Rain rate",
+        min: getMinRecord(days, "rainrate_max"),
+        max: getMaxRecord(days, "rainrate_max"),
+        unit: "mm/h",
+      },
+      {
+        label: "Umidità minima giornaliera",
+        min: getMinRecord(days, (d) => getRhMin(d)),
+        max: getMaxRecord(days, (d) => getRhMin(d)),
+        unit: "%",
+      },
+      {
+        label: "Umidità massima giornaliera",
+        min: getMinRecord(days, (d) => getRhMax(d)),
+        max: getMaxRecord(days, (d) => getRhMax(d)),
+        unit: "%",
+      },
+      {
+        label: "Vento medio",
+        min: getMinRecord(days, "wind_avg"),
+        max: getMaxRecord(days, "wind_avg"),
+        unit: "km/h",
+      },
+      {
+        label: "Raffica massima",
+        min: getMinRecord(days, "gust_max"),
+        max: getMaxRecord(days, "gust_max"),
+        unit: "km/h",
+      },
+      {
+        label: "Pressione minima giornaliera",
+        min: getMinRecord(days, "press_min"),
+        max: getMaxRecord(days, "press_min"),
+        unit: "hPa",
+      },
+      {
+        label: "Pressione massima giornaliera",
+        min: getMinRecord(days, "press_max"),
+        max: getMaxRecord(days, "press_max"),
+        unit: "hPa",
+      },
+      {
+        label: "UV massimo",
+        min: getMinRecord(days, "uv_max"),
+        max: getMaxRecord(days, "uv_max"),
+        unit: "",
+      },
+      {
+        label: "Radiazione massima",
+        min: getMinRecord(days, "solar_max"),
+        max: getMaxRecord(days, "solar_max"),
+        unit: "W/m²",
+      },
+    ];
+
+    return rows;
+  }, [days]);
+
   const x = monthly.map((m) => monthShort(m.ym));
+  const dirTxt = Number.isFinite(n(annual.wind_dir_mean_deg)) ? degToCardinal16(annual.wind_dir_mean_deg) : "—";
 
   const baseChart = {
     animation: false,
-    grid: { left: 56, right: 44, top: 92, bottom: 46 },
-    xAxis: { type: "category", data: x, axisLabel: { rotate: 0, margin: 14 } },
+    grid: { left: 72, right: 56, top: 58, bottom: 92 },
+    xAxis: {
+      type: "category",
+      data: x,
+      axisLabel: { rotate: 0, margin: 14 },
+    },
     title: { left: "center", top: 10 },
-    legend: { top: 44, left: "center", itemGap: 16, padding: [6, 10, 10, 10] },
+    legend: {
+      bottom: 8,
+      left: "center",
+      itemGap: 16,
+      padding: [8, 10, 2, 10],
+    },
     toolbox: { feature: { restore: {} }, right: 10, top: 10 },
     tooltip: { trigger: "axis" },
   };
 
-  // Temperature: Min assoluta BLU, Max assoluta ARANCIONE
   const optTemp = {
     ...baseChart,
     title: { ...baseChart.title, text: "Temperature mensili" },
-    tooltip: { trigger: "axis", valueFormatter: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} °C`) },
-    yAxis: { type: "value", name: "°C", scale: true, axisLabel: { formatter: (v) => Number(v).toFixed(1) } },
+    tooltip: {
+      trigger: "axis",
+      valueFormatter: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} °C`),
+    },
+    yAxis: {
+      type: "value",
+      name: "°C",
+      nameLocation: "middle",
+      nameRotate: 90,
+      nameGap: 52,
+      scale: true,
+      axisLabel: { formatter: (v) => Number(v).toFixed(1) },
+    },
     series: [
       { name: "Min media", type: "line", data: seriesLine(monthly.map((m) => m.tmin_mean)), showSymbol: false, connectNulls: false, lineStyle: { width: 2 } },
       { name: "Media", type: "line", data: seriesLine(monthly.map((m) => m.tmean)), showSymbol: false, connectNulls: false, lineStyle: { width: 2 } },
@@ -415,8 +567,28 @@ export default function YearOverviewPage(props) {
     ...baseChart,
     title: { ...baseChart.title, text: "Precipitazioni" },
     yAxis: [
-      { type: "value", name: "mm", scale: true, splitNumber: 5, alignTicks: true, axisLabel: { formatter: (v) => Number(v).toFixed(1) } },
-      { type: "value", name: "mm/h", scale: true, splitNumber: 5, alignTicks: true, axisLabel: { formatter: (v) => Number(v).toFixed(1) } },
+      {
+        type: "value",
+        name: "mm",
+        nameLocation: "middle",
+        nameRotate: 90,
+        nameGap: 52,
+        scale: true,
+        splitNumber: 5,
+        alignTicks: true,
+        axisLabel: { formatter: (v) => Number(v).toFixed(1) },
+      },
+      {
+        type: "value",
+        name: "mm/h",
+        nameLocation: "middle",
+        nameRotate: 270,
+        nameGap: 56,
+        scale: true,
+        splitNumber: 5,
+        alignTicks: true,
+        axisLabel: { formatter: (v) => Number(v).toFixed(1) },
+      },
     ],
     tooltip: {
       trigger: "axis",
@@ -432,7 +604,7 @@ export default function YearOverviewPage(props) {
           `Pioggia: ${Number.isFinite(acc) ? acc.toFixed(1) + " mm" : "—"}`,
           `Progressivo: ${Number.isFinite(cum) ? cum.toFixed(1) + " mm" : "—"}`,
           `Rate max: ${Number.isFinite(rr) ? rr.toFixed(1) + " mm/h" : "—"}`,
-          `G prec: ${Number.isFinite(gp) ? Math.round(gp) : "—"}`,
+          `Giorni > 1 mm: ${Number.isFinite(gp) ? Math.round(gp) : "—"}`,
         ].join("<br/>");
       },
     },
@@ -443,11 +615,20 @@ export default function YearOverviewPage(props) {
     ],
   };
 
-  // Umidità: aggiungo Min/Max assoluta (punti)
   const optRh = {
     ...baseChart,
     title: { ...baseChart.title, text: "Umidità" },
-    yAxis: { type: "value", name: "%", min: 0, max: 100, splitNumber: 5, axisLabel: { formatter: (v) => `${Math.round(Number(v))}` } },
+    yAxis: {
+      type: "value",
+      name: "%",
+      nameLocation: "middle",
+      nameRotate: 90,
+      nameGap: 52,
+      min: 0,
+      max: 100,
+      splitNumber: 5,
+      axisLabel: { formatter: (v) => `${Math.round(Number(v))}` },
+    },
     tooltip: { trigger: "axis", valueFormatter: (v) => (v == null ? "—" : `${Math.round(Number(v))} %`) },
     series: [
       { name: "Min media", type: "line", data: seriesLine(monthly.map((m) => m.rh_min_mean)), showSymbol: false, connectNulls: false, lineStyle: { width: 2 } },
@@ -462,8 +643,29 @@ export default function YearOverviewPage(props) {
     ...baseChart,
     title: { ...baseChart.title, text: "Vento" },
     yAxis: [
-      { type: "value", name: "km/h", scale: true, splitNumber: 5, alignTicks: true, axisLabel: { formatter: (v) => Number(v).toFixed(0) } },
-      { type: "value", name: "°", min: 0, max: 360, splitNumber: 5, alignTicks: true, axisLabel: { formatter: (v) => `${Math.round(Number(v))}` } },
+      {
+        type: "value",
+        name: "km/h",
+        nameLocation: "middle",
+        nameRotate: 90,
+        nameGap: 52,
+        scale: true,
+        splitNumber: 5,
+        alignTicks: true,
+        axisLabel: { formatter: (v) => Number(v).toFixed(0) },
+      },
+      {
+        type: "value",
+        name: "°",
+        nameLocation: "middle",
+        nameRotate: 270,
+        nameGap: 56,
+        min: 0,
+        max: 360,
+        splitNumber: 5,
+        alignTicks: true,
+        axisLabel: { formatter: (v) => `${Math.round(Number(v))}` },
+      },
     ],
     tooltip: {
       trigger: "axis",
@@ -479,7 +681,7 @@ export default function YearOverviewPage(props) {
           `Vento medio: ${Number.isFinite(w) ? w.toFixed(1) + " km/h" : "—"}`,
           `Raffica media: ${Number.isFinite(gm) ? gm.toFixed(1) + " km/h" : "—"}`,
           `Raffica max: ${Number.isFinite(gx) ? gx.toFixed(1) + " km/h" : "—"}`,
-          `Dir media: ${Number.isFinite(dir) ? `${degToCardinal16(dir)} (${Math.round(dir)}°)` : "—"}`,
+          `Direzione media: ${Number.isFinite(dir) ? `${degToCardinal16(dir)} (${Math.round(dir)}°)` : "—"}`,
         ].join("<br/>");
       },
     },
@@ -491,11 +693,19 @@ export default function YearOverviewPage(props) {
     ],
   };
 
-  // Pressione: aggiungo Min/Max assoluta (punti)
   const optPress = {
     ...baseChart,
     title: { ...baseChart.title, text: "Pressione" },
-    yAxis: { type: "value", name: "hPa", scale: true, splitNumber: 5, axisLabel: { formatter: (v) => Number(v).toFixed(0) } },
+    yAxis: {
+      type: "value",
+      name: "hPa",
+      nameLocation: "middle",
+      nameRotate: 90,
+      nameGap: 52,
+      scale: true,
+      splitNumber: 5,
+      axisLabel: { formatter: (v) => Number(v).toFixed(0) },
+    },
     tooltip: { trigger: "axis", valueFormatter: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} hPa`) },
     series: [
       { name: "Min media", type: "line", data: seriesLine(monthly.map((m) => m.press_min_mean)), showSymbol: false, connectNulls: false, lineStyle: { width: 2 } },
@@ -506,736 +716,965 @@ export default function YearOverviewPage(props) {
     ],
   };
 
-  // ✅ QUI LA MODIFICA: più spazio sopra per evitare sovrapposizione legenda/grafico
-  const optUvRad = {
+  const optUv = {
     ...baseChart,
-    grid: { ...baseChart.grid, top: 120 }, // <-- prima era 92
-    legend: { ...baseChart.legend, top: 34 }, // <-- prima era 44
-    title: { ...baseChart.title, text: "UV e Radiazione" },
-    yAxis: [
-      { type: "value", name: "UV", scale: true, splitNumber: 5, alignTicks: true, axisLabel: { formatter: (v) => Number(v).toFixed(1) } },
-      { type: "value", name: "W/m²", scale: true, splitNumber: 5, alignTicks: true, axisLabel: { formatter: (v) => String(Math.round(Number(v))) } },
-    ],
+    title: { ...baseChart.title, text: "UV" },
+    yAxis: {
+      type: "value",
+      name: "UV",
+      nameLocation: "middle",
+      nameRotate: 90,
+      nameGap: 52,
+      scale: true,
+      splitNumber: 5,
+      axisLabel: { formatter: (v) => Number(v).toFixed(1) },
+    },
     tooltip: {
       trigger: "axis",
       formatter: (params) => {
         const i = params?.[0]?.dataIndex ?? 0;
         const mm = x[i] ?? "—";
         const uvM = n(monthly[i]?.uv_mean);
-        const uvX = n(monthly[i]?.uv_max);
         const uvXmean = n(monthly[i]?.uv_max_mean);
-        const solM = n(monthly[i]?.solar_mean);
-        const solX = n(monthly[i]?.solar_max);
-        const solXmean = n(monthly[i]?.solar_max_mean);
+        const uvX = n(monthly[i]?.uv_max);
         return [
           `<b>${mm}</b>`,
           `UV medio: ${Number.isFinite(uvM) ? uvM.toFixed(1) : "—"}`,
           `UV max medio: ${Number.isFinite(uvXmean) ? uvXmean.toFixed(1) : "—"}`,
-          `UV max (ass): ${Number.isFinite(uvX) ? uvX.toFixed(1) : "—"}`,
-          `Rad media: ${Number.isFinite(solM) ? Math.round(solM) + " W/m²" : "—"}`,
-          `Rad max media: ${Number.isFinite(solXmean) ? Math.round(solXmean) + " W/m²" : "—"}`,
-          `Rad max (ass): ${Number.isFinite(solX) ? Math.round(solX) + " W/m²" : "—"}`,
+          `UV max assoluto: ${Number.isFinite(uvX) ? uvX.toFixed(1) : "—"}`,
         ].join("<br/>");
       },
     },
     series: [
-      { name: "UV medio", type: "line", data: seriesLine(monthly.map((m) => m.uv_mean)), yAxisIndex: 0, showSymbol: false, connectNulls: false, lineStyle: { width: 2 } },
-      { name: "UV max medio", type: "line", data: seriesLine(monthly.map((m) => m.uv_max_mean)), yAxisIndex: 0, showSymbol: false, connectNulls: false, lineStyle: { width: 2 } },
-      { name: "UV max", type: "scatter", data: seriesLine(monthly.map((m) => m.uv_max)), yAxisIndex: 0, symbolSize: 7 },
-
-      { name: "Rad media", type: "line", data: seriesLine(monthly.map((m) => m.solar_mean)), yAxisIndex: 1, showSymbol: false, connectNulls: false, lineStyle: { width: 2 } },
-      { name: "Rad max media", type: "line", data: seriesLine(monthly.map((m) => m.solar_max_mean)), yAxisIndex: 1, showSymbol: false, connectNulls: false, lineStyle: { width: 2 } },
-      { name: "Rad max", type: "scatter", data: seriesLine(monthly.map((m) => m.solar_max)), yAxisIndex: 1, symbolSize: 7 },
+      { name: "UV medio", type: "line", data: seriesLine(monthly.map((m) => m.uv_mean)), showSymbol: false, connectNulls: false, lineStyle: { width: 2 } },
+      { name: "UV max medio", type: "line", data: seriesLine(monthly.map((m) => m.uv_max_mean)), showSymbol: false, connectNulls: false, lineStyle: { width: 2 } },
+      { name: "UV max assoluto", type: "scatter", data: seriesLine(monthly.map((m) => m.uv_max)), symbolSize: 7 },
     ],
   };
 
-  const dirTxt = Number.isFinite(n(annual.wind_dir_mean_deg)) ? degToCardinal16(annual.wind_dir_mean_deg) : "—";
-  const dirDeg = n(annual.wind_dir_mean_deg);
+  const optSolar = {
+    ...baseChart,
+    title: { ...baseChart.title, text: "Radiazione" },
+    yAxis: {
+      type: "value",
+      name: "W/m²",
+      nameLocation: "middle",
+      nameRotate: 90,
+      nameGap: 56,
+      scale: true,
+      splitNumber: 5,
+      axisLabel: { formatter: (v) => `${Math.round(Number(v))}` },
+    },
+    tooltip: {
+      trigger: "axis",
+      formatter: (params) => {
+        const i = params?.[0]?.dataIndex ?? 0;
+        const mm = x[i] ?? "—";
+        const sM = n(monthly[i]?.solar_mean);
+        const sXmean = n(monthly[i]?.solar_max_mean);
+        const sX = n(monthly[i]?.solar_max);
+        return [
+          `<b>${mm}</b>`,
+          `Rad media: ${Number.isFinite(sM) ? Math.round(sM) + " W/m²" : "—"}`,
+          `Rad max media: ${Number.isFinite(sXmean) ? Math.round(sXmean) + " W/m²" : "—"}`,
+          `Rad max assoluta: ${Number.isFinite(sX) ? Math.round(sX) + " W/m²" : "—"}`,
+        ].join("<br/>");
+      },
+    },
+    series: [
+      { name: "Rad media", type: "line", data: seriesLine(monthly.map((m) => m.solar_mean)), showSymbol: false, connectNulls: false, lineStyle: { width: 2 } },
+      { name: "Rad max media", type: "line", data: seriesLine(monthly.map((m) => m.solar_max_mean)), showSymbol: false, connectNulls: false, lineStyle: { width: 2 } },
+      { name: "Rad max assoluta", type: "scatter", data: seriesLine(monthly.map((m) => m.solar_max)), symbolSize: 7 },
+    ],
+  };
 
   return (
-    <div className="wrap">
-      <div className="topbar">
-        <Link className="back" href="/">
-          ← Home
-        </Link>
-        <div className="brand">
-          <div className="brandTitle">Archivio Meteo</div>
-          <div className="brandSub">Collinas • riepilogo annuale • {year}</div>
-        </div>
-      </div>
-
-      <header className="hero">
-        <div className="heroTop">
-          <div className="heroLeft">
-            <div className="kicker">Anno</div>
-            <h1 className="year">{year}</h1>
-          </div>
-
-          <div className="heroRight">
-            <div className="dirBox">
-              <div className="dirLabel">Direzione media</div>
-              <div className="dirValue">
-                {dirTxt} {Number.isFinite(dirDeg) ? <span className="dirDeg">({Math.round(dirDeg)}°)</span> : null}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <nav className="monthNav" aria-label="Vai al mese">
-          {monthsInYear.map((ym) => {
-            const mm = monthNum(ym);
-            return (
-              <Link key={ym} href={`/mesi/${year}/${mm}`} className="monthLink" title={`Apri ${monthFull(ym)}`} aria-label={`Apri ${monthFull(ym)}`}>
-                <span className="ext" aria-hidden="true">
-                  ↗
-                </span>
-                <span className="monthText">{monthFull(ym)}</span>
-              </Link>
-            );
-          })}
-        </nav>
-
-        <div className="kpi4">
-          <div className="kCard">
-            <div className="kLabel">Giorni</div>
-            <div className="kValue">{fmtInt(annual.ndays)}</div>
-            <div className="kMeta">dati presenti</div>
-          </div>
-
-          <div className="kCard">
-            <div className="kLabel">Pioggia</div>
-            <div className="kValue">{fmt(annual.rainSum, 1)} mm</div>
-            <div className="kMeta">
-              G prec: <b>{fmtInt(annual.rainyDays)}</b> • Rate max: <b>{fmt(annual.rainrate_max, 1)} mm/h</b>
+    <SiteLayout headerProps={{}}>
+      <div className="wrap">
+        <header className="hero">
+          <div className="heroTop">
+            <div className="heroLeft">
+              <div className="kicker">Anno</div>
+              <h1 className="year">{year}</h1>
             </div>
           </div>
 
-          <div className="kCard">
-            <div className="kLabel">Temperatura media</div>
-            <div className="kValue">{fmt(annual.tmean, 1)} °C</div>
-            <div className="kMeta">
-              Min ass: <b>{fmt(annual.tmin_abs, 1)}°</b> • Max ass: <b>{fmt(annual.tmax_abs, 1)}°</b>
-            </div>
-          </div>
+          <section className="monthsBar" aria-label="Seleziona mese">
+            <div className="monthsBarHead">Seleziona mese</div>
+            <nav className="monthNav">
+              {monthsInYear.map((ym) => {
+                const mm = monthNum(ym);
+                return (
+                  <Link
+                    key={ym}
+                    href={`/mesi/${year}/${mm}`}
+                    className="monthLink"
+                    title={`Apri ${monthFull(ym)}`}
+                    aria-label={`Apri ${monthFull(ym)}`}
+                  >
+                    <span className="ext" aria-hidden="true">
+                      ↗
+                    </span>
+                    <span className="monthText">{monthFull(ym)}</span>
+                  </Link>
+                );
+              })}
+            </nav>
+          </section>
 
-          <div className="kCard">
-            <div className="kLabel">Vento medio</div>
-            <div className="kValue">{fmt(annual.wind_mean, 1)} km/h</div>
-            <div className="kMeta">
-              Raffica media: <b>{fmt(annual.gust_mean, 1)}</b> • Raffica max: <b>{fmt(annual.gust_max, 1)}</b>
-            </div>
-          </div>
-        </div>
-
-        <details className="details">
-          <summary>Mostra dettagli (umidità, pressione, UV/radiazione)</summary>
-          <div className="detailsGrid">
-            <div className="dCard">
-              <div className="dTitle">Umidità</div>
-              <div className="dBig">{fmtInt(annual.rh_mean)} %</div>
-              <div className="dMeta">
-                Min media: <b>{fmtInt(annual.rh_min_mean)}%</b> • Max media: <b>{fmtInt(annual.rh_max_mean)}%</b>
-              </div>
-              <div className="dMeta">
-                Min ass: <b>{fmtInt(annual.rh_min_abs)}%</b> • Max ass: <b>{fmtInt(annual.rh_max_abs)}%</b>
-              </div>
-            </div>
-
-            <div className="dCard">
-              <div className="dTitle">Pressione</div>
-              <div className="dBig">{fmt(annual.press_mean, 1)} hPa</div>
-              <div className="dMeta">
-                Min media: <b>{fmt(annual.press_min_mean, 1)}</b> • Max media: <b>{fmt(annual.press_max_mean, 1)}</b>
-              </div>
-              <div className="dMeta">
-                Min ass: <b>{fmt(annual.press_min_abs, 1)}</b> • Max ass: <b>{fmt(annual.press_max_abs, 1)}</b>
+          <section className="summaryCompact">
+            <div className="summaryHead">
+              <div>
+                <h2>Sintesi annuale</h2>
+                <p>Lettura rapida dei dati principali dell&apos;anno.</p>
               </div>
             </div>
 
-            <div className="dCard">
-              <div className="dTitle">UV / Radiazione</div>
-              <div className="dMeta">
-                UV medio: <b>{fmt(annual.uv_mean, 1)}</b> • UV max medio: <b>{fmt(annual.uv_max_mean, 1)}</b> • UV max: <b>{fmt(annual.uv_max, 1)}</b>
+            <div className="summaryGridCompact">
+              <div className="miniCard">
+                <div className="miniTitle">Temperature</div>
+                <div className="miniMain threeCols">
+                  <div>
+                    <span className="miniKey">Max media</span>
+                    <strong>{fmt(annual.tmax_mean, 1)} °C</strong>
+                  </div>
+                  <div>
+                    <span className="miniKey">Media</span>
+                    <strong>{fmt(annual.tmean, 1)} °C</strong>
+                  </div>
+                  <div>
+                    <span className="miniKey">Min media</span>
+                    <strong>{fmt(annual.tmin_mean, 1)} °C</strong>
+                  </div>
+                </div>
               </div>
-              <div className="dMeta">
-                Rad media: <b>{Number.isFinite(n(annual.solar_mean)) ? `${Math.round(n(annual.solar_mean))} W/m²` : "—"}</b> • Rad max media:{" "}
-                <b>{Number.isFinite(n(annual.solar_max_mean)) ? `${Math.round(n(annual.solar_max_mean))} W/m²` : "—"}</b> • Rad max:{" "}
-                <b>{Number.isFinite(n(annual.solar_max)) ? `${Math.round(n(annual.solar_max))} W/m²` : "—"}</b>
+
+              <div className="miniCard">
+                <div className="miniTitle">Precipitazioni</div>
+                <div className="miniMain twoCols">
+                  <div>
+                    <span className="miniKey">Totale</span>
+                    <strong>{fmt(annual.rainSum, 1)} mm</strong>
+                  </div>
+                  <div>
+                    <span className="miniKey">Giorni &gt; 1 mm</span>
+                    <strong>{fmtInt(annual.rainyDays)}</strong>
+                  </div>
+                </div>
+              </div>
+
+              <div className="miniCard">
+                <div className="miniTitle">Umidità</div>
+                <div className="miniMain threeCols">
+                  <div>
+                    <span className="miniKey">Max media</span>
+                    <strong>{fmtInt(annual.rh_max_mean)} %</strong>
+                  </div>
+                  <div>
+                    <span className="miniKey">Media</span>
+                    <strong>{fmtInt(annual.rh_mean)} %</strong>
+                  </div>
+                  <div>
+                    <span className="miniKey">Min media</span>
+                    <strong>{fmtInt(annual.rh_min_mean)} %</strong>
+                  </div>
+                </div>
+              </div>
+
+              <div className="miniCard">
+                <div className="miniTitle">Vento</div>
+                <div className="miniMain threeCols">
+                  <div>
+                    <span className="miniKey">Medio</span>
+                    <strong>{fmt(annual.wind_mean, 1)} km/h</strong>
+                  </div>
+                  <div>
+                    <span className="miniKey">Raffica media</span>
+                    <strong>{fmt(annual.gust_mean, 1)} km/h</strong>
+                  </div>
+                  <div>
+                    <span className="miniKey">Direzione media</span>
+                    <strong>{dirTxt}</strong>
+                  </div>
+                </div>
+              </div>
+
+              <div className="miniCard">
+                <div className="miniTitle">Pressione</div>
+                <div className="miniMain threeCols">
+                  <div>
+                    <span className="miniKey">Max media</span>
+                    <strong>{fmt(annual.press_max_mean, 1)} hPa</strong>
+                  </div>
+                  <div>
+                    <span className="miniKey">Media</span>
+                    <strong>{fmt(annual.press_mean, 1)} hPa</strong>
+                  </div>
+                  <div>
+                    <span className="miniKey">Min media</span>
+                    <strong>{fmt(annual.press_min_mean, 1)} hPa</strong>
+                  </div>
+                </div>
+              </div>
+
+              <div className="miniCard">
+                <div className="miniTitle">UV</div>
+                <div className="miniMain twoCols">
+                  <div>
+                    <span className="miniKey">UV medio</span>
+                    <strong>{fmt(annual.uv_mean, 1)}</strong>
+                  </div>
+                  <div>
+                    <span className="miniKey">UV max medio</span>
+                    <strong>{fmt(annual.uv_max_mean, 1)}</strong>
+                  </div>
+                </div>
+              </div>
+
+              <div className="miniCard">
+                <div className="miniTitle">Radiazione</div>
+                <div className="miniMain twoCols">
+                  <div>
+                    <span className="miniKey">Rad media</span>
+                    <strong>{Number.isFinite(n(annual.solar_mean)) ? `${Math.round(n(annual.solar_mean))} W/m²` : "—"}</strong>
+                  </div>
+                  <div>
+                    <span className="miniKey">Rad max media</span>
+                    <strong>{Number.isFinite(n(annual.solar_max_mean)) ? `${Math.round(n(annual.solar_max_mean))} W/m²` : "—"}</strong>
+                  </div>
+                </div>
               </div>
             </div>
-          </div>
-        </details>
-      </header>
 
-      {mounted && (
-        <section className="charts2">
-          <div className="chartBox">
-            <ReactECharts option={optTemp} style={{ height: 300, width: "100%" }} />
-          </div>
-          <div className="chartBox">
-            <ReactECharts option={optRain} style={{ height: 300, width: "100%" }} />
-          </div>
+            <div className="recordsAction">
+              <button
+                type="button"
+                className={`toggleRecords ${showRecords ? "active" : ""}`}
+                onClick={() => setShowRecords((v) => !v)}
+                aria-expanded={showRecords}
+                aria-controls="records-year-table"
+              >
+                {showRecords ? "Nascondi record anno" : "Record anno"}
+              </button>
+            </div>
 
-          <div className="chartBox">
-            <ReactECharts option={optRh} style={{ height: 300, width: "100%" }} />
-          </div>
-          <div className="chartBox">
-            <ReactECharts option={optWind} style={{ height: 300, width: "100%" }} />
-          </div>
+            {showRecords && (
+              <div id="records-year-table" className="recordsWrap">
+                <div className="recordsHead">Record anno {year}</div>
 
-          <div className="chartBox">
-            <ReactECharts option={optPress} style={{ height: 300, width: "100%" }} />
-          </div>
-          <div className="chartBox">
-            <ReactECharts option={optUvRad} style={{ height: 300, width: "100%" }} />
-          </div>
+                <div className="recordsTableWrap">
+                  <table className="recordsTable">
+                    <thead>
+                      <tr>
+                        <th>Parametro</th>
+                        <th>Minimo</th>
+                        <th>Data</th>
+                        <th>Massimo</th>
+                        <th>Data</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {annualRecords.map((r) => (
+                        <tr key={r.label}>
+                          <td className="recordName">{r.label}</td>
+
+                          <td>{r.min ? `${fmt(r.min.value, 1)}${r.unit ? ` ${r.unit}` : ""}` : "—"}</td>
+                          <td>
+                            {r.min?.date ? (
+                              <Link href={dayHref(r.min.date)} className="dateLink">
+                                {formatDateIt(r.min.date)}
+                              </Link>
+                            ) : (
+                              "—"
+                            )}
+                          </td>
+
+                          <td>{r.max ? `${fmt(r.max.value, 1)}${r.unit ? ` ${r.unit}` : ""}` : "—"}</td>
+                          <td>
+                            {r.max?.date ? (
+                              <Link href={dayHref(r.max.date)} className="dateLink">
+                                {formatDateIt(r.max.date)}
+                              </Link>
+                            ) : (
+                              "—"
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </section>
+        </header>
+
+        {mounted && (
+          <section className="charts2">
+            <div className="chartBox">
+              <ReactECharts option={optTemp} style={{ height: 340, width: "100%" }} />
+            </div>
+            <div className="chartBox">
+              <ReactECharts option={optRain} style={{ height: 340, width: "100%" }} />
+            </div>
+
+            <div className="chartBox">
+              <ReactECharts option={optRh} style={{ height: 340, width: "100%" }} />
+            </div>
+            <div className="chartBox">
+              <ReactECharts option={optWind} style={{ height: 340, width: "100%" }} />
+            </div>
+
+            <div className="chartBox">
+              <ReactECharts option={optPress} style={{ height: 340, width: "100%" }} />
+            </div>
+            <div className="chartBox">
+              <ReactECharts option={optUv} style={{ height: 340, width: "100%" }} />
+            </div>
+
+            <div className="chartBox chartBoxWide">
+              <ReactECharts option={optSolar} style={{ height: 340, width: "100%" }} />
+            </div>
+          </section>
+        )}
+
+        <section className="tableWrap">
+          <table>
+            <thead>
+              <tr className="groupRow">
+                <th className="group stickyHead bR" colSpan={1}>
+                  Mese
+                </th>
+                <th className="group bR" colSpan={3}>
+                  Temperature
+                </th>
+                <th className="group bR" colSpan={4}>
+                  Precipitazioni
+                </th>
+                <th className="group bR" colSpan={3}>
+                  Umidità
+                </th>
+                <th className="group bR" colSpan={4}>
+                  Vento
+                </th>
+                <th className="group bR" colSpan={3}>
+                  Pressione
+                </th>
+                <th className="group bR" colSpan={2}>
+                  UV
+                </th>
+                <th className="group" colSpan={2}>
+                  Radiazione
+                </th>
+              </tr>
+
+              <tr className="colRow">
+                <th className="bR stickyHead"> </th>
+
+                <th>Min media</th>
+                <th>Media</th>
+                <th className="bR">Max media</th>
+
+                <th>Pioggia</th>
+                <th>Max giorno</th>
+                <th>Rate max</th>
+                <th className="bR">G prec</th>
+
+                <th>Min media</th>
+                <th>Media</th>
+                <th className="bR">Max media</th>
+
+                <th>Medio</th>
+                <th>Raffica media</th>
+                <th>Raffica max</th>
+                <th className="bR">Dir media</th>
+
+                <th>Min media</th>
+                <th>Media</th>
+                <th className="bR">Max media</th>
+
+                <th>UV medio</th>
+                <th className="bR">UV max</th>
+
+                <th>Rad media</th>
+                <th>Rad max</th>
+              </tr>
+            </thead>
+
+            <tbody>
+              {monthly.map((m) => {
+                const mm = String(m.ym).slice(5, 7);
+                const dir = n(m.wind_dir_mean_deg);
+
+                return (
+                  <tr key={m.ym}>
+                    <td className="date sticky bR">
+                      <Link href={`/mesi/${year}/${mm}`} className="cellLink">
+                        <span className="extCell" aria-hidden="true">
+                          ↗
+                        </span>
+                        <span className="cellText">{monthFull(m.ym)}</span>
+                      </Link>
+                    </td>
+
+                    <td>{fmt(m.tmin_mean, 1)} °C</td>
+                    <td className="strong">{fmt(m.tmean, 1)} °C</td>
+                    <td className="bR">{fmt(m.tmax_mean, 1)} °C</td>
+
+                    <td className={Number.isFinite(n(m.rainSum)) && n(m.rainSum) > 0 ? "rainy" : ""}>{fmt(m.rainSum, 1)} mm</td>
+                    <td className={Number.isFinite(n(m.rainDailyMax)) && n(m.rainDailyMax) > 0 ? "rainy" : ""}>{fmt(m.rainDailyMax, 1)} mm</td>
+                    <td className={Number.isFinite(n(m.rainrate_max)) && n(m.rainrate_max) > 0 ? "rainy" : ""}>{fmt(m.rainrate_max, 1)} mm/h</td>
+                    <td className="bR">{fmtInt(m.rainyDays)}</td>
+
+                    <td>{fmtInt(m.rh_min_mean)} %</td>
+                    <td className="strong">{fmtInt(m.rh_mean)} %</td>
+                    <td className="bR">{fmtInt(m.rh_max_mean)} %</td>
+
+                    <td>{fmt(m.wind_mean, 1)} km/h</td>
+                    <td>{fmt(m.gust_mean, 1)} km/h</td>
+                    <td>{fmt(m.gust_max, 1)} km/h</td>
+                    <td className="bR">
+                      {Number.isFinite(dir) ? degToCardinal16(dir) : "—"}
+                      {Number.isFinite(dir) ? <span style={{ opacity: 0.65 }}> ({Math.round(dir)}°)</span> : null}
+                    </td>
+
+                    <td>{fmt(m.press_min_mean, 1)} hPa</td>
+                    <td className="strong">{fmt(m.press_mean, 1)} hPa</td>
+                    <td className="bR">{fmt(m.press_max_mean, 1)} hPa</td>
+
+                    <td>{fmt(m.uv_mean, 1)}</td>
+                    <td className="bR">{fmt(m.uv_max, 1)}</td>
+
+                    <td>{Number.isFinite(n(m.solar_mean)) ? `${Math.round(n(m.solar_mean))} W/m²` : "—"}</td>
+                    <td>{Number.isFinite(n(m.solar_max)) ? `${Math.round(n(m.solar_max))} W/m²` : "—"}</td>
+                  </tr>
+                );
+              })}
+
+              <tr className="yearRow">
+                <td className="date sticky bR">
+                  <span className="yearTag">Anno</span>
+                </td>
+
+                <td>{fmt(annual.tmin_mean, 1)} °C</td>
+                <td className="strong">{fmt(annual.tmean, 1)} °C</td>
+                <td className="bR">{fmt(annual.tmax_mean, 1)} °C</td>
+
+                <td className={Number.isFinite(n(annual.rainSum)) && n(annual.rainSum) > 0 ? "rainy" : ""}>{fmt(annual.rainSum, 1)} mm</td>
+                <td className={Number.isFinite(n(annual.rainDailyMax)) && n(annual.rainDailyMax) > 0 ? "rainy" : ""}>{fmt(annual.rainDailyMax, 1)} mm</td>
+                <td className={Number.isFinite(n(annual.rainrate_max)) && n(annual.rainrate_max) > 0 ? "rainy" : ""}>{fmt(annual.rainrate_max, 1)} mm/h</td>
+                <td className="bR">{fmtInt(annual.rainyDays)}</td>
+
+                <td>{fmtInt(annual.rh_min_mean)} %</td>
+                <td className="strong">{fmtInt(annual.rh_mean)} %</td>
+                <td className="bR">{fmtInt(annual.rh_max_mean)} %</td>
+
+                <td>{fmt(annual.wind_mean, 1)} km/h</td>
+                <td>{fmt(annual.gust_mean, 1)} km/h</td>
+                <td>{fmt(annual.gust_max, 1)} km/h</td>
+                <td className="bR">
+                  {Number.isFinite(n(annual.wind_dir_mean_deg)) ? degToCardinal16(annual.wind_dir_mean_deg) : "—"}
+                  {Number.isFinite(n(annual.wind_dir_mean_deg)) ? <span style={{ opacity: 0.65 }}> ({Math.round(n(annual.wind_dir_mean_deg))}°)</span> : null}
+                </td>
+
+                <td>{fmt(annual.press_min_mean, 1)} hPa</td>
+                <td className="strong">{fmt(annual.press_mean, 1)} hPa</td>
+                <td className="bR">{fmt(annual.press_max_mean, 1)} hPa</td>
+
+                <td>{fmt(annual.uv_mean, 1)}</td>
+                <td className="bR">{fmt(annual.uv_max, 1)}</td>
+
+                <td>{Number.isFinite(n(annual.solar_mean)) ? `${Math.round(n(annual.solar_mean))} W/m²` : "—"}</td>
+                <td>{Number.isFinite(n(annual.solar_max)) ? `${Math.round(n(annual.solar_max))} W/m²` : "—"}</td>
+              </tr>
+            </tbody>
+          </table>
         </section>
-      )}
 
-      <section className="tableWrap">
-        <table>
-          <thead>
-            <tr className="groupRow">
-              <th className="group stickyHead bR" colSpan={1}>
-                Mese
-              </th>
-              <th className="group temp bR" colSpan={3}>
-                Temperature
-              </th>
-              <th className="group rain bR" colSpan={3}>
-                Precipitazioni
-              </th>
-              <th className="group hum bR" colSpan={3}>
-                Umidità
-              </th>
-              <th className="group wind bR" colSpan={4}>
-                Vento
-              </th>
-              <th className="group press bR" colSpan={3}>
-                Pressione
-              </th>
-              <th className="group rad" colSpan={4}>
-                Rad/UV
-              </th>
-            </tr>
+        <style jsx>{`
+          .wrap {
+            background: transparent;
+          }
 
-            <tr className="colRow">
-              <th className="bR stickyHead"> </th>
+          .hero {
+            border: 1px solid #ececec;
+            border-radius: 18px;
+            background: rgba(255, 255, 255, 0.9);
+            box-shadow: 0 1px 0 rgba(0, 0, 0, 0.02), 0 12px 34px rgba(0, 0, 0, 0.04);
+            padding: 22px;
+          }
 
-              <th>Min media</th>
-              <th>Media</th>
-              <th className="bR">Max media</th>
-
-              <th>Pioggia</th>
-              <th>Rate max</th>
-              <th className="bR">G prec</th>
-
-              <th>Min media</th>
-              <th>Media</th>
-              <th className="bR">Max media</th>
-
-              <th>Medio</th>
-              <th>Raffica media</th>
-              <th>Raffica max</th>
-              <th className="bR">Dir media</th>
-
-              <th>Min media</th>
-              <th>Media</th>
-              <th className="bR">Max media</th>
-
-              <th>UV medio</th>
-              <th>UV max</th>
-              <th>Rad media</th>
-              <th>Rad max</th>
-            </tr>
-          </thead>
-
-          <tbody>
-            {monthly.map((m) => {
-              const mm = String(m.ym).slice(5, 7);
-              const dir = n(m.wind_dir_mean_deg);
-              return (
-                <tr key={m.ym}>
-                  <td className="date sticky bR">
-                    <Link href={`/mesi/${year}/${mm}`} className="cellLink">
-                      <span className="extCell" aria-hidden="true">
-                        ↗
-                      </span>
-                      <span className="cellText">{monthFull(m.ym)}</span>
-                    </Link>
-                  </td>
-
-                  <td>{fmt(m.tmin_mean, 1)} °C</td>
-                  <td className="strong">{fmt(m.tmean, 1)} °C</td>
-                  <td className="bR">{fmt(m.tmax_mean, 1)} °C</td>
-
-                  <td className={Number.isFinite(n(m.rainSum)) && n(m.rainSum) > 0 ? "rainy" : ""}>{fmt(m.rainSum, 1)} mm</td>
-                  <td className={Number.isFinite(n(m.rainrate_max)) && n(m.rainrate_max) > 0 ? "rainy" : ""}>{fmt(m.rainrate_max, 1)} mm/h</td>
-                  <td className="bR">{fmtInt(m.rainyDays)}</td>
-
-                  <td>{fmtInt(m.rh_min_mean)} %</td>
-                  <td className="strong">{fmtInt(m.rh_mean)} %</td>
-                  <td className="bR">{fmtInt(m.rh_max_mean)} %</td>
-
-                  <td>{fmt(m.wind_mean, 1)} km/h</td>
-                  <td>{fmt(m.gust_mean, 1)} km/h</td>
-                  <td>{fmt(m.gust_max, 1)} km/h</td>
-                  <td className="bR">
-                    {Number.isFinite(dir) ? degToCardinal16(dir) : "—"}
-                    {Number.isFinite(dir) ? <span style={{ opacity: 0.65 }}> ({Math.round(dir)}°)</span> : null}
-                  </td>
-
-                  <td>{fmt(m.press_min_mean, 1)} hPa</td>
-                  <td className="strong">{fmt(m.press_mean, 1)} hPa</td>
-                  <td className="bR">{fmt(m.press_max_mean, 1)} hPa</td>
-
-                  <td>{fmt(m.uv_mean, 1)}</td>
-                  <td>{fmt(m.uv_max, 1)}</td>
-                  <td>{Number.isFinite(n(m.solar_mean)) ? `${Math.round(n(m.solar_mean))} W/m²` : "—"}</td>
-                  <td>{Number.isFinite(n(m.solar_max)) ? `${Math.round(n(m.solar_max))} W/m²` : "—"}</td>
-                </tr>
-              );
-            })}
-
-            <tr className="yearRow">
-              <td className="date sticky bR">
-                <span className="yearTag">Anno</span>
-              </td>
-
-              <td>{fmt(annual.tmin_mean, 1)} °C</td>
-              <td className="strong">{fmt(annual.tmean, 1)} °C</td>
-              <td className="bR">{fmt(annual.tmax_mean, 1)} °C</td>
-
-              <td className={Number.isFinite(n(annual.rainSum)) && n(annual.rainSum) > 0 ? "rainy" : ""}>{fmt(annual.rainSum, 1)} mm</td>
-              <td className={Number.isFinite(n(annual.rainrate_max)) && n(annual.rainrate_max) > 0 ? "rainy" : ""}>{fmt(annual.rainrate_max, 1)} mm/h</td>
-              <td className="bR">{fmtInt(annual.rainyDays)}</td>
-
-              <td>{fmtInt(annual.rh_min_mean)} %</td>
-              <td className="strong">{fmtInt(annual.rh_mean)} %</td>
-              <td className="bR">{fmtInt(annual.rh_max_mean)} %</td>
-
-              <td>{fmt(annual.wind_mean, 1)} km/h</td>
-              <td>{fmt(annual.gust_mean, 1)} km/h</td>
-              <td>{fmt(annual.gust_max, 1)} km/h</td>
-              <td className="bR">
-                {Number.isFinite(n(annual.wind_dir_mean_deg)) ? degToCardinal16(annual.wind_dir_mean_deg) : "—"}
-                {Number.isFinite(n(annual.wind_dir_mean_deg)) ? <span style={{ opacity: 0.65 }}> ({Math.round(n(annual.wind_dir_mean_deg))}°)</span> : null}
-              </td>
-
-              <td>{fmt(annual.press_min_mean, 1)} hPa</td>
-              <td className="strong">{fmt(annual.press_mean, 1)} hPa</td>
-              <td className="bR">{fmt(annual.press_max_mean, 1)} hPa</td>
-
-              <td>{fmt(annual.uv_mean, 1)}</td>
-              <td>{fmt(annual.uv_max, 1)}</td>
-              <td>{Number.isFinite(n(annual.solar_mean)) ? `${Math.round(n(annual.solar_mean))} W/m²` : "—"}</td>
-              <td>{Number.isFinite(n(annual.solar_max)) ? `${Math.round(n(annual.solar_max))} W/m²` : "—"}</td>
-            </tr>
-          </tbody>
-        </table>
-      </section>
-
-      <style jsx>{`
-        :global(body) {
-          background: #fff;
-        }
-
-        .wrap {
-          max-width: 1280px;
-          margin: 0 auto;
-          padding: 18px 10px 50px;
-          background: #fff;
-        }
-
-        .topbar {
-          display: flex;
-          align-items: center;
-          gap: 14px;
-          margin-bottom: 14px;
-        }
-        .back {
-          text-decoration: none;
-          color: #111;
-          opacity: 0.75;
-          white-space: nowrap;
-        }
-        .back:hover {
-          opacity: 1;
-        }
-        .brandTitle {
-          font-weight: 800;
-          letter-spacing: 0.02em;
-        }
-        .brandSub {
-          font-size: 12px;
-          opacity: 0.7;
-          margin-top: 2px;
-        }
-
-        .hero {
-          border: 1px solid #ececec;
-          border-radius: 18px;
-          background: #fff;
-          box-shadow: 0 1px 0 rgba(0, 0, 0, 0.02), 0 12px 34px rgba(0, 0, 0, 0.04);
-          padding: 18px;
-        }
-
-        .heroTop {
-          display: flex;
-          justify-content: space-between;
-          gap: 16px;
-          align-items: flex-start;
-        }
-
-        .kicker {
-          font-size: 12px;
-          letter-spacing: 0.14em;
-          text-transform: uppercase;
-          opacity: 0.6;
-          margin-bottom: 8px;
-        }
-
-        .year {
-          margin: 0;
-          font-size: 56px;
-          line-height: 1;
-          letter-spacing: -0.03em;
-        }
-
-        .monthNav {
-          margin-top: 10px;
-          width: 100%;
-          display: flex;
-          flex-wrap: wrap;
-          justify-content: center;
-          align-items: center;
-          gap: 10px;
-          text-align: center;
-        }
-
-        .monthLink {
-          display: inline-flex;
-          align-items: center;
-          gap: 6px;
-          padding: 6px 10px;
-          border-radius: 10px;
-          text-decoration: none;
-          color: #111;
-          font-weight: 900;
-          font-size: 16px;
-          line-height: 1.1;
-          transition: background 120ms ease, transform 120ms ease, box-shadow 120ms ease;
-        }
-        .monthText {
-          font-weight: 900;
-        }
-        .monthLink:hover {
-          background: #f4f4f4;
-          transform: translateY(-1px);
-          box-shadow: 0 8px 20px rgba(0, 0, 0, 0.06);
-        }
-        .monthLink:focus-visible {
-          outline: 2px solid #111;
-          outline-offset: 2px;
-        }
-        .ext {
-          font-size: 14px;
-          opacity: 0.65;
-          transform: translateY(-1px);
-        }
-
-        .heroLeft {
-          flex: 1;
-          min-width: 0;
-        }
-
-        .heroRight {
-          flex: 0 0 auto;
-        }
-
-        .dirBox {
-          border: 1px solid #ededed;
-          border-radius: 14px;
-          padding: 12px 14px;
-          background: #fbfbfb;
-          min-width: 190px;
-        }
-        .dirLabel {
-          font-size: 12px;
-          opacity: 0.65;
-          letter-spacing: 0.06em;
-          text-transform: uppercase;
-        }
-        .dirValue {
-          margin-top: 8px;
-          font-weight: 950;
-          font-size: 22px;
-          letter-spacing: -0.01em;
-        }
-        .dirDeg {
-          margin-left: 8px;
-          font-size: 13px;
-          opacity: 0.65;
-          font-weight: 700;
-        }
-
-        .kpi4 {
-          margin-top: 14px;
-          display: grid;
-          grid-template-columns: repeat(4, 1fr);
-          gap: 10px;
-        }
-        .kCard {
-          border: 1px solid #ededed;
-          border-radius: 14px;
-          padding: 12px 12px 10px;
-          background: #fff;
-        }
-        .kLabel {
-          font-size: 12px;
-          opacity: 0.65;
-          letter-spacing: 0.06em;
-          text-transform: uppercase;
-        }
-        .kValue {
-          margin-top: 8px;
-          font-weight: 950;
-          font-size: 26px;
-          letter-spacing: -0.02em;
-        }
-        .kMeta {
-          margin-top: 8px;
-          font-size: 12px;
-          opacity: 0.74;
-          line-height: 1.35;
-        }
-        .kMeta b {
-          font-weight: 900;
-          opacity: 0.95;
-        }
-
-        .details {
-          margin-top: 12px;
-          border-top: 1px solid #efefef;
-          padding-top: 10px;
-        }
-        .details summary {
-          cursor: pointer;
-          font-weight: 900;
-          font-size: 13px;
-          opacity: 0.85;
-          user-select: none;
-        }
-        .detailsGrid {
-          margin-top: 10px;
-          display: grid;
-          grid-template-columns: 1fr 1fr 1fr;
-          gap: 10px;
-        }
-        .dCard {
-          border: 1px solid #ededed;
-          border-radius: 14px;
-          padding: 12px;
-          background: #fff;
-        }
-        .dTitle {
-          font-size: 12px;
-          opacity: 0.65;
-          letter-spacing: 0.06em;
-          text-transform: uppercase;
-          font-weight: 900;
-        }
-        .dBig {
-          margin-top: 8px;
-          font-weight: 950;
-          font-size: 22px;
-          letter-spacing: -0.02em;
-        }
-        .dMeta {
-          margin-top: 8px;
-          font-size: 12px;
-          opacity: 0.76;
-          line-height: 1.35;
-        }
-
-        .charts2 {
-          margin-top: 12px;
-          display: grid;
-          grid-template-columns: 1fr 1fr;
-          gap: 12px;
-        }
-        .chartBox {
-          border: 1px solid #e7e7e7;
-          border-radius: 16px;
-          padding: 10px;
-          background: #fff;
-        }
-
-        .tableWrap {
-          margin-top: 12px;
-          border: 1px solid #e7e7e7;
-          border-radius: 16px;
-          overflow: auto;
-          background: #fff;
-        }
-        table {
-          width: 100%;
-          border-collapse: collapse;
-          min-width: 1620px;
-        }
-
-        thead th {
-          position: sticky;
-          top: 0;
-          background: #fff;
-          border-bottom: 1px solid #e7e7e7;
-          font-size: 11px;
-          text-transform: uppercase;
-          letter-spacing: 0.08em;
-          opacity: 0.85;
-          padding: 10px 10px;
-          text-align: center;
-          white-space: nowrap;
-          user-select: none;
-        }
-
-        .groupRow th {
-          font-size: 11px;
-          letter-spacing: 0.12em;
-          opacity: 0.9;
-          border-bottom: 0;
-          padding: 12px 10px 12px;
-          background: #fbfbfb;
-        }
-        .colRow th {
-          top: 44px;
-          background: #fff;
-          border-top: 1px solid #efefef;
-          padding-top: 12px;
-        }
-        .group {
-          font-weight: 950;
-        }
-
-        tbody td {
-          border-bottom: 1px solid #f1f1f1;
-          padding: 9px 10px;
-          white-space: nowrap;
-          text-align: center;
-          font-size: 13px;
-        }
-
-        .bR {
-          border-right: 1px solid #e9e9e9;
-        }
-
-        tbody tr:hover td {
-          background: #fafafa;
-        }
-        tbody tr:nth-child(even) td {
-          background: #fcfcfc;
-        }
-
-        .sticky {
-          position: sticky;
-          left: 0;
-          z-index: 10;
-          background: #fff;
-          box-shadow: 2px 0 0 #e9e9e9;
-        }
-        tbody tr:nth-child(even) td.sticky {
-          background: #fcfcfc;
-        }
-        tbody tr:hover td.sticky {
-          background: #fafafa;
-        }
-
-        .stickyHead {
-          position: sticky;
-          left: 0;
-          z-index: 20;
-          background: #fbfbfb;
-          box-shadow: 2px 0 0 #e9e9e9;
-        }
-        .colRow .stickyHead {
-          background: #fff;
-        }
-
-        .cellLink {
-          color: #111;
-          text-decoration: none;
-          font-weight: 900;
-          display: inline-flex;
-          align-items: center;
-          gap: 6px;
-          width: 100%;
-          justify-content: center;
-        }
-        .cellText {
-          font-weight: 900;
-        }
-        .cellLink:hover {
-          text-decoration: underline;
-        }
-        .extCell {
-          font-size: 12px;
-          opacity: 0.65;
-          transform: translateY(-1px);
-        }
-
-        .strong {
-          font-weight: 900;
-        }
-        .rainy {
-          font-weight: 900;
-        }
-
-        .yearRow td {
-          border-top: 2px solid #e7e7e7;
-          background: #fbfbfb !important;
-          font-weight: 900;
-        }
-        .yearTag {
-          display: inline-block;
-          font-weight: 950;
-          letter-spacing: 0.06em;
-          text-transform: uppercase;
-          font-size: 12px;
-          opacity: 0.85;
-        }
-
-        @media (max-width: 1100px) {
           .heroTop {
-            flex-direction: column;
+            display: flex;
+            justify-content: space-between;
+            gap: 16px;
+            align-items: flex-start;
           }
-          .kpi4 {
-            grid-template-columns: 1fr 1fr;
-          }
-          .detailsGrid {
-            grid-template-columns: 1fr;
-          }
-          .charts2 {
-            grid-template-columns: 1fr;
-          }
-          .dirBox {
-            min-width: auto;
-            width: fit-content;
-          }
-        }
 
-        @media (max-width: 520px) {
-          .kpi4 {
-            grid-template-columns: 1fr;
+          .heroLeft {
+            flex: 1;
+            min-width: 0;
           }
+
+          .kicker {
+            font-size: 12px;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            opacity: 0.6;
+            margin-bottom: 8px;
+          }
+
           .year {
-            font-size: 48px;
+            margin: 0;
+            font-size: 68px;
+            line-height: 1;
+            letter-spacing: -0.04em;
           }
+
+          .monthsBar {
+            margin-top: 18px;
+            border: 1px solid #ececec;
+            border-radius: 16px;
+            background: #fcfcfc;
+            padding: 14px 16px;
+          }
+
+          .monthsBarHead {
+            font-size: 12px;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: #666;
+            font-weight: 900;
+            margin-bottom: 12px;
+            text-align: center;
+          }
+
+          .monthNav {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            text-align: center;
+          }
+
           .monthLink {
-            font-size: 14px;
-            padding: 6px 8px;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 12px;
+            border-radius: 11px;
+            text-decoration: none;
+            color: #111;
+            font-weight: 900;
+            font-size: 15px;
+            line-height: 1.1;
+            background: #fff;
+            border: 1px solid #ececec;
+            transition: background 120ms ease, transform 120ms ease, box-shadow 120ms ease;
           }
-        }
-      `}</style>
-    </div>
+
+          .monthText {
+            font-weight: 900;
+          }
+
+          .monthLink:hover {
+            background: #f6f6f6;
+            transform: translateY(-1px);
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.06);
+          }
+
+          .monthLink:focus-visible {
+            outline: 2px solid #111;
+            outline-offset: 2px;
+          }
+
+          .ext {
+            font-size: 14px;
+            opacity: 0.65;
+            transform: translateY(-1px);
+          }
+
+          .summaryCompact {
+            margin-top: 18px;
+            border-top: 1px solid #efefef;
+            padding-top: 16px;
+          }
+
+          .summaryHead {
+            display: flex;
+            align-items: flex-end;
+            justify-content: space-between;
+            gap: 14px;
+            margin-bottom: 14px;
+          }
+
+          .summaryHead h2 {
+            margin: 0;
+            font-size: 18px;
+            line-height: 1.15;
+            font-weight: 950;
+            letter-spacing: -0.02em;
+          }
+
+          .summaryHead p {
+            margin: 5px 0 0;
+            font-size: 13px;
+            line-height: 1.4;
+            color: #666;
+            font-weight: 700;
+          }
+
+          .summaryGridCompact {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+          }
+
+          .miniCard {
+            border: 1px solid #ececec;
+            border-radius: 14px;
+            background: #fcfcfc;
+            padding: 12px 13px;
+          }
+
+          .miniTitle {
+            font-size: 12px;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: #666;
+            font-weight: 900;
+            margin-bottom: 10px;
+          }
+
+          .miniMain {
+            display: grid;
+            gap: 10px;
+            align-items: start;
+          }
+
+          .miniMain.threeCols {
+            grid-template-columns: repeat(3, 1fr);
+          }
+
+          .miniMain.twoCols {
+            grid-template-columns: repeat(2, 1fr);
+          }
+
+          .miniKey {
+            display: block;
+            font-size: 11px;
+            color: #6f6f6f;
+            font-weight: 800;
+            margin-bottom: 4px;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+          }
+
+          .miniMain strong {
+            display: block;
+            font-size: 22px;
+            line-height: 1.05;
+            font-weight: 950;
+            letter-spacing: -0.02em;
+            color: #0f172a;
+          }
+
+          .recordsAction {
+            margin-top: 14px;
+          }
+
+          .toggleRecords {
+            appearance: none;
+            border: 1px solid #d8dbe2;
+            background: #fff;
+            color: #0b1b3b;
+            border-radius: 14px;
+            padding: 12px 16px;
+            font-size: 14px;
+            font-weight: 900;
+            line-height: 1;
+            cursor: pointer;
+            box-shadow: 0 2px 10px rgba(12, 25, 56, 0.04);
+            transition: transform 120ms ease, box-shadow 120ms ease, background 120ms ease;
+          }
+
+          .toggleRecords:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 8px 20px rgba(12, 25, 56, 0.08);
+            background: #fbfcff;
+          }
+
+          .toggleRecords.active {
+            background: #f5f8ff;
+          }
+
+          .recordsWrap {
+            margin-top: 14px;
+            border: 1px solid #e8ebf2;
+            border-radius: 16px;
+            background: #fff;
+            overflow: hidden;
+          }
+
+          .recordsHead {
+            padding: 12px 14px;
+            background: #f8fafc;
+            border-bottom: 1px solid #eceff5;
+            font-weight: 900;
+            letter-spacing: 0.02em;
+          }
+
+          .recordsTableWrap {
+            overflow: auto;
+          }
+
+          .recordsTable {
+            width: 100%;
+            border-collapse: collapse;
+            min-width: 900px;
+          }
+
+          .recordsTable th,
+          .recordsTable td {
+            padding: 11px 14px;
+            border-bottom: 1px solid #f0f2f6;
+            text-align: left;
+            font-size: 13px;
+            white-space: nowrap;
+          }
+
+          .recordsTable th {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: #667085;
+            background: #fff;
+          }
+
+          .recordsTable tbody tr:nth-child(even) td {
+            background: #fcfcfd;
+          }
+
+          .recordName {
+            font-weight: 800;
+            color: #0f172a;
+          }
+
+          .dateLink {
+            color: #0b1b3b;
+            text-decoration: none;
+            font-weight: 800;
+          }
+
+          .dateLink:hover {
+            text-decoration: underline;
+          }
+
+          .charts2 {
+            margin-top: 12px;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+          }
+
+          .chartBox {
+            border: 1px solid #e7e7e7;
+            border-radius: 16px;
+            padding: 10px;
+            background: rgba(255, 255, 255, 0.94);
+          }
+
+          .chartBoxWide {
+            grid-column: 1 / -1;
+          }
+
+          .tableWrap {
+            margin-top: 12px;
+            border: 1px solid #e7e7e7;
+            border-radius: 16px;
+            overflow: auto;
+            background: rgba(255, 255, 255, 0.94);
+          }
+
+          table {
+            width: 100%;
+            border-collapse: collapse;
+            min-width: 1800px;
+          }
+
+          thead th {
+            position: sticky;
+            top: 0;
+            background: #fff;
+            border-bottom: 1px solid #e7e7e7;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            opacity: 0.85;
+            padding: 10px 10px;
+            text-align: center;
+            white-space: nowrap;
+            user-select: none;
+          }
+
+          .groupRow th {
+            font-size: 11px;
+            letter-spacing: 0.12em;
+            opacity: 0.9;
+            border-bottom: 0;
+            padding: 12px 10px 12px;
+            background: #fbfbfb;
+          }
+
+          .colRow th {
+            top: 44px;
+            background: #fff;
+            border-top: 1px solid #efefef;
+            padding-top: 12px;
+          }
+
+          .group {
+            font-weight: 950;
+          }
+
+          tbody td {
+            border-bottom: 1px solid #f1f1f1;
+            padding: 9px 10px;
+            white-space: nowrap;
+            text-align: center;
+            font-size: 13px;
+          }
+
+          .bR {
+            border-right: 1px solid #e9e9e9;
+          }
+
+          tbody tr:hover td {
+            background: #fafafa;
+          }
+
+          tbody tr:nth-child(even) td {
+            background: #fcfcfc;
+          }
+
+          .sticky {
+            position: sticky;
+            left: 0;
+            z-index: 10;
+            background: #fff;
+            box-shadow: 2px 0 0 #e9e9e9;
+          }
+
+          tbody tr:nth-child(even) td.sticky {
+            background: #fcfcfc;
+          }
+
+          tbody tr:hover td.sticky {
+            background: #fafafa;
+          }
+
+          .stickyHead {
+            position: sticky;
+            left: 0;
+            z-index: 20;
+            background: #fbfbfb;
+            box-shadow: 2px 0 0 #e9e9e9;
+          }
+
+          .colRow .stickyHead {
+            background: #fff;
+          }
+
+          .cellLink {
+            color: #111;
+            text-decoration: none;
+            font-weight: 900;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            width: 100%;
+            justify-content: center;
+          }
+
+          .cellText {
+            font-weight: 900;
+          }
+
+          .cellLink:hover {
+            text-decoration: underline;
+          }
+
+          .extCell {
+            font-size: 12px;
+            opacity: 0.65;
+            transform: translateY(-1px);
+          }
+
+          .strong {
+            font-weight: 900;
+          }
+
+          .rainy {
+            font-weight: 900;
+          }
+
+          .yearRow td {
+            border-top: 2px solid #e7e7e7;
+            background: #fbfbfb !important;
+            font-weight: 900;
+          }
+
+          .yearTag {
+            display: inline-block;
+            font-weight: 950;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            font-size: 12px;
+            opacity: 0.85;
+          }
+
+          @media (max-width: 1100px) {
+            .summaryGridCompact {
+              grid-template-columns: 1fr;
+            }
+
+            .charts2 {
+              grid-template-columns: 1fr;
+            }
+
+            .chartBoxWide {
+              grid-column: auto;
+            }
+          }
+
+          @media (max-width: 720px) {
+            .miniMain.threeCols,
+            .miniMain.twoCols {
+              grid-template-columns: 1fr;
+            }
+
+            .monthNav {
+              gap: 8px;
+            }
+          }
+
+          @media (max-width: 520px) {
+            .year {
+              font-size: 52px;
+            }
+
+            .monthLink {
+              font-size: 14px;
+              padding: 7px 10px;
+            }
+
+            .miniMain strong {
+              font-size: 20px;
+            }
+          }
+        `}</style>
+      </div>
+    </SiteLayout>
   );
 }

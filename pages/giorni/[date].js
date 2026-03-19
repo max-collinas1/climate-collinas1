@@ -34,8 +34,7 @@ export async function getStaticProps({ params }) {
 
   const intraday = readIntraday(params.date);
 
-  // ---- confronto “stesso giorno” su altri anni (stesso MM-DD) ----
-  const mmdd = String(params?.date || "").slice(5, 10); // "12-11"
+  const mmdd = String(params?.date || "").slice(5, 10);
   const sameDay = rows
     .filter((r) => String(r?.date || "").slice(5, 10) === mmdd)
     .map((r) => String(r.date))
@@ -66,8 +65,6 @@ function fmt2(x, fallback = "—") {
   const n = toNull(x);
   return n === null ? fallback : n.toFixed(2);
 }
-
-// compatibilità: se nel daily hai "rain" invece di "rain_total"
 function getRainTotal(d) {
   const v = toNull(d?.rain_total);
   if (v !== null) return v;
@@ -75,7 +72,6 @@ function getRainTotal(d) {
   if (v2 !== null) return v2;
   return 0;
 }
-
 function minMax(arr) {
   const v = arr.filter((x) => Number.isFinite(x));
   if (!v.length) return { min: 0, max: 1 };
@@ -104,8 +100,6 @@ function axisNice(min, max, targetTicks = 6) {
   const niceMax = Math.ceil(max / interval) * interval;
   return { min: niceMin, max: niceMax, interval };
 }
-
-// direzione vento: N, NE, E, SE, S, SW, W, NW
 function degToCardinal8(v) {
   const n = Number(v);
   if (!Number.isFinite(n)) return "—";
@@ -114,21 +108,21 @@ function degToCardinal8(v) {
   return ["N", "NE", "E", "SE", "S", "SW", "W", "NW"][ix];
 }
 
-// data in italiano
 const MONTHS_IT = [
-  "gennaio",
-  "febbraio",
-  "marzo",
-  "aprile",
-  "maggio",
-  "giugno",
-  "luglio",
-  "agosto",
-  "settembre",
-  "ottobre",
-  "novembre",
-  "dicembre",
+  "Gennaio",
+  "Febbraio",
+  "Marzo",
+  "Aprile",
+  "Maggio",
+  "Giugno",
+  "Luglio",
+  "Agosto",
+  "Settembre",
+  "Ottobre",
+  "Novembre",
+  "Dicembre",
 ];
+
 function formatDateIT(iso) {
   const s = String(iso || "");
   const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
@@ -139,6 +133,7 @@ function formatDateIT(iso) {
   const monthName = MONTHS_IT[mm - 1] || String(mm);
   return `${dd} ${monthName} ${yyyy}`;
 }
+
 function formatMonthIT(ym) {
   const s = String(ym || "");
   const m = s.match(/^(\d{4})-(\d{2})$/);
@@ -149,7 +144,6 @@ function formatMonthIT(ym) {
   return `${monthName} ${yyyy}`;
 }
 
-// timeline uniforme 15-min
 function pad2(n) {
   return String(n).padStart(2, "0");
 }
@@ -182,8 +176,6 @@ function maxFinite(arr) {
   }
   return ok ? m : null;
 }
-
-// zoom dinamico
 function defaultZoomPercent(n, windowPoints = 144) {
   if (!Number.isFinite(n) || n <= 0) return { start: 0, end: 100 };
   if (n <= windowPoints) return { start: 0, end: 100 };
@@ -280,7 +272,6 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
   const ym = day.date.slice(0, 7);
   const mmdd = day.date.slice(5, 10);
 
-  // timeline uniforme (96 punti a 15 minuti)
   const labels = buildLabels(15);
   const byHHMM = mapIntradayByHHMM(intraday);
 
@@ -299,13 +290,13 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
     const n = Number(v);
     return Number.isFinite(n) ? n : null;
   });
+
   let acc = 0;
   const rainCum = rain15.map((v) => {
     if (Number.isFinite(v)) acc += v;
     return acc;
   });
 
-  // altezza grafici
   const CHART_H = 360;
   const chartStyle = { height: CHART_H, width: "100%" };
 
@@ -364,7 +355,15 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
       },
     ],
     series: [
-      { name: "Temperatura (°C)", type: "line", data: temp, showSymbol: false, connectNulls: false, smooth: false, lineStyle: { width: 2 } },
+      {
+        name: "Temperatura (°C)",
+        type: "line",
+        data: temp,
+        showSymbol: false,
+        connectNulls: false,
+        smooth: false,
+        lineStyle: { width: 2 },
+      },
       {
         name: "Punto di rugiada (°C)",
         type: "line",
@@ -383,10 +382,32 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
     grid: gridNoLegend,
     toolbox: toolboxZoom,
     dataZoom: DZ,
-    tooltip: { trigger: "axis", valueFormatter: (v) => (v === null || v === undefined ? "—" : Number(v).toFixed(1)) },
+    tooltip: {
+      trigger: "axis",
+      valueFormatter: (v) => (v === null || v === undefined ? "—" : Number(v).toFixed(1)),
+    },
     xAxis: xAxisCommon,
-    yAxis: { type: "value", name: "% RH", position: "left", min: 0, max: 100, scale: true, axisLabel: { formatter: (v) => Number(v).toFixed(1) }, splitNumber: 6 },
-    series: [{ name: "Umidità (%)", type: "line", data: rh, showSymbol: false, connectNulls: false, smooth: false, lineStyle: { width: 2 } }],
+    yAxis: {
+      type: "value",
+      name: "% RH",
+      position: "left",
+      min: 0,
+      max: 100,
+      scale: true,
+      axisLabel: { formatter: (v) => Number(v).toFixed(1) },
+      splitNumber: 6,
+    },
+    series: [
+      {
+        name: "Umidità (%)",
+        type: "line",
+        data: rh,
+        showSymbol: false,
+        connectNulls: false,
+        smooth: false,
+        lineStyle: { width: 2 },
+      },
+    ],
   };
 
   const rainOption = {
@@ -394,16 +415,42 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
     grid: gridWithLegend,
     toolbox: toolboxZoom,
     dataZoom: DZ,
-    tooltip: { trigger: "axis", valueFormatter: (v) => (v === null || v === undefined ? "—" : Number(v).toFixed(1)) },
+    tooltip: {
+      trigger: "axis",
+      valueFormatter: (v) => (v === null || v === undefined ? "—" : Number(v).toFixed(1)),
+    },
     legend: { top: 40, left: "center" },
     xAxis: xAxisCommon,
     yAxis: [
-      { type: "value", name: "mm (15 min)", scale: false, splitNumber: 6, axisLabel: { formatter: (v) => Number(v).toFixed(1) }, splitLine: { show: true } },
-      { type: "value", name: "mm cum.", position: "right", scale: false, splitNumber: 6, axisLabel: { formatter: (v) => Number(v).toFixed(1) }, splitLine: { show: false } },
+      {
+        type: "value",
+        name: "mm (15 min)",
+        scale: false,
+        splitNumber: 6,
+        axisLabel: { formatter: (v) => Number(v).toFixed(1) },
+        splitLine: { show: true },
+      },
+      {
+        type: "value",
+        name: "mm cum.",
+        position: "right",
+        scale: false,
+        splitNumber: 6,
+        axisLabel: { formatter: (v) => Number(v).toFixed(1) },
+        splitLine: { show: false },
+      },
     ],
     series: [
       { name: "15 min (mm)", type: "bar", data: rain15, yAxisIndex: 0 },
-      { name: "Cumulata (mm)", type: "line", data: rainCum, yAxisIndex: 1, showSymbol: false, smooth: false, connectNulls: false },
+      {
+        name: "Cumulata (mm)",
+        type: "line",
+        data: rainCum,
+        yAxisIndex: 1,
+        showSymbol: false,
+        smooth: false,
+        connectNulls: false,
+      },
     ],
   };
 
@@ -430,13 +477,54 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
     legend: { top: 40, left: "center" },
     xAxis: xAxisCommon,
     yAxis: [
-      { type: "value", name: "km/h", scale: false, splitNumber: 6, axisLabel: { formatter: (v) => Number(v).toFixed(1) }, splitLine: { show: true } },
-      { type: "value", name: "Dir", position: "right", min: 0, max: 360, interval: 45, scale: false, splitNumber: 8, axisLabel: { formatter: (v) => degToCardinal8(v) }, splitLine: { show: false } },
+      {
+        type: "value",
+        name: "km/h",
+        scale: false,
+        splitNumber: 6,
+        axisLabel: { formatter: (v) => Number(v).toFixed(1) },
+        splitLine: { show: true },
+      },
+      {
+        type: "value",
+        name: "Dir",
+        position: "right",
+        min: 0,
+        max: 360,
+        interval: 45,
+        scale: false,
+        splitNumber: 8,
+        axisLabel: { formatter: (v) => degToCardinal8(v) },
+        splitLine: { show: false },
+      },
     ],
     series: [
-      { name: "Vento medio", type: "line", data: wind, showSymbol: false, connectNulls: false, smooth: false, yAxisIndex: 0 },
-      { name: "Raffiche", type: "line", data: gust, showSymbol: false, connectNulls: false, smooth: false, yAxisIndex: 0 },
-      { name: "Direzione", type: "scatter", data: windDir, yAxisIndex: 1, symbolSize: 5, itemStyle: { color: "#2ca02c" } },
+      {
+        name: "Vento medio",
+        type: "line",
+        data: wind,
+        showSymbol: false,
+        connectNulls: false,
+        smooth: false,
+        yAxisIndex: 0,
+      },
+      {
+        name: "Raffiche",
+        type: "line",
+        data: gust,
+        showSymbol: false,
+        connectNulls: false,
+        smooth: false,
+        yAxisIndex: 0,
+      },
+      {
+        name: "Direzione",
+        type: "scatter",
+        data: windDir,
+        yAxisIndex: 1,
+        symbolSize: 5,
+        itemStyle: { color: "#2ca02c" },
+      },
     ],
   };
 
@@ -445,10 +533,28 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
     grid: gridNoLegend,
     toolbox: toolboxZoom,
     dataZoom: DZ,
-    tooltip: { trigger: "axis", valueFormatter: (v) => (v === null || v === undefined ? "—" : Number(v).toFixed(1)) },
+    tooltip: {
+      trigger: "axis",
+      valueFormatter: (v) => (v === null || v === undefined ? "—" : Number(v).toFixed(1)),
+    },
     xAxis: xAxisCommon,
-    yAxis: { type: "value", name: "hPa", scale: true, axisLabel: { formatter: (v) => Number(v).toFixed(1) }, splitNumber: 6 },
-    series: [{ name: "Pressione (hPa)", type: "line", data: press, showSymbol: false, connectNulls: false, smooth: false }],
+    yAxis: {
+      type: "value",
+      name: "hPa",
+      scale: true,
+      axisLabel: { formatter: (v) => Number(v).toFixed(1) },
+      splitNumber: 6,
+    },
+    series: [
+      {
+        name: "Pressione (hPa)",
+        type: "line",
+        data: press,
+        showSymbol: false,
+        connectNulls: false,
+        smooth: false,
+      },
+    ],
   };
 
   const uvSolarOption = {
@@ -456,15 +562,43 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
     grid: gridWithLegend,
     toolbox: toolboxZoom,
     dataZoom: DZ,
-    tooltip: { trigger: "axis", valueFormatter: (v) => (v === null || v === undefined ? "—" : Number(v).toFixed(1)) },
+    tooltip: {
+      trigger: "axis",
+      valueFormatter: (v) => (v === null || v === undefined ? "—" : Number(v).toFixed(1)),
+    },
     legend: { top: 40, left: "center" },
     xAxis: xAxisCommon,
     yAxis: [
-      { type: "value", name: "UV", scale: false, min: 0, splitNumber: 6, axisLabel: { formatter: (v) => Number(v).toFixed(1) }, splitLine: { show: true } },
-      { type: "value", name: "W/m²", position: "right", scale: false, min: 0, splitNumber: 6, axisLabel: { formatter: (v) => Number(v).toFixed(1) }, splitLine: { show: false } },
+      {
+        type: "value",
+        name: "UV",
+        scale: false,
+        min: 0,
+        splitNumber: 6,
+        axisLabel: { formatter: (v) => Number(v).toFixed(1) },
+        splitLine: { show: true },
+      },
+      {
+        type: "value",
+        name: "W/m²",
+        position: "right",
+        scale: false,
+        min: 0,
+        splitNumber: 6,
+        axisLabel: { formatter: (v) => Number(v).toFixed(1) },
+        splitLine: { show: false },
+      },
     ],
     series: [
-      { name: "UV", type: "line", data: uv, showSymbol: false, connectNulls: false, smooth: false, yAxisIndex: 0 },
+      {
+        name: "UV",
+        type: "line",
+        data: uv,
+        showSymbol: false,
+        connectNulls: false,
+        smooth: false,
+        yAxisIndex: 0,
+      },
       {
         name: "Radiazione (W/m²)",
         type: "line",
@@ -510,7 +644,6 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
     if (targetDate) router.push(`/giorni/${targetDate}`);
   }
 
-  // ---- tabella intraday ----
   const [showTable, setShowTable] = useState(false);
 
   const tableRows = useMemo(() => {
@@ -540,58 +673,66 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
   return (
     <main className="page">
       <div className="container">
-        {/* NAVBAR (Home nello stesso breadcrumb + tasti veri) */}
-        <div className="navBar">
-          <div className="navLeft">
-            <div className="crumb">
-              <Link className="crumbBtn" href="/" aria-label="Home">
-                ← Home
+        {/* TOP BAR */}
+        <div className="topBar">
+          <div className="topMain">
+            <div className="crumbs" role="navigation" aria-label="Breadcrumb">
+              <Link className="navChip" href="/">
+                <span className="chipIcon">←</span>
+                <span>Home</span>
               </Link>
 
-              <span className="dot">•</span>
-
-              <Link className="crumbLink" href={`/anni/${year}`}>
-                {year}
+              <Link className="navChip" href={`/anni/${year}`}>
+                <span>{year}</span>
               </Link>
 
-              <span className="dot">•</span>
+              <Link className="navChip" href={`/mesi/${year}/${month}`}>
+                <span>{formatMonthIT(ym)}</span>
+              </Link>
+            </div>
 
-              <Link className="crumbLink" href={`/mesi/${year}/${month}`}>
-                {formatMonthIT(ym)}
+            <div className="navActions">
+              <Link
+                className={`navChip ghost ${!prev ? "disabled" : ""}`}
+                href={prev ? `/giorni/${prev}` : "#"}
+                aria-disabled={!prev}
+              >
+                <span className="chipIcon">←</span>
+                <span>Precedente</span>
               </Link>
 
-              <span className="dot">•</span>
+              <span className="navChip selectDayChip staticChip" aria-disabled="true">
+                <span>Seleziona giorno</span>
+              </span>
 
-              <span className="crumbHere">{formatDateIT(day.date)}</span>
+              <Link
+                className={`navChip ghost ${!next ? "disabled" : ""}`}
+                href={next ? `/giorni/${next}` : "#"}
+                aria-disabled={!next}
+              >
+                <span>Successivo</span>
+                <span className="chipIcon">→</span>
+              </Link>
             </div>
           </div>
 
-          <div className="navRight">
-            <div className="navActions">
-              <Link className={`navBtn ${!prev ? "disabled" : ""}`} href={prev ? `/giorni/${prev}` : "#"} aria-disabled={!prev}>
-                ← Giorno precedente
-              </Link>
-
-              <Link className="navBtn subtle" href={`/mesi/${year}/${month}`}>
-                Torna al mese
-              </Link>
-
-              <Link className={`navBtn ${!next ? "disabled" : ""}`} href={next ? `/giorni/${next}` : "#"} aria-disabled={!next}>
-                Giorno successivo →
-              </Link>
-            </div>
-
-            <div className={`compare ${compareAvailable.length ? "" : "disabled"}`}>
-              <div className="compareLabel">Confronta {mmdd}</div>
-              <select className="compareSelect" value={comparePick} onChange={onCompareChange} disabled={!compareAvailable.length}>
-                <option value="">{compareAvailable.length ? "Stesso giorno in…" : "Nessun altro anno"}</option>
-                {compareAvailable.map((o) => (
-                  <option key={o.date} value={o.date}>
-                    {o.year} → {o.date}
-                  </option>
-                ))}
-              </select>
-            </div>
+          <div className={`compareCompact ${compareAvailable.length ? "" : "disabled"}`}>
+            <div className="compareMiniLabel">Confronto {mmdd}</div>
+            <select
+              className="compareSelect"
+              value={comparePick}
+              onChange={onCompareChange}
+              disabled={!compareAvailable.length}
+            >
+              <option value="">
+                {compareAvailable.length ? "Stesso giorno in…" : "Nessun altro anno"}
+              </option>
+              {compareAvailable.map((o) => (
+                <option key={o.date} value={o.date}>
+                  {o.year} → {o.date}
+                </option>
+              ))}
+            </select>
           </div>
         </div>
 
@@ -602,14 +743,18 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
               <h1 className="h1">{formatDateIT(day.date)}</h1>
               <div className="sub">Dettaglio giornaliero</div>
             </div>
-
-            <div className="heroMeta">
-              <div className="metaPill">Anno: {year}</div>
-              <div className="metaPill">Mese: {ym}</div>
-              <div className="metaPill">Intraday: {intraday.length ? "disponibile" : "non disponibile"}</div>
-            </div>
           </div>
         </header>
+
+        {/* AVVISO PIOGGIA */}
+        <section className="rainNotice">
+          <div className="rainNoticeBadge">Attenzione</div>
+          <div className="rainNoticeText">
+            Il totale di pioggia del giorno mostrato nel riepilogo è il dato più affidabile. Il grafico della pioggia
+            può risultare più basso perché usa dati intraday provenienti da una fonte diversa. In caso di differenza,
+            considera corretto il totale giornaliero indicato nel riepilogo.
+          </div>
+        </section>
 
         {/* KPI SUMMARY */}
         <section className="panel">
@@ -626,8 +771,18 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
             <KpiCard label="Temperatura min" value={fmt1(day.tmin)} unit="°C" />
 
             <KpiCard label="Pioggia giorno" value={fmt1(rainDay, "0.0")} unit="mm" />
-            <KpiCard label="Pioggia max 15 min" value={rain15Max === null ? "—" : fmt1(rain15Max)} unit="mm" hint="Picco su 15 minuti" />
-            <KpiCard label="Pioggia max 1h" value={rain1h === null ? "—" : fmt1(rain1h)} unit="mm" hint="Picco su 1 ora" />
+            <KpiCard
+              label="Pioggia max 15 min"
+              value={rain15Max === null ? "—" : fmt1(rain15Max)}
+              unit="mm"
+              hint="Picco su 15 minuti"
+            />
+            <KpiCard
+              label="Pioggia max 1h"
+              value={rain1h === null ? "—" : fmt1(rain1h)}
+              unit="mm"
+              hint="Picco su 1 ora"
+            />
 
             <KpiCard label="Vento medio" value={fmt1(day.wind_avg)} unit="km/h" />
             <KpiCard label="Vento max" value={fmt1(day.wind_max)} unit="km/h" />
@@ -640,7 +795,7 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
           <div className="panelHead chartsHead">
             <div>
               <div className="panelTitle">Grafici intraday</div>
-              <div className="panelHint">Seleziona un grafico (pagina più corta), oppure mostra tutto.</div>
+              <div className="panelHint">Seleziona un grafico oppure mostra tutto.</div>
             </div>
 
             <div className="chartTools">
@@ -658,14 +813,24 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
                 <>
                   <div className="tabs">
                     {tabs.map((t) => (
-                      <button key={t.key} className={`tab ${activeTab === t.key ? "active" : ""}`} onClick={() => setActiveTab(t.key)}>
+                      <button
+                        key={t.key}
+                        className={`tab ${activeTab === t.key ? "active" : ""}`}
+                        onClick={() => setActiveTab(t.key)}
+                      >
                         {t.label}
                       </button>
                     ))}
                   </div>
 
                   <div className="chartBox">
-                    <ReactECharts key={oneChartKey} option={active.option} style={chartStyle} notMerge={true} lazyUpdate={true} />
+                    <ReactECharts
+                      key={oneChartKey}
+                      option={active.option}
+                      style={chartStyle}
+                      notMerge={true}
+                      lazyUpdate={true}
+                    />
                   </div>
                 </>
               )}
@@ -674,13 +839,17 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
                 <div className="allCharts">
                   {tabs.map((t) => (
                     <div key={`${day.date}::${t.key}::all`} className="chartBox">
-                      <ReactECharts option={t.option} style={chartStyle} notMerge={true} lazyUpdate={true} />
+                      <ReactECharts
+                        option={t.option}
+                        style={chartStyle}
+                        notMerge={true}
+                        lazyUpdate={true}
+                      />
                     </div>
                   ))}
                 </div>
               )}
 
-              {/* ✅ TABELLA DATI */}
               <div className="tablePanel">
                 <button className="tableToggle" onClick={() => setShowTable((v) => !v)}>
                   {showTable ? "Nascondi tabella dati giornalieri" : "Mostra tabella dati giornalieri"}
@@ -727,7 +896,7 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
                       </tbody>
                     </table>
                     <div className="tableHint">
-                      Nota: le righe “sbiadite” indicano assenza dato a quell’orario (slot 15-min senza record).
+                      Nota: le righe sbiadite indicano assenza dato a quell’orario.
                     </div>
                   </div>
                 )}
@@ -746,153 +915,164 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
             linear-gradient(180deg, #ffffff, #f8fafc);
           min-height: 100vh;
         }
+
         .container {
           max-width: 1100px;
           margin: 0 auto;
         }
 
-        /* ---- NAVBAR ---- */
-        .navBar {
+        .topBar {
           display: flex;
           align-items: center;
           justify-content: space-between;
-          gap: 12px;
-          padding: 10px 2px 10px;
+          gap: 14px;
+          padding: 8px 10px;
           position: sticky;
           top: 0;
           z-index: 5;
           backdrop-filter: blur(10px);
-          background: rgba(248, 250, 252, 0.78);
-          border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+          background: rgba(248, 250, 252, 0.82);
+          border: 1px solid rgba(15, 23, 42, 0.08);
+          border-radius: 16px;
+          box-shadow: 0 8px 20px rgba(15, 23, 42, 0.05);
         }
 
-        .navLeft {
-          display: flex;
-          align-items: center;
+        .topMain {
           min-width: 0;
-        }
-
-        .crumb {
           display: flex;
           align-items: center;
-          gap: 10px;
-          flex-wrap: wrap;
-          min-width: 0;
+          justify-content: space-between;
+          gap: 14px;
+          flex: 1;
         }
 
-        /* Home come tasto nel breadcrumb */
-        .crumbBtn {
-          text-decoration: none;
-          border: 1px solid #e7e7e7;
-          background: rgba(255, 255, 255, 0.92);
-          color: #0f172a;
-          padding: 8px 10px;
-          border-radius: 14px;
-          font-weight: 950;
-          white-space: nowrap;
-          transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
-        }
-        .crumbBtn:hover {
-          transform: translateY(-1px);
-          border-color: #d6d6d6;
-          background: #fff;
-        }
-
-        .crumbLink {
-          text-decoration: none;
-          color: rgba(15, 23, 42, 0.78);
-          font-weight: 950;
-          border-bottom: 1px dashed rgba(15, 23, 42, 0.18);
-        }
-        .crumbLink:hover {
-          color: #0f172a;
-          border-bottom-color: rgba(15, 23, 42, 0.35);
-        }
-        .dot {
-          opacity: 0.35;
-          font-weight: 900;
-        }
-        .crumbHere {
-          color: #0f172a;
-          font-weight: 950;
-          white-space: nowrap;
-        }
-
-        .navRight {
-          display: flex;
-          align-items: center;
-          gap: 10px;
-          flex-wrap: wrap;
-          justify-content: flex-end;
-        }
-
+        .crumbs,
         .navActions {
           display: flex;
           align-items: center;
-          gap: 10px;
+          gap: 8px;
           flex-wrap: wrap;
-          justify-content: flex-end;
+          min-width: 0;
         }
 
-        /* ✅ link = tasti veri */
-        .navBtn {
+        .navChip {
           text-decoration: none;
-          border: 1px solid #e7e7e7;
-          background: rgba(255, 255, 255, 0.92);
-          color: #0f172a;
-          padding: 10px 12px;
-          border-radius: 14px;
-          font-weight: 950;
-          white-space: nowrap;
-          transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
           display: inline-flex;
           align-items: center;
           justify-content: center;
           gap: 8px;
+          white-space: nowrap;
+          padding: 8px 12px;
+          border-radius: 999px;
+          border: 1px solid rgba(15, 23, 42, 0.08);
+          background: rgba(255, 255, 255, 0.72);
+          color: rgba(15, 23, 42, 0.86);
+          font-size: 13px;
+          font-weight: 850;
+          line-height: 1;
+          transition: all 140ms ease;
+          box-shadow: 0 3px 10px rgba(15, 23, 42, 0.04);
         }
-        .navBtn:hover {
+
+        .navChip:hover {
           transform: translateY(-1px);
-          border-color: #d6d6d6;
-          background: #fff;
+          background: #ffffff;
+          border-color: rgba(15, 23, 42, 0.14);
+          box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
+          color: #0f172a;
         }
-        .navBtn.subtle {
-          color: rgba(15, 23, 42, 0.78);
-          background: rgba(248, 250, 252, 0.8);
+
+        .navChip:focus-visible {
+          outline: 3px solid rgba(59, 130, 246, 0.28);
+          outline-offset: 2px;
         }
-        .navBtn.disabled {
+
+        .navChip.ghost {
+          background: transparent;
+          border-color: transparent;
+          box-shadow: none;
+          color: rgba(15, 23, 42, 0.72);
+        }
+
+        .navChip.ghost:hover {
+          background: rgba(255, 255, 255, 0.8);
+          border-color: rgba(15, 23, 42, 0.08);
+          color: #0f172a;
+          box-shadow: 0 6px 16px rgba(15, 23, 42, 0.06);
+        }
+
+        .navChip.disabled {
           pointer-events: none;
           opacity: 0.45;
         }
 
-        .compare {
-          display: grid;
-          gap: 6px;
-          padding: 8px 10px;
-          border: 1px solid #e7e7e7;
-          border-radius: 14px;
-          background: rgba(255, 255, 255, 0.92);
-          min-width: 220px;
+        .selectDayChip {
+          min-width: 150px;
+          padding-left: 18px;
+          padding-right: 18px;
+          background: rgba(255, 255, 255, 0.95);
+          border-color: rgba(15, 23, 42, 0.1);
+          color: #0f172a;
+          font-weight: 900;
         }
-        .compare.disabled {
-          opacity: 0.55;
+
+        .staticChip {
+          cursor: default;
+          user-select: none;
+          pointer-events: none;
         }
-        .compareLabel {
+
+        .staticChip:hover {
+          transform: none;
+          background: rgba(255, 255, 255, 0.95);
+          border-color: rgba(15, 23, 42, 0.1);
+          box-shadow: 0 3px 10px rgba(15, 23, 42, 0.04);
+          color: #0f172a;
+        }
+
+        .chipIcon {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: 16px;
+          height: 16px;
+          border-radius: 999px;
           font-size: 11px;
-          font-weight: 950;
-          color: rgba(15, 23, 42, 0.68);
+          font-weight: 900;
+          background: rgba(15, 23, 42, 0.06);
         }
+
+        .compareCompact {
+          flex: 0 0 230px;
+          display: grid;
+          gap: 4px;
+          padding-left: 12px;
+          border-left: 1px solid rgba(15, 23, 42, 0.08);
+        }
+
+        .compareCompact.disabled {
+          opacity: 0.6;
+        }
+
+        .compareMiniLabel {
+          font-size: 11px;
+          font-weight: 900;
+          color: rgba(15, 23, 42, 0.58);
+          padding-left: 2px;
+        }
+
         .compareSelect {
           width: 100%;
-          border: 1px solid #ededed;
-          border-radius: 10px;
+          border: 1px solid rgba(15, 23, 42, 0.1);
+          border-radius: 12px;
           padding: 8px 10px;
-          font-weight: 900;
+          font-weight: 850;
+          font-size: 13px;
           color: #0f172a;
-          background: #fff;
+          background: rgba(255, 255, 255, 0.9);
           outline: none;
         }
 
-        /* ---- HERO + PANELS ---- */
         .hero {
           border: 1px solid #e9e9e9;
           border-radius: 24px;
@@ -901,6 +1081,7 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
           padding: 18px;
           margin-top: 10px;
         }
+
         .heroInner {
           display: flex;
           align-items: flex-end;
@@ -908,6 +1089,7 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
           gap: 14px;
           flex-wrap: wrap;
         }
+
         .h1 {
           margin: 0;
           font-size: 44px;
@@ -916,25 +1098,40 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
           color: #0f172a;
           font-weight: 950;
         }
+
         .sub {
           margin-top: 6px;
           font-weight: 800;
           color: rgba(15, 23, 42, 0.66);
         }
-        .heroMeta {
-          display: flex;
-          flex-wrap: wrap;
-          gap: 8px;
-          justify-content: flex-end;
+
+        .rainNotice {
+          margin-top: 14px;
+          border: 1px solid rgba(245, 158, 11, 0.26);
+          background: linear-gradient(180deg, rgba(255, 251, 235, 0.96), rgba(255, 247, 237, 0.96));
+          border-radius: 20px;
+          box-shadow: 0 8px 22px rgba(15, 23, 42, 0.05);
+          padding: 14px 16px;
         }
-        .metaPill {
-          border: 1px solid #ececec;
-          background: rgba(248, 250, 252, 0.8);
+
+        .rainNoticeBadge {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          padding: 6px 10px;
           border-radius: 999px;
-          padding: 7px 10px;
+          background: rgba(245, 158, 11, 0.14);
+          color: #9a3412;
           font-size: 12px;
-          font-weight: 900;
-          color: rgba(15, 23, 42, 0.72);
+          font-weight: 950;
+          margin-bottom: 8px;
+        }
+
+        .rainNoticeText {
+          font-size: 14px;
+          line-height: 1.5;
+          font-weight: 800;
+          color: rgba(15, 23, 42, 0.78);
         }
 
         .panel {
@@ -945,6 +1142,7 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
           box-shadow: 0 10px 26px rgba(15, 23, 42, 0.06);
           padding: 14px;
         }
+
         .panelHead {
           display: flex;
           align-items: flex-end;
@@ -953,12 +1151,14 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
           flex-wrap: wrap;
           padding: 2px 4px 10px;
         }
+
         .panelTitle {
           font-weight: 950;
           letter-spacing: -0.01em;
           color: #0f172a;
           font-size: 16px;
         }
+
         .panelHint {
           margin-top: 4px;
           font-size: 12px;
@@ -975,10 +1175,12 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
         .chartsHead {
           align-items: center;
         }
+
         .chartTools {
           display: flex;
           gap: 10px;
         }
+
         .toggle {
           border: 1px solid #e7e7e7;
           background: rgba(255, 255, 255, 0.95);
@@ -989,6 +1191,7 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
           cursor: pointer;
           transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
         }
+
         .toggle:hover {
           transform: translateY(-1px);
           border-color: #d6d6d6;
@@ -1001,6 +1204,7 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
           gap: 8px;
           padding: 2px 4px 10px;
         }
+
         .tab {
           border: 1px solid #e7e7e7;
           background: rgba(248, 250, 252, 0.8);
@@ -1012,11 +1216,13 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
           cursor: pointer;
           transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
         }
+
         .tab:hover {
           transform: translateY(-1px);
           border-color: #d6d6d6;
           background: #fff;
         }
+
         .tab.active {
           background: #0f172a;
           border-color: #0f172a;
@@ -1042,12 +1248,12 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
           padding: 6px 4px;
         }
 
-        /* ---- TABELLA ---- */
         .tablePanel {
           margin-top: 12px;
           border-top: 1px solid rgba(15, 23, 42, 0.08);
           padding-top: 12px;
         }
+
         .tableToggle {
           border: 1px solid #e7e7e7;
           background: rgba(248, 250, 252, 0.8);
@@ -1058,11 +1264,13 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
           cursor: pointer;
           transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
         }
+
         .tableToggle:hover {
           transform: translateY(-1px);
           border-color: #d6d6d6;
           background: #fff;
         }
+
         .tableWrap {
           margin-top: 10px;
           border: 1px solid #ececec;
@@ -1070,11 +1278,13 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
           background: #fff;
           overflow: auto;
         }
+
         .dataTable {
           width: 100%;
           border-collapse: collapse;
           font-size: 12px;
         }
+
         .dataTable th,
         .dataTable td {
           padding: 10px 10px;
@@ -1082,6 +1292,7 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
           text-align: left;
           white-space: nowrap;
         }
+
         .dataTable thead th {
           position: sticky;
           top: 0;
@@ -1091,13 +1302,17 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
           color: rgba(15, 23, 42, 0.78);
           border-bottom: 1px solid #e9e9e9;
         }
+
         .mono {
           font-variant-numeric: tabular-nums;
-          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+            "Courier New", monospace;
         }
+
         .missing {
           opacity: 0.55;
         }
+
         .tableHint {
           padding: 10px 12px;
           font-size: 11px;
@@ -1105,38 +1320,41 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
           color: rgba(15, 23, 42, 0.55);
         }
 
+        @media (max-width: 1100px) {
+          .topBar {
+            flex-direction: column;
+            align-items: stretch;
+          }
+
+          .topMain {
+            flex-direction: column;
+            align-items: stretch;
+          }
+
+          .compareCompact {
+            flex: unset;
+            padding-left: 0;
+            border-left: 0;
+            border-top: 1px solid rgba(15, 23, 42, 0.08);
+            padding-top: 8px;
+          }
+        }
+
         @media (max-width: 980px) {
           .kpiGrid {
             grid-template-columns: 1fr;
           }
+
           .h1 {
             font-size: 34px;
           }
+
+          .rainNoticeText {
+            font-size: 13px;
+          }
+
           :global(.echarts-for-react) {
             height: 320px !important;
-          }
-        }
-
-        @media (max-width: 760px) {
-          .navBar {
-            flex-direction: column;
-            align-items: stretch;
-            gap: 10px;
-          }
-          .navRight {
-            justify-content: stretch;
-            width: 100%;
-          }
-          .navActions {
-            width: 100%;
-          }
-          .navBtn {
-            flex: 1;
-            text-align: center;
-          }
-          .compare {
-            width: 100%;
-            min-width: unset;
           }
         }
       `}</style>
