@@ -22,14 +22,13 @@ export default function SiteHeader({
         <div className="heroLeft">
           <div className="kicker">{kicker}</div>
           <h1 className="title">{title}</h1>
-
           <div className="subline">{subtitle}</div>
 
-          {showPeriod && (
+          {showPeriod && start && end ? (
             <div className="periodLine">
-              Periodo dati: <b>{fmtDateISO(start)}</b> → <b>{fmtDateISO(end)}</b>
+              Periodo disponibile: {fmtDateISO(start)} — {fmtDateISO(end)}
             </div>
-          )}
+          ) : null}
         </div>
 
         <div className="heroRight" />
@@ -39,30 +38,33 @@ export default function SiteHeader({
         <nav className="navStrip" aria-label="Sezioni principali">
           <Link
             href="/"
-            className={`navStripItem ${isActive("/") ? "active" : ""}`}
+            className={`navStripLink ${isActive("/") ? "active" : ""}`}
           >
-            Home
+            <span className="navStripText">Home</span>
           </Link>
 
           <Link
             href="/records"
-            className={`navStripItem ${isActive("/records") ? "active" : ""}`}
+            className={`navStripLink ${isActive("/records") ? "active" : ""}`}
           >
-            Record
+            <span className="navStripText">Record</span>
           </Link>
 
           <Link
             href="/radar"
-            className={`navStripItem ${isActive("/radar") ? "active" : ""}`}
+            className={`navStripLink ${isActive("/radar") ? "active" : ""}`}
           >
-            Radar
+            <span className="navStripText">Condizioni attuali</span>
           </Link>
 
+          {/* FIX IMPORTANTE */}
           <Link
-            href="/previsioni"
-            className={`navStripItem ${isActive("/previsioni") ? "active" : ""}`}
+            href="/grafici-previsione"
+            className={`navStripLink ${
+              isActive("/grafici-previsione") ? "active" : ""
+            }`}
           >
-            Grafici di previsione
+            <span className="navStripText">Grafici di previsione</span>
           </Link>
         </nav>
       </div>
@@ -150,7 +152,7 @@ export default function SiteHeader({
         .navStrip {
           width: min(980px, 100%);
           margin: 0 auto;
-          min-height: 68px;
+          min-height: 64px;
           border: 1px solid #d7dce2;
           border-radius: 18px;
           background: linear-gradient(180deg, #f9fafb, #f2f5f8);
@@ -159,28 +161,35 @@ export default function SiteHeader({
           justify-content: center;
           align-items: center;
           gap: 34px;
-          padding: 12px 24px;
+          padding: 12px 28px;
         }
 
-        .navStripItem {
+        .navStripLink {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
           text-decoration: none;
           color: #111827;
-          font-size: 15px;
-          font-weight: 900;
-          line-height: 1;
-          white-space: nowrap;
-          padding: 8px 0;
           position: relative;
+          padding: 10px 0;
           transition: color 140ms ease, transform 140ms ease;
         }
 
-        .navStripItem::after {
+        .navStripText {
+          display: inline-block;
+          font-size: 14px;
+          font-weight: 1000;
+          line-height: 0;
+          white-space: nowrap;
+        }
+
+        .navStripLink::after {
           content: "";
           position: absolute;
           left: 0;
           bottom: -2px;
           width: 100%;
-          height: 2px;
+          height: 3px;
           border-radius: 999px;
           background: #64748b;
           transform: scaleX(0);
@@ -188,22 +197,22 @@ export default function SiteHeader({
           transition: transform 160ms ease;
         }
 
-        .navStripItem:hover {
+        .navStripLink:hover {
           color: #0f172a;
           transform: translateY(-1px);
         }
 
-        .navStripItem:hover::after,
-        .navStripItem:focus-visible::after,
-        .navStripItem.active::after {
+        .navStripLink:hover::after,
+        .navStripLink:focus-visible::after,
+        .navStripLink.active::after {
           transform: scaleX(1);
         }
 
-        .navStripItem.active {
+        .navStripLink.active {
           color: #0f172a;
         }
 
-        .navStripItem:focus-visible {
+        .navStripLink:focus-visible {
           outline: none;
           color: #0f172a;
         }
@@ -268,9 +277,13 @@ export default function SiteHeader({
 
           .navStrip {
             min-height: auto;
-            gap: 18px;
+            gap: 20px 24px;
             padding: 16px 18px;
             flex-wrap: wrap;
+          }
+
+          .navStripText {
+            font-size: 22px;
           }
 
           .embedFrame iframe {
@@ -287,10 +300,11 @@ export default function SiteHeader({
           .navStrip {
             justify-content: center;
             gap: 14px 20px;
+            padding: 14px 16px;
           }
 
-          .navStripItem {
-            font-size: 14px;
+          .navStripText {
+            font-size: 18px;
           }
 
           .title {

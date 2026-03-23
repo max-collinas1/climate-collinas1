@@ -10,7 +10,7 @@ export default function RadarPage() {
       metricRain: "mm",
       metricTemp: "°C",
       metricWind: "km/h",
-      zoom: "8",
+      zoom: "7.3",
       overlay: "radar",
       product: "ecmwf",
       level: "surface",
@@ -34,17 +34,17 @@ export default function RadarPage() {
       MapStyle: "3",
     });
 
-    return `https://map.blitzortung.org/index.php?${params.toString()}#4.3/42.3/12.5`;
+    return `https://map.blitzortung.org/index.php?${params.toString()}#4/42.3/12.5`;
   }, []);
 
   return (
     <SiteLayout
       headerProps={{
-        title: "Radar Meteo",
-        kicker: "MONITORAGGIO",
+        title: "Condizioni attuali",
+        kicker: "MONITORAGGIO METEO",
         subtitle:
-          "Radar, satellite e fulmini in tempo reale con focus su Sardegna e Italia.",
-        currentPath: "/radar",
+          "Radar, satellite e fulminazioni in tempo reale con focus su Sardegna e Italia.",
+        currentPath: "/condizioni-attuali",
         showPeriod: false,
       }}
     >
@@ -83,7 +83,7 @@ export default function RadarPage() {
       <section className="section">
         <div className="sectionHead compact">
           <div>
-            <h2>Satellite e fulmini</h2>
+            <h2>Satellite e fulminazioni</h2>
             <div className="hint">
               Monitoraggio in tempo reale della copertura nuvolosa e
               dell’attività elettrica.
@@ -105,7 +105,7 @@ export default function RadarPage() {
               <iframe
                 title="Satellite Italia"
                 sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"
-                src="https://widgets.meteox.com/it-IT/widgets/radar/country/it/satellite?z=5.2"
+                src="https://widgets.meteox.com/it-IT/widgets/radar/country/it/satellite?z=5"
                 className="subFrame"
                 scrolling="no"
                 frameBorder="0"

@@ -3,6 +3,7 @@ import path from "path";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/router";
 import SiteLayout from "../../components/SiteLayout";
 
 const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
@@ -36,6 +37,19 @@ export async function getStaticProps({ params }) {
   const rows = readDaily();
   const year = String(params?.year ?? "");
 
+  const allYears = Array.from(
+    new Set(
+      rows
+        .map((r) => String(r?.date ?? "").trim())
+        .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d))
+        .map((d) => d.slice(0, 4))
+    )
+  ).sort();
+
+  const yearIndex = allYears.indexOf(year);
+  const prevYear = yearIndex > 0 ? allYears[yearIndex - 1] : null;
+  const nextYear = yearIndex >= 0 && yearIndex < allYears.length - 1 ? allYears[yearIndex + 1] : null;
+
   const days = rows
     .filter((r) => String(r?.date ?? "").startsWith(year + "-"))
     .sort((a, b) => String(a.date).localeCompare(String(b.date)));
@@ -54,6 +68,9 @@ export async function getStaticProps({ params }) {
       year,
       days,
       monthsInYear,
+      allYears,
+      prevYear,
+      nextYear,
     },
   };
 }
@@ -178,7 +195,6 @@ function getRhMean(d) {
   return NaN;
 }
 
-// cardinali
 function degToCardinal16(v) {
   const n0 = Number(v);
   if (!Number.isFinite(n0)) return "—";
@@ -187,7 +203,6 @@ function degToCardinal16(v) {
   return ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"][ix];
 }
 
-// media circolare
 function circularMeanDeg(values) {
   const vals = (values || []).map(n).filter(Number.isFinite);
   if (!vals.length) return NaN;
@@ -266,10 +281,31 @@ function cumulative(arr) {
   });
 }
 
+function axisTooltipFormatter(params, specs) {
+  if (!Array.isArray(params) || !params.length) return "";
+  const title = params[0]?.axisValueLabel ?? params[0]?.name ?? "—";
+  const lines = [`<b>${title}</b>`];
+
+  for (const spec of specs) {
+    const p = params.find((x) => x.seriesName === spec.name);
+    if (!p) continue;
+    const value = Array.isArray(p.value) ? p.value[1] : p.value;
+    const text = spec.formatter ? spec.formatter(value) : value;
+    lines.push(`${p.marker}${spec.name}: <b>${text}</b>`);
+  }
+
+  return lines.join("<br/>");
+}
+
 export default function YearOverviewPage(props) {
+  const router = useRouter();
+
   const year = props.year ?? "";
   const days = Array.isArray(props.days) ? props.days : [];
   const monthsInYear = Array.isArray(props.monthsInYear) ? props.monthsInYear : [];
+  const allYears = Array.isArray(props.allYears) ? props.allYears : [];
+  const prevYear = props.prevYear ?? null;
+  const nextYear = props.nextYear ?? null;
 
   const [mounted, setMounted] = useState(false);
   const [showRecords, setShowRecords] = useState(false);
@@ -435,7 +471,7 @@ export default function YearOverviewPage(props) {
   }, [days]);
 
   const annualRecords = useMemo(() => {
-    const rows = [
+    return [
       {
         label: "Temperatura massima giornaliera",
         min: getMinRecord(days, "tmax"),
@@ -450,13 +486,13 @@ export default function YearOverviewPage(props) {
       },
       {
         label: "Pioggia giornaliera",
-        min: getMinRecord(days, "rain_total"),
+        min: null,
         max: getMaxRecord(days, "rain_total"),
         unit: "mm",
       },
       {
         label: "Rain rate",
-        min: getMinRecord(days, "rainrate_max"),
+        min: null,
         max: getMaxRecord(days, "rainrate_max"),
         unit: "mm/h",
       },
@@ -497,24 +533,38 @@ export default function YearOverviewPage(props) {
         unit: "hPa",
       },
       {
-        label: "UV massimo",
-        min: getMinRecord(days, "uv_max"),
+        label: "UV",
+        min: getMaxRecord(days, "uv_mean_pos"),
         max: getMaxRecord(days, "uv_max"),
         unit: "",
+        minLabel: "Media giornaliera più alta",
+        maxLabel: "Massimo assoluto",
       },
       {
-        label: "Radiazione massima",
-        min: getMinRecord(days, "solar_max"),
+        label: "Radiazione",
+        min: getMaxRecord(days, "solar_mean_pos"),
         max: getMaxRecord(days, "solar_max"),
         unit: "W/m²",
+        minLabel: "Media giornaliera più alta",
+        maxLabel: "Massimo assoluto",
       },
     ];
-
-    return rows;
   }, [days]);
 
   const x = monthly.map((m) => monthShort(m.ym));
   const dirTxt = Number.isFinite(n(annual.wind_dir_mean_deg)) ? degToCardinal16(annual.wind_dir_mean_deg) : "—";
+
+  const COLORS = {
+    red: "#ff2d20",
+    orange: "#f28c28",
+    orangeDry: "#b96a2f",
+    grayDark: "#4b5563",
+    blueLight: "#60a5fa",
+    blue: "#2563eb",
+    indigo: "#312e81",
+    greenStrong: "#2f9e44",
+    windDir: "#f4a261",
+  };
 
   const baseChart = {
     animation: false,
@@ -532,7 +582,7 @@ export default function YearOverviewPage(props) {
       padding: [8, 10, 2, 10],
     },
     toolbox: { feature: { restore: {} }, right: 10, top: 10 },
-    tooltip: { trigger: "axis" },
+    tooltip: { trigger: "axis", order: "seriesAsc" },
   };
 
   const optTemp = {
@@ -540,7 +590,15 @@ export default function YearOverviewPage(props) {
     title: { ...baseChart.title, text: "Temperature mensili" },
     tooltip: {
       trigger: "axis",
-      valueFormatter: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} °C`),
+      order: "seriesAsc",
+      formatter: (params) =>
+        axisTooltipFormatter(params, [
+          { name: "Max assoluta", formatter: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} °C`) },
+          { name: "Max media", formatter: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} °C`) },
+          { name: "Media", formatter: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} °C`) },
+          { name: "Min media", formatter: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} °C`) },
+          { name: "Min assoluta", formatter: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} °C`) },
+        ]),
     },
     yAxis: {
       type: "value",
@@ -552,11 +610,11 @@ export default function YearOverviewPage(props) {
       axisLabel: { formatter: (v) => Number(v).toFixed(1) },
     },
     series: [
-      { name: "Min media", type: "line", data: seriesLine(monthly.map((m) => m.tmin_mean)), showSymbol: false, connectNulls: false, lineStyle: { width: 2 } },
-      { name: "Media", type: "line", data: seriesLine(monthly.map((m) => m.tmean)), showSymbol: false, connectNulls: false, lineStyle: { width: 2 } },
-      { name: "Max media", type: "line", data: seriesLine(monthly.map((m) => m.tmax_mean)), showSymbol: false, connectNulls: false, lineStyle: { width: 2 } },
-      { name: "Min assoluta", type: "scatter", data: seriesLine(monthly.map((m) => m.tmin_abs)), symbolSize: 7, itemStyle: { color: "#2f80ed" } },
-      { name: "Max assoluta", type: "scatter", data: seriesLine(monthly.map((m) => m.tmax_abs)), symbolSize: 7, itemStyle: { color: "#f2994a" } },
+      { name: "Max assoluta", type: "scatter", data: seriesLine(monthly.map((m) => m.tmax_abs)), symbolSize: 7, itemStyle: { color: COLORS.red }, z: 5 },
+      { name: "Max media", type: "line", data: seriesLine(monthly.map((m) => m.tmax_mean)), showSymbol: false, connectNulls: false, lineStyle: { width: 2, color: COLORS.orange }, itemStyle: { color: COLORS.orange } },
+      { name: "Media", type: "line", data: seriesLine(monthly.map((m) => m.tmean)), showSymbol: false, connectNulls: false, lineStyle: { width: 3, color: COLORS.grayDark }, itemStyle: { color: COLORS.grayDark }, z: 4 },
+      { name: "Min media", type: "line", data: seriesLine(monthly.map((m) => m.tmin_mean)), showSymbol: false, connectNulls: false, lineStyle: { width: 2, color: COLORS.blueLight }, itemStyle: { color: COLORS.blueLight } },
+      { name: "Min assoluta", type: "scatter", data: seriesLine(monthly.map((m) => m.tmin_abs)), symbolSize: 7, itemStyle: { color: COLORS.indigo } },
     ],
   };
 
@@ -566,6 +624,16 @@ export default function YearOverviewPage(props) {
   const optRain = {
     ...baseChart,
     title: { ...baseChart.title, text: "Precipitazioni" },
+    tooltip: {
+      trigger: "axis",
+      order: "seriesAsc",
+      formatter: (params) =>
+        axisTooltipFormatter(params, [
+          { name: "Rate max", formatter: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} mm/h`) },
+          { name: "Progressivo", formatter: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} mm`) },
+          { name: "Pioggia", formatter: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} mm`) },
+        ]),
+    },
     yAxis: [
       {
         type: "value",
@@ -590,34 +658,28 @@ export default function YearOverviewPage(props) {
         axisLabel: { formatter: (v) => Number(v).toFixed(1) },
       },
     ],
-    tooltip: {
-      trigger: "axis",
-      formatter: (params) => {
-        const i = params?.[0]?.dataIndex ?? 0;
-        const mm = x[i] ?? "—";
-        const acc = n(monthly[i]?.rainSum);
-        const cum = n(rainCum[i]);
-        const rr = n(monthly[i]?.rainrate_max);
-        const gp = n(monthly[i]?.rainyDays);
-        return [
-          `<b>${mm}</b>`,
-          `Pioggia: ${Number.isFinite(acc) ? acc.toFixed(1) + " mm" : "—"}`,
-          `Progressivo: ${Number.isFinite(cum) ? cum.toFixed(1) + " mm" : "—"}`,
-          `Rate max: ${Number.isFinite(rr) ? rr.toFixed(1) + " mm/h" : "—"}`,
-          `Giorni > 1 mm: ${Number.isFinite(gp) ? Math.round(gp) : "—"}`,
-        ].join("<br/>");
-      },
-    },
     series: [
-      { name: "Pioggia", type: "bar", data: seriesLine(rainMonthly), yAxisIndex: 0 },
-      { name: "Progressivo", type: "line", data: seriesLine(rainCum), yAxisIndex: 0, showSymbol: false, connectNulls: false, lineStyle: { width: 2 } },
-      { name: "Rate max", type: "scatter", data: seriesLine(monthly.map((m) => m.rainrate_max)), yAxisIndex: 1, symbolSize: 7 },
+      { name: "Rate max", type: "scatter", data: seriesLine(monthly.map((m) => m.rainrate_max)), yAxisIndex: 1, symbolSize: 7, itemStyle: { color: COLORS.red }, z: 5 },
+      { name: "Progressivo", type: "line", data: seriesLine(rainCum), yAxisIndex: 0, showSymbol: false, connectNulls: false, lineStyle: { width: 4, color: COLORS.greenStrong }, itemStyle: { color: COLORS.greenStrong }, z: 6 },
+      { name: "Pioggia", type: "bar", data: seriesLine(rainMonthly), yAxisIndex: 0, itemStyle: { color: "#4f6fd5" }, z: 2 },
     ],
   };
 
   const optRh = {
     ...baseChart,
     title: { ...baseChart.title, text: "Umidità" },
+    tooltip: {
+      trigger: "axis",
+      order: "seriesAsc",
+      formatter: (params) =>
+        axisTooltipFormatter(params, [
+          { name: "Max assoluta", formatter: (v) => (v == null ? "—" : `${Math.round(Number(v))} %`) },
+          { name: "Max media", formatter: (v) => (v == null ? "—" : `${Math.round(Number(v))} %`) },
+          { name: "Media", formatter: (v) => (v == null ? "—" : `${Math.round(Number(v))} %`) },
+          { name: "Min media", formatter: (v) => (v == null ? "—" : `${Math.round(Number(v))} %`) },
+          { name: "Min assoluta", formatter: (v) => (v == null ? "—" : `${Math.round(Number(v))} %`) },
+        ]),
+    },
     yAxis: {
       type: "value",
       name: "%",
@@ -629,19 +691,29 @@ export default function YearOverviewPage(props) {
       splitNumber: 5,
       axisLabel: { formatter: (v) => `${Math.round(Number(v))}` },
     },
-    tooltip: { trigger: "axis", valueFormatter: (v) => (v == null ? "—" : `${Math.round(Number(v))} %`) },
     series: [
-      { name: "Min media", type: "line", data: seriesLine(monthly.map((m) => m.rh_min_mean)), showSymbol: false, connectNulls: false, lineStyle: { width: 2 } },
-      { name: "Media", type: "line", data: seriesLine(monthly.map((m) => m.rh_mean)), showSymbol: false, connectNulls: false, lineStyle: { width: 2 } },
-      { name: "Max media", type: "line", data: seriesLine(monthly.map((m) => m.rh_max_mean)), showSymbol: false, connectNulls: false, lineStyle: { width: 2 } },
-      { name: "Min assoluta", type: "scatter", data: seriesLine(monthly.map((m) => m.rh_min_abs)), symbolSize: 7 },
-      { name: "Max assoluta", type: "scatter", data: seriesLine(monthly.map((m) => m.rh_max_abs)), symbolSize: 7 },
+      { name: "Max assoluta", type: "scatter", data: seriesLine(monthly.map((m) => m.rh_max_abs)), symbolSize: 7, itemStyle: { color: COLORS.blue }, z: 5 },
+      { name: "Max media", type: "line", data: seriesLine(monthly.map((m) => m.rh_max_mean)), showSymbol: false, connectNulls: false, lineStyle: { width: 2, color: COLORS.blueLight }, itemStyle: { color: COLORS.blueLight } },
+      { name: "Media", type: "line", data: seriesLine(monthly.map((m) => m.rh_mean)), showSymbol: false, connectNulls: false, lineStyle: { width: 3, color: COLORS.grayDark }, itemStyle: { color: COLORS.grayDark }, z: 4 },
+      { name: "Min media", type: "line", data: seriesLine(monthly.map((m) => m.rh_min_mean)), showSymbol: false, connectNulls: false, lineStyle: { width: 2, color: COLORS.orange }, itemStyle: { color: COLORS.orange } },
+      { name: "Min assoluta", type: "scatter", data: seriesLine(monthly.map((m) => m.rh_min_abs)), symbolSize: 7, itemStyle: { color: COLORS.orangeDry } },
     ],
   };
 
   const optWind = {
     ...baseChart,
     title: { ...baseChart.title, text: "Vento" },
+    tooltip: {
+      trigger: "axis",
+      order: "seriesAsc",
+      formatter: (params) =>
+        axisTooltipFormatter(params, [
+          { name: "Raffica max", formatter: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} km/h`) },
+          { name: "Raffica media", formatter: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} km/h`) },
+          { name: "Vento medio", formatter: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} km/h`) },
+          { name: "Dir media", formatter: (v) => (v == null ? "—" : `${degToCardinal16(v)} (${Math.round(Number(v))}°)`) },
+        ]),
+    },
     yAxis: [
       {
         type: "value",
@@ -656,46 +728,38 @@ export default function YearOverviewPage(props) {
       },
       {
         type: "value",
-        name: "°",
-        nameLocation: "middle",
-        nameRotate: 270,
-        nameGap: 56,
+        name: "",
         min: 0,
         max: 360,
-        splitNumber: 5,
-        alignTicks: true,
-        axisLabel: { formatter: (v) => `${Math.round(Number(v))}` },
+        interval: 45,
+        axisLabel: {
+          formatter: (v) => degToCardinal16(v),
+        },
       },
     ],
-    tooltip: {
-      trigger: "axis",
-      formatter: (params) => {
-        const i = params?.[0]?.dataIndex ?? 0;
-        const mm = x[i] ?? "—";
-        const w = n(monthly[i]?.wind_mean);
-        const gm = n(monthly[i]?.gust_mean);
-        const gx = n(monthly[i]?.gust_max);
-        const dir = n(monthly[i]?.wind_dir_mean_deg);
-        return [
-          `<b>${mm}</b>`,
-          `Vento medio: ${Number.isFinite(w) ? w.toFixed(1) + " km/h" : "—"}`,
-          `Raffica media: ${Number.isFinite(gm) ? gm.toFixed(1) + " km/h" : "—"}`,
-          `Raffica max: ${Number.isFinite(gx) ? gx.toFixed(1) + " km/h" : "—"}`,
-          `Direzione media: ${Number.isFinite(dir) ? `${degToCardinal16(dir)} (${Math.round(dir)}°)` : "—"}`,
-        ].join("<br/>");
-      },
-    },
     series: [
-      { name: "Vento medio", type: "line", data: seriesLine(monthly.map((m) => m.wind_mean)), yAxisIndex: 0, showSymbol: false, connectNulls: false, lineStyle: { width: 2 } },
-      { name: "Raffica media", type: "line", data: seriesLine(monthly.map((m) => m.gust_mean)), yAxisIndex: 0, showSymbol: false, connectNulls: false, lineStyle: { width: 2 } },
-      { name: "Raffica max", type: "scatter", data: seriesLine(monthly.map((m) => m.gust_max)), yAxisIndex: 0, symbolSize: 7 },
-      { name: "Dir media", type: "scatter", data: seriesLine(monthly.map((m) => m.wind_dir_mean_deg)), yAxisIndex: 1, symbolSize: 7 },
+      { name: "Raffica max", type: "scatter", data: seriesLine(monthly.map((m) => m.gust_max)), yAxisIndex: 0, symbolSize: 7, itemStyle: { color: COLORS.red }, z: 5 },
+      { name: "Raffica media", type: "line", data: seriesLine(monthly.map((m) => m.gust_mean)), yAxisIndex: 0, showSymbol: false, connectNulls: false, lineStyle: { width: 2, color: "#a3c614" }, itemStyle: { color: "#a3c614" } },
+      { name: "Vento medio", type: "line", data: seriesLine(monthly.map((m) => m.wind_mean)), yAxisIndex: 0, showSymbol: false, connectNulls: false, lineStyle: { width: 2, color: "#4f6fd5" }, itemStyle: { color: "#4f6fd5" } },
+      { name: "Dir media", type: "scatter", data: seriesLine(monthly.map((m) => m.wind_dir_mean_deg)), yAxisIndex: 1, symbolSize: 7, itemStyle: { color: COLORS.windDir } },
     ],
   };
 
   const optPress = {
     ...baseChart,
     title: { ...baseChart.title, text: "Pressione" },
+    tooltip: {
+      trigger: "axis",
+      order: "seriesAsc",
+      formatter: (params) =>
+        axisTooltipFormatter(params, [
+          { name: "Max assoluta", formatter: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} hPa`) },
+          { name: "Max media", formatter: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} hPa`) },
+          { name: "Media", formatter: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} hPa`) },
+          { name: "Min media", formatter: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} hPa`) },
+          { name: "Min assoluta", formatter: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} hPa`) },
+        ]),
+    },
     yAxis: {
       type: "value",
       name: "hPa",
@@ -706,19 +770,28 @@ export default function YearOverviewPage(props) {
       splitNumber: 5,
       axisLabel: { formatter: (v) => Number(v).toFixed(0) },
     },
-    tooltip: { trigger: "axis", valueFormatter: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} hPa`) },
     series: [
-      { name: "Min media", type: "line", data: seriesLine(monthly.map((m) => m.press_min_mean)), showSymbol: false, connectNulls: false, lineStyle: { width: 2 } },
-      { name: "Media", type: "line", data: seriesLine(monthly.map((m) => m.press_mean)), showSymbol: false, connectNulls: false, lineStyle: { width: 2 } },
-      { name: "Max media", type: "line", data: seriesLine(monthly.map((m) => m.press_max_mean)), showSymbol: false, connectNulls: false, lineStyle: { width: 2 } },
-      { name: "Min assoluta", type: "scatter", data: seriesLine(monthly.map((m) => m.press_min_abs)), symbolSize: 7 },
-      { name: "Max assoluta", type: "scatter", data: seriesLine(monthly.map((m) => m.press_max_abs)), symbolSize: 7 },
+      { name: "Max assoluta", type: "scatter", data: seriesLine(monthly.map((m) => m.press_max_abs)), symbolSize: 7, itemStyle: { color: COLORS.red }, z: 5 },
+      { name: "Max media", type: "line", data: seriesLine(monthly.map((m) => m.press_max_mean)), showSymbol: false, connectNulls: false, lineStyle: { width: 2, color: COLORS.orange }, itemStyle: { color: COLORS.orange } },
+      { name: "Media", type: "line", data: seriesLine(monthly.map((m) => m.press_mean)), showSymbol: false, connectNulls: false, lineStyle: { width: 3, color: COLORS.grayDark }, itemStyle: { color: COLORS.grayDark }, z: 4 },
+      { name: "Min media", type: "line", data: seriesLine(monthly.map((m) => m.press_min_mean)), showSymbol: false, connectNulls: false, lineStyle: { width: 2, color: COLORS.blueLight }, itemStyle: { color: COLORS.blueLight } },
+      { name: "Min assoluta", type: "scatter", data: seriesLine(monthly.map((m) => m.press_min_abs)), symbolSize: 7, itemStyle: { color: COLORS.indigo } },
     ],
   };
 
   const optUv = {
     ...baseChart,
     title: { ...baseChart.title, text: "UV" },
+    tooltip: {
+      trigger: "axis",
+      order: "seriesAsc",
+      formatter: (params) =>
+        axisTooltipFormatter(params, [
+          { name: "UV max assoluto", formatter: (v) => (v == null ? "—" : `${Number(v).toFixed(1)}`) },
+          { name: "UV max medio", formatter: (v) => (v == null ? "—" : `${Number(v).toFixed(1)}`) },
+          { name: "UV medio", formatter: (v) => (v == null ? "—" : `${Number(v).toFixed(1)}`) },
+        ]),
+    },
     yAxis: {
       type: "value",
       name: "UV",
@@ -729,32 +802,26 @@ export default function YearOverviewPage(props) {
       splitNumber: 5,
       axisLabel: { formatter: (v) => Number(v).toFixed(1) },
     },
-    tooltip: {
-      trigger: "axis",
-      formatter: (params) => {
-        const i = params?.[0]?.dataIndex ?? 0;
-        const mm = x[i] ?? "—";
-        const uvM = n(monthly[i]?.uv_mean);
-        const uvXmean = n(monthly[i]?.uv_max_mean);
-        const uvX = n(monthly[i]?.uv_max);
-        return [
-          `<b>${mm}</b>`,
-          `UV medio: ${Number.isFinite(uvM) ? uvM.toFixed(1) : "—"}`,
-          `UV max medio: ${Number.isFinite(uvXmean) ? uvXmean.toFixed(1) : "—"}`,
-          `UV max assoluto: ${Number.isFinite(uvX) ? uvX.toFixed(1) : "—"}`,
-        ].join("<br/>");
-      },
-    },
     series: [
-      { name: "UV medio", type: "line", data: seriesLine(monthly.map((m) => m.uv_mean)), showSymbol: false, connectNulls: false, lineStyle: { width: 2 } },
-      { name: "UV max medio", type: "line", data: seriesLine(monthly.map((m) => m.uv_max_mean)), showSymbol: false, connectNulls: false, lineStyle: { width: 2 } },
-      { name: "UV max assoluto", type: "scatter", data: seriesLine(monthly.map((m) => m.uv_max)), symbolSize: 7 },
+      { name: "UV max assoluto", type: "scatter", data: seriesLine(monthly.map((m) => m.uv_max)), symbolSize: 7, itemStyle: { color: COLORS.red }, z: 5 },
+      { name: "UV max medio", type: "line", data: seriesLine(monthly.map((m) => m.uv_max_mean)), showSymbol: false, connectNulls: false, lineStyle: { width: 2, color: COLORS.orange }, itemStyle: { color: COLORS.orange } },
+      { name: "UV medio", type: "line", data: seriesLine(monthly.map((m) => m.uv_mean)), showSymbol: false, connectNulls: false, lineStyle: { width: 3, color: COLORS.grayDark }, itemStyle: { color: COLORS.grayDark } },
     ],
   };
 
   const optSolar = {
     ...baseChart,
     title: { ...baseChart.title, text: "Radiazione" },
+    tooltip: {
+      trigger: "axis",
+      order: "seriesAsc",
+      formatter: (params) =>
+        axisTooltipFormatter(params, [
+          { name: "Rad max assoluta", formatter: (v) => (v == null ? "—" : `${Math.round(Number(v))} W/m²`) },
+          { name: "Rad max media", formatter: (v) => (v == null ? "—" : `${Math.round(Number(v))} W/m²`) },
+          { name: "Rad media", formatter: (v) => (v == null ? "—" : `${Math.round(Number(v))} W/m²`) },
+        ]),
+    },
     yAxis: {
       type: "value",
       name: "W/m²",
@@ -765,26 +832,10 @@ export default function YearOverviewPage(props) {
       splitNumber: 5,
       axisLabel: { formatter: (v) => `${Math.round(Number(v))}` },
     },
-    tooltip: {
-      trigger: "axis",
-      formatter: (params) => {
-        const i = params?.[0]?.dataIndex ?? 0;
-        const mm = x[i] ?? "—";
-        const sM = n(monthly[i]?.solar_mean);
-        const sXmean = n(monthly[i]?.solar_max_mean);
-        const sX = n(monthly[i]?.solar_max);
-        return [
-          `<b>${mm}</b>`,
-          `Rad media: ${Number.isFinite(sM) ? Math.round(sM) + " W/m²" : "—"}`,
-          `Rad max media: ${Number.isFinite(sXmean) ? Math.round(sXmean) + " W/m²" : "—"}`,
-          `Rad max assoluta: ${Number.isFinite(sX) ? Math.round(sX) + " W/m²" : "—"}`,
-        ].join("<br/>");
-      },
-    },
     series: [
-      { name: "Rad media", type: "line", data: seriesLine(monthly.map((m) => m.solar_mean)), showSymbol: false, connectNulls: false, lineStyle: { width: 2 } },
-      { name: "Rad max media", type: "line", data: seriesLine(monthly.map((m) => m.solar_max_mean)), showSymbol: false, connectNulls: false, lineStyle: { width: 2 } },
-      { name: "Rad max assoluta", type: "scatter", data: seriesLine(monthly.map((m) => m.solar_max)), symbolSize: 7 },
+      { name: "Rad max assoluta", type: "scatter", data: seriesLine(monthly.map((m) => m.solar_max)), symbolSize: 7, itemStyle: { color: COLORS.red }, z: 5 },
+      { name: "Rad max media", type: "line", data: seriesLine(monthly.map((m) => m.solar_max_mean)), showSymbol: false, connectNulls: false, lineStyle: { width: 2, color: COLORS.orange }, itemStyle: { color: COLORS.orange } },
+      { name: "Rad media", type: "line", data: seriesLine(monthly.map((m) => m.solar_mean)), showSymbol: false, connectNulls: false, lineStyle: { width: 3, color: COLORS.grayDark }, itemStyle: { color: COLORS.grayDark } },
     ],
   };
 
@@ -792,15 +843,71 @@ export default function YearOverviewPage(props) {
     <SiteLayout headerProps={{}}>
       <div className="wrap">
         <header className="hero">
-          <div className="heroTop">
-            <div className="heroLeft">
+          <div className="yearTopRow">
+            <div className="yearBlock">
               <div className="kicker">Anno</div>
-              <h1 className="year">{year}</h1>
+              <div className="yearAndNav">
+                <h1 className="year">{year}</h1>
+
+                <div className="yearNav">
+                  {prevYear ? (
+                    <Link href={`/anni/${prevYear}`} className="yearNavLink">
+                      <span className="navArrow">←</span>
+                      <span>Precedente</span>
+                    </Link>
+                  ) : (
+                    <span className="yearNavLink disabled">
+                      <span className="navArrow">←</span>
+                      <span>Precedente</span>
+                    </span>
+                  )}
+
+                  <div className="yearSelectWrap">
+                    <label htmlFor="year-select" className="srOnly">
+                      Seleziona anno
+                    </label>
+                    <select
+                      id="year-select"
+                      className="yearSelect"
+                      value={year}
+                      onChange={(e) => {
+                        const nextValue = e.target.value;
+                        if (nextValue && nextValue !== year) {
+                          router.push(`/anni/${nextValue}`);
+                        }
+                      }}
+                    >
+                      {allYears.map((y) => (
+                        <option key={y} value={y}>
+                          {y}
+                        </option>
+                      ))}
+                    </select>
+                    <span className="yearSelectLabel">Seleziona anno</span>
+                    <span className="yearSelectArrow" aria-hidden="true">
+                      ▾
+                    </span>
+                  </div>
+
+                  {nextYear ? (
+                    <Link href={`/anni/${nextYear}`} className="yearNavLink">
+                      <span>Successivo</span>
+                      <span className="navArrow">→</span>
+                    </Link>
+                  ) : (
+                    <span className="yearNavLink disabled">
+                      <span>Successivo</span>
+                      <span className="navArrow">→</span>
+                    </span>
+                  )}
+                </div>
+              </div>
             </div>
           </div>
 
           <section className="monthsBar" aria-label="Seleziona mese">
             <div className="monthsBarHead">Seleziona mese</div>
+
             <nav className="monthNav">
               {monthsInYear.map((ym) => {
                 const mm = monthNum(ym);
@@ -830,117 +937,119 @@ export default function YearOverviewPage(props) {
               </div>
             </div>
 
-            <div className="summaryGridCompact">
-              <div className="miniCard">
-                <div className="miniTitle">Temperature</div>
-                <div className="miniMain threeCols">
-                  <div>
-                    <span className="miniKey">Max media</span>
+            <div className="summaryRows">
+              <div className="summaryRow">
+                <div className="summaryLabel">Temperature</div>
+                <div className="summaryMetrics three">
+                  <div className="summaryMetric">
+                    <span className="summaryKey">Max media</span>
                     <strong>{fmt(annual.tmax_mean, 1)} °C</strong>
                   </div>
-                  <div>
-                    <span className="miniKey">Media</span>
+                  <div className="summaryMetric">
+                    <span className="summaryKey">Media</span>
                     <strong>{fmt(annual.tmean, 1)} °C</strong>
                   </div>
-                  <div>
-                    <span className="miniKey">Min media</span>
+                  <div className="summaryMetric">
+                    <span className="summaryKey">Min media</span>
                     <strong>{fmt(annual.tmin_mean, 1)} °C</strong>
                   </div>
                 </div>
               </div>
 
-              <div className="miniCard">
-                <div className="miniTitle">Precipitazioni</div>
-                <div className="miniMain twoCols">
-                  <div>
-                    <span className="miniKey">Totale</span>
+              <div className="summaryRow">
+                <div className="summaryLabel">Precipitazioni</div>
+                <div className="summaryMetrics two">
+                  <div className="summaryMetric">
+                    <span className="summaryKey">Totale</span>
                     <strong>{fmt(annual.rainSum, 1)} mm</strong>
                   </div>
-                  <div>
-                    <span className="miniKey">Giorni &gt; 1 mm</span>
+                  <div className="summaryMetric">
+                    <span className="summaryKey">Giorni &gt; 1 mm</span>
                     <strong>{fmtInt(annual.rainyDays)}</strong>
                   </div>
                 </div>
               </div>
 
-              <div className="miniCard">
-                <div className="miniTitle">Umidità</div>
-                <div className="miniMain threeCols">
-                  <div>
-                    <span className="miniKey">Max media</span>
+              <div className="summaryRow">
+                <div className="summaryLabel">Umidità</div>
+                <div className="summaryMetrics three">
+                  <div className="summaryMetric">
+                    <span className="summaryKey">Max media</span>
                     <strong>{fmtInt(annual.rh_max_mean)} %</strong>
                   </div>
-                  <div>
-                    <span className="miniKey">Media</span>
+                  <div className="summaryMetric">
+                    <span className="summaryKey">Media</span>
                     <strong>{fmtInt(annual.rh_mean)} %</strong>
                   </div>
-                  <div>
-                    <span className="miniKey">Min media</span>
+                  <div className="summaryMetric">
+                    <span className="summaryKey">Min media</span>
                     <strong>{fmtInt(annual.rh_min_mean)} %</strong>
                   </div>
                 </div>
               </div>
 
-              <div className="miniCard">
-                <div className="miniTitle">Vento</div>
-                <div className="miniMain threeCols">
-                  <div>
-                    <span className="miniKey">Medio</span>
+              <div className="summaryRow">
+                <div className="summaryLabel">Vento</div>
+                <div className="summaryMetrics three">
+                  <div className="summaryMetric">
+                    <span className="summaryKey">Medio</span>
                     <strong>{fmt(annual.wind_mean, 1)} km/h</strong>
                   </div>
-                  <div>
-                    <span className="miniKey">Raffica media</span>
+                  <div className="summaryMetric">
+                    <span className="summaryKey">Raffica media</span>
                     <strong>{fmt(annual.gust_mean, 1)} km/h</strong>
                   </div>
-                  <div>
-                    <span className="miniKey">Direzione media</span>
+                  <div className="summaryMetric">
+                    <span className="summaryKey">Direzione media</span>
                     <strong>{dirTxt}</strong>
                   </div>
                 </div>
               </div>
 
-              <div className="miniCard">
-                <div className="miniTitle">Pressione</div>
-                <div className="miniMain threeCols">
-                  <div>
-                    <span className="miniKey">Max media</span>
+              <div className="summaryRow">
+                <div className="summaryLabel">Pressione</div>
+                <div className="summaryMetrics three">
+                  <div className="summaryMetric">
+                    <span className="summaryKey">Max media</span>
                     <strong>{fmt(annual.press_max_mean, 1)} hPa</strong>
                   </div>
-                  <div>
-                    <span className="miniKey">Media</span>
+                  <div className="summaryMetric">
+                    <span className="summaryKey">Media</span>
                     <strong>{fmt(annual.press_mean, 1)} hPa</strong>
                   </div>
-                  <div>
-                    <span className="miniKey">Min media</span>
+                  <div className="summaryMetric">
+                    <span className="summaryKey">Min media</span>
                     <strong>{fmt(annual.press_min_mean, 1)} hPa</strong>
                   </div>
                 </div>
               </div>
 
-              <div className="miniCard">
-                <div className="miniTitle">UV</div>
-                <div className="miniMain twoCols">
-                  <div>
-                    <span className="miniKey">UV medio</span>
-                    <strong>{fmt(annual.uv_mean, 1)}</strong>
-                  </div>
-                  <div>
-                    <span className="miniKey">UV max medio</span>
-                    <strong>{fmt(annual.uv_max_mean, 1)}</strong>
+              <div className="summaryRow dual">
+                <div className="summaryHalf">
+                  <div className="summaryLabel">UV</div>
+                  <div className="summaryMetrics two">
+                    <div className="summaryMetric">
+                      <span className="summaryKey">UV medio</span>
+                      <strong>{fmt(annual.uv_mean, 1)}</strong>
+                    </div>
+                    <div className="summaryMetric">
+                      <span className="summaryKey">UV max medio</span>
+                      <strong>{fmt(annual.uv_max_mean, 1)}</strong>
+                    </div>
                   </div>
                 </div>
-              </div>
 
-              <div className="miniCard">
-                <div className="miniTitle">Radiazione</div>
-                <div className="miniMain twoCols">
-                  <div>
-                    <span className="miniKey">Rad media</span>
-                    <strong>{Number.isFinite(n(annual.solar_mean)) ? `${Math.round(n(annual.solar_mean))} W/m²` : "—"}</strong>
-                  </div>
-                  <div>
-                    <span className="miniKey">Rad max media</span>
-                    <strong>{Number.isFinite(n(annual.solar_max_mean)) ? `${Math.round(n(annual.solar_max_mean))} W/m²` : "—"}</strong>
+                <div className="summaryHalf">
+                  <div className="summaryLabel">Radiazione</div>
+                  <div className="summaryMetrics two">
+                    <div className="summaryMetric">
+                      <span className="summaryKey">Rad media</span>
+                      <strong>{Number.isFinite(n(annual.solar_mean)) ? `${Math.round(n(annual.solar_mean))} W/m²` : "—"}</strong>
+                    </div>
+                    <div className="summaryMetric">
+                      <span className="summaryKey">Rad max media</span>
+                      <strong>{Number.isFinite(n(annual.solar_max_mean)) ? `${Math.round(n(annual.solar_max_mean))} W/m²` : "—"}</strong>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -960,7 +1069,10 @@ export default function YearOverviewPage(props) {
 
             {showRecords && (
               <div id="records-year-table" className="recordsWrap">
-                <div className="recordsHead">Record anno {year}</div>
+                <div className="recordsTop">
+                  <div className="recordsHead">Record anno {year}</div>
+                  <div className="recordsSub">Estremi e picchi principali dell&apos;anno con collegamento diretto al giorno.</div>
+                </div>
 
                 <div className="recordsTableWrap">
                   <table className="recordsTable">
@@ -978,7 +1090,10 @@ export default function YearOverviewPage(props) {
                         <tr key={r.label}>
                           <td className="recordName">{r.label}</td>
 
-                          <td>{r.min ? `${fmt(r.min.value, 1)}${r.unit ? ` ${r.unit}` : ""}` : "—"}</td>
+                          <td>
+                            {r.min ? `${fmt(r.min.value, 1)}${r.unit ? ` ${r.unit}` : ""}` : "—"}
+                            {r.minLabel ? <span className="recordNote">{r.minLabel}</span> : null}
+                          </td>
                           <td>
                             {r.min?.date ? (
                               <Link href={dayHref(r.min.date)} className="dateLink">
@@ -989,7 +1104,10 @@ export default function YearOverviewPage(props) {
                             )}
                           </td>
 
-                          <td>{r.max ? `${fmt(r.max.value, 1)}${r.unit ? ` ${r.unit}` : ""}` : "—"}</td>
+                          <td>
+                            {r.max ? `${fmt(r.max.value, 1)}${r.unit ? ` ${r.unit}` : ""}` : "—"}
+                            {r.maxLabel ? <span className="recordNote">{r.maxLabel}</span> : null}
+                          </td>
                           <td>
                             {r.max?.date ? (
                               <Link href={dayHref(r.max.date)} className="dateLink">
@@ -1011,32 +1129,36 @@ export default function YearOverviewPage(props) {
 
         {mounted && (
           <section className="charts2">
-            <div className="chartBox">
+            <div className="chartBox chartBoxWide">
               <ReactECharts option={optTemp} style={{ height: 340, width: "100%" }} />
             </div>
+
             <div className="chartBox">
               <ReactECharts option={optRain} style={{ height: 340, width: "100%" }} />
             </div>
-
             <div className="chartBox">
               <ReactECharts option={optRh} style={{ height: 340, width: "100%" }} />
             </div>
+
             <div className="chartBox">
               <ReactECharts option={optWind} style={{ height: 340, width: "100%" }} />
             </div>
-
             <div className="chartBox">
               <ReactECharts option={optPress} style={{ height: 340, width: "100%" }} />
             </div>
+
             <div className="chartBox">
               <ReactECharts option={optUv} style={{ height: 340, width: "100%" }} />
             </div>
-
-            <div className="chartBox chartBoxWide">
+            <div className="chartBox">
               <ReactECharts option={optSolar} style={{ height: 340, width: "100%" }} />
             </div>
           </section>
         )}
+
+        <section className="monthsTableHead">
+          <div className="monthsTableTitle">Seleziona mese</div>
+        </section>
 
         <section className="tableWrap">
           <table>
@@ -1204,16 +1326,15 @@ export default function YearOverviewPage(props) {
             padding: 22px;
           }
 
-          .heroTop {
+          .yearTopRow {
             display: flex;
             justify-content: space-between;
-            gap: 16px;
             align-items: flex-start;
+            gap: 18px;
           }
 
-          .heroLeft {
-            flex: 1;
-            min-width: 0;
+          .yearBlock {
+            width: 100%;
           }
 
           .kicker {
@@ -1224,6 +1345,14 @@ export default function YearOverviewPage(props) {
             margin-bottom: 8px;
           }
 
+          .yearAndNav {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 24px;
+            flex-wrap: wrap;
+          }
+
           .year {
             margin: 0;
             font-size: 68px;
@@ -1231,21 +1360,141 @@ export default function YearOverviewPage(props) {
             letter-spacing: -0.04em;
           }
 
+          .yearNav {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+          }
+
+          .yearNavLink {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            text-decoration: none;
+            color: #111827;
+            font-weight: 700;
+            padding: 10px 12px;
+            border-radius: 999px;
+            background: #fff;
+            border: 1px solid #e5e7eb;
+            transition: background 120ms ease, transform 120ms ease, box-shadow 120ms ease;
+          }
+
+          .yearNavLink:hover {
+            background: #f8fafc;
+            transform: translateY(-1px);
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.06);
+          }
+
+          .yearNavLink.disabled {
+            opacity: 0.45;
+            pointer-events: none;
+          }
+
+          .navArrow {
+            font-size: 14px;
+            line-height: 1;
+          }
+
+          .yearSelectWrap {
+            position: relative;
+            display: inline-flex;
+            align-items: center;
+            min-width: 190px;
+            border-radius: 999px;
+            background: linear-gradient(180deg, #ffffff, #f8fafc);
+            border: 1px solid #e5e7eb;
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+            overflow: hidden;
+          }
+
+	  .yearSelect {
+	    appearance: none;
+	    -webkit-appearance: none;
+	    -moz-appearance: none;
+	    width: 100%;
+	    min-width: 190px;
+	    height: 46px;
+	    padding: 0 40px 0 18px;
+	    border: 0;
+	    background: transparent;
+	    color: transparent;
+	    cursor: pointer;
+	    position: relative;
+	    z-index: 3;
+
+	    /* forza il menu nativo in stile chiaro */
+	    color-scheme: light;
+	  }
+
+	  .yearSelect:focus {
+	    outline: none;
+	  }
+
+	  /* testo del menu a tendina */
+	  .yearSelect option,
+	  .yearSelect optgroup {
+	    color: #111111;
+	    background: #ffffff;
+	  }
+
+	  .yearSelectWrap:focus-within {
+	    box-shadow: 0 0 0 2px rgba(15, 23, 42, 0.08),
+	      inset 0 1px 0 rgba(255, 255, 255, 0.9);
+	  }
+
+	  .yearSelectLabel {
+	    position: absolute;
+	    inset: 0;
+	    display: inline-flex;
+	    align-items: center;
+	    justify-content: center;
+	    padding: 0 42px 0 18px;
+	    pointer-events: none;
+	    font-weight: 900;
+	    font-size: 15px;
+	    color: #0f172a;
+	    z-index: 1;
+	  }
+          .yearSelectArrow {
+            position: absolute;
+            right: 16px;
+            top: 50%;
+            transform: translateY(-50%);
+            pointer-events: none;
+            font-size: 13px;
+            color: #475569;
+            z-index: 2;
+          }
+
+          .srOnly {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            white-space: nowrap;
+            border: 0;
+          }
+
           .monthsBar {
             margin-top: 18px;
             border: 1px solid #ececec;
             border-radius: 16px;
             background: #fcfcfc;
-            padding: 14px 16px;
+            padding: 16px 16px 14px;
           }
 
           .monthsBarHead {
-            font-size: 12px;
-            letter-spacing: 0.08em;
+            font-size: 13px;
+            letter-spacing: 0.12em;
             text-transform: uppercase;
-            color: #666;
+            color: #374151;
             font-weight: 900;
-            margin-bottom: 12px;
+            margin-bottom: 14px;
             text-align: center;
           }
 
@@ -1298,7 +1547,7 @@ export default function YearOverviewPage(props) {
           .summaryCompact {
             margin-top: 18px;
             border-top: 1px solid #efefef;
-            padding-top: 16px;
+            padding-top: 18px;
           }
 
           .summaryHead {
@@ -1306,7 +1555,7 @@ export default function YearOverviewPage(props) {
             align-items: flex-end;
             justify-content: space-between;
             gap: 14px;
-            margin-bottom: 14px;
+            margin-bottom: 16px;
           }
 
           .summaryHead h2 {
@@ -1325,57 +1574,85 @@ export default function YearOverviewPage(props) {
             font-weight: 700;
           }
 
-          .summaryGridCompact {
+          .summaryRows {
             display: grid;
-            grid-template-columns: repeat(2, 1fr);
             gap: 10px;
           }
 
-          .miniCard {
+          .summaryRow {
+            display: grid;
+            grid-template-columns: 190px 1fr;
+            gap: 14px;
+            align-items: stretch;
             border: 1px solid #ececec;
-            border-radius: 14px;
+            border-radius: 16px;
             background: #fcfcfc;
-            padding: 12px 13px;
+            padding: 14px 16px;
           }
 
-          .miniTitle {
-            font-size: 12px;
-            letter-spacing: 0.08em;
+          .summaryRow.dual {
+            grid-template-columns: 1fr 1fr;
+            padding: 0;
+            border: 0;
+            background: transparent;
+          }
+
+          .summaryHalf {
+            display: grid;
+            grid-template-columns: 190px 1fr;
+            gap: 14px;
+            align-items: stretch;
+            border: 1px solid #ececec;
+            border-radius: 16px;
+            background: #fcfcfc;
+            padding: 14px 16px;
+          }
+
+          .summaryLabel {
+            display: flex;
+            align-items: center;
+            font-size: 15px;
+            letter-spacing: 0.12em;
             text-transform: uppercase;
-            color: #666;
+            color: #4b5563;
             font-weight: 900;
-            margin-bottom: 10px;
+            padding-right: 8px;
+            border-right: 1px solid #ececec;
           }
 
-          .miniMain {
+          .summaryMetrics {
             display: grid;
             gap: 10px;
-            align-items: start;
+            align-items: center;
           }
 
-          .miniMain.threeCols {
-            grid-template-columns: repeat(3, 1fr);
+          .summaryMetrics.three {
+            grid-template-columns: repeat(3, minmax(0, 1fr));
           }
 
-          .miniMain.twoCols {
-            grid-template-columns: repeat(2, 1fr);
+          .summaryMetrics.two {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
           }
 
-          .miniKey {
+          .summaryMetric {
+            min-width: 0;
+          }
+
+          .summaryKey {
             display: block;
-            font-size: 11px;
-            color: #6f6f6f;
+            font-size: 10px;
+            color: #6b7280;
             font-weight: 800;
-            margin-bottom: 4px;
+            margin-bottom: 5px;
             text-transform: uppercase;
-            letter-spacing: 0.04em;
+            letter-spacing: 0.05em;
           }
 
-          .miniMain strong {
+          .summaryMetric strong {
             display: block;
-            font-size: 22px;
+            font-size: 19px;
             line-height: 1.05;
-            font-weight: 950;
+            font-weight: 900;
             letter-spacing: -0.02em;
             color: #0f172a;
           }
@@ -1412,17 +1689,30 @@ export default function YearOverviewPage(props) {
           .recordsWrap {
             margin-top: 14px;
             border: 1px solid #e8ebf2;
-            border-radius: 16px;
-            background: #fff;
+            border-radius: 20px;
+            background: linear-gradient(180deg, #ffffff, #fbfdff);
             overflow: hidden;
+            box-shadow: 0 12px 28px rgba(15, 23, 42, 0.05);
+          }
+
+          .recordsTop {
+            padding: 16px 18px 12px;
+            background: linear-gradient(180deg, #f8fbff, #f4f7fb);
+            border-bottom: 1px solid #e8eef5;
           }
 
           .recordsHead {
-            padding: 12px 14px;
-            background: #f8fafc;
-            border-bottom: 1px solid #eceff5;
-            font-weight: 900;
-            letter-spacing: 0.02em;
+            font-weight: 950;
+            letter-spacing: -0.02em;
+            font-size: 18px;
+            color: #0f172a;
+          }
+
+          .recordsSub {
+            margin-top: 4px;
+            font-size: 12px;
+            color: #64748b;
+            font-weight: 600;
           }
 
           .recordsTableWrap {
@@ -1437,28 +1727,42 @@ export default function YearOverviewPage(props) {
 
           .recordsTable th,
           .recordsTable td {
-            padding: 11px 14px;
-            border-bottom: 1px solid #f0f2f6;
+            padding: 13px 16px;
+            border-bottom: 1px solid #edf2f7;
             text-align: left;
             font-size: 13px;
             white-space: nowrap;
+            vertical-align: top;
           }
 
           .recordsTable th {
             font-size: 11px;
             text-transform: uppercase;
-            letter-spacing: 0.08em;
-            color: #667085;
-            background: #fff;
+            letter-spacing: 0.1em;
+            color: #7c879b;
+            background: #ffffff;
           }
 
           .recordsTable tbody tr:nth-child(even) td {
-            background: #fcfcfd;
+            background: #fcfdff;
+          }
+
+          .recordsTable tbody tr:hover td {
+            background: #f8fbff;
           }
 
           .recordName {
-            font-weight: 800;
+            font-weight: 850;
             color: #0f172a;
+          }
+
+          .recordNote {
+            display: block;
+            margin-top: 5px;
+            font-size: 11px;
+            line-height: 1.2;
+            color: #64748b;
+            font-weight: 700;
           }
 
           .dateLink {
@@ -1489,8 +1793,29 @@ export default function YearOverviewPage(props) {
             grid-column: 1 / -1;
           }
 
+          .monthsTableHead {
+            margin-top: 16px;
+            display: flex;
+            justify-content: center;
+          }
+
+          .monthsTableTitle {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 11px 22px;
+            min-width: 180px;
+            border-radius: 999px;
+            background: linear-gradient(180deg, #ffffff, #f8fafc);
+            border: 1px solid #e5e7eb;
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+            font-weight: 900;
+            font-size: 15px;
+            color: #0f172a;
+          }
+
           .tableWrap {
-            margin-top: 12px;
+            margin-top: 10px;
             border: 1px solid #e7e7e7;
             border-radius: 16px;
             overflow: auto;
@@ -1635,7 +1960,22 @@ export default function YearOverviewPage(props) {
           }
 
           @media (max-width: 1100px) {
-            .summaryGridCompact {
+            .summaryRow {
+              grid-template-columns: 1fr;
+            }
+
+            .summaryHalf {
+              grid-template-columns: 1fr;
+            }
+
+            .summaryLabel {
+              border-right: 0;
+              border-bottom: 1px solid #ececec;
+              padding-right: 0;
+              padding-bottom: 10px;
+            }
+
+            .summaryRow.dual {
               grid-template-columns: 1fr;
             }
 
@@ -1646,16 +1986,32 @@ export default function YearOverviewPage(props) {
             .chartBoxWide {
               grid-column: auto;
             }
+
+            .yearAndNav {
+              align-items: flex-start;
+            }
           }
 
           @media (max-width: 720px) {
-            .miniMain.threeCols,
-            .miniMain.twoCols {
+            .summaryMetrics.three,
+            .summaryMetrics.two {
               grid-template-columns: 1fr;
             }
 
             .monthNav {
               gap: 8px;
+            }
+
+            .yearNav {
+              width: 100%;
+            }
+
+            .yearSelectWrap {
+              width: 100%;
+            }
+
+            .yearSelect {
+              min-width: 100%;
             }
           }
 
@@ -1669,7 +2025,7 @@ export default function YearOverviewPage(props) {
               padding: 7px 10px;
             }
 
-            .miniMain strong {
+            .summaryMetric strong {
               font-size: 20px;
             }
           }

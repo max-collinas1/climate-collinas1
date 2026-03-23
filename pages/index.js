@@ -16,6 +16,7 @@ function readDaily() {
 }
 
 function n(x) {
+  if (x === null || x === undefined || x === "") return NaN;
   const v = Number(x);
   return Number.isFinite(v) ? v : NaN;
 }
@@ -50,13 +51,6 @@ function clamp01(x) {
   return Math.max(0, Math.min(1, x));
 }
 
-function fmtSigned(x, d = 1) {
-  const v = n(x);
-  if (!Number.isFinite(v)) return "—";
-  const s = v > 0 ? "+" : "";
-  return `${s}${v.toFixed(d)}`;
-}
-
 function pad2(x) {
   return String(x).padStart(2, "0");
 }
@@ -65,7 +59,6 @@ function dateToISO(d) {
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 }
 
-// direzione vento: N, NE, E, SE, S, SW, W, NW
 function degToCardinal8(v) {
   const nn = Number(v);
   if (!Number.isFinite(nn)) return "";
@@ -74,7 +67,6 @@ function degToCardinal8(v) {
   return ["N", "NE", "E", "SE", "S", "SW", "W", "NW"][ix];
 }
 
-// assi "nice"
 function niceStep(range, targetTicks = 6) {
   if (!Number.isFinite(range) || range <= 0) return 1;
   const rough = range / targetTicks;
@@ -102,7 +94,6 @@ function axisNice(min, max, targetTicks = 6) {
   return { min: niceMin, max: niceMax, interval };
 }
 
-// dataZoom per grafico settimanale (time axis)
 function makeWeekDataZoom() {
   return [
     {
@@ -125,12 +116,6 @@ function makeWeekDataZoom() {
   ];
 }
 
-/**
- * Ultimi 7 giorni CONSECUTIVI presenti nel daily.
- * - Non richiede Lun→Dom
- * - Cerca una finestra di 7 giorni consecutivi terminante su lastDateISO.
- * - Se manca anche 1 giorno, scorre indietro di 1 giorno e riprova.
- */
 function findLast7ConsecutiveISO(datesSet, lastDateISO) {
   if (!lastDateISO) return [];
 
@@ -161,6 +146,65 @@ function findLast7ConsecutiveISO(datesSet, lastDateISO) {
   return [];
 }
 
+// -------------------- helpers per dati daily --------------------
+function dailyTempField(row, field) {
+  const v = n(row?.[field]);
+  if (!Number.isFinite(v)) return NaN;
+
+  const tmin = n(row?.tmin);
+  const tmax = n(row?.tmax);
+  const tmean = n(row?.tmean);
+  const tempVals = [tmin, tmax, tmean].filter(Number.isFinite);
+
+  if (!tempVals.length) return NaN;
+
+  const hasSomeNonZeroTemp = tempVals.some((x) => Math.abs(x) > 0.001);
+
+  if (!hasSomeNonZeroTemp && Math.abs(v) <= 0.001) return NaN;
+
+  return v;
+}
+
+function dailyTmin(row) {
+  return dailyTempField(row, "tmin");
+}
+
+function dailyTmax(row) {
+  return dailyTempField(row, "tmax");
+}
+
+function dailyTmean(row) {
+  const raw = n(row?.tmean);
+  const tmin = dailyTmin(row);
+  const tmax = dailyTmax(row);
+  const mid =
+    Number.isFinite(tmin) && Number.isFinite(tmax) ? (tmin + tmax) / 2 : NaN;
+
+  if (Number.isFinite(raw)) {
+    if (
+      Math.abs(raw) <= 0.001 &&
+      Number.isFinite(mid) &&
+      Math.abs(mid) > 0.25
+    ) {
+      return mid;
+    }
+    return raw;
+  }
+
+  if (Number.isFinite(mid)) return mid;
+  return NaN;
+}
+
+function dailyRain(row) {
+  const v = n(row?.rain_total);
+  return Number.isFinite(v) ? v : NaN;
+}
+
+function dailyGust(row) {
+  const v = n(row?.gust_max);
+  return Number.isFinite(v) ? v : NaN;
+}
+
 // -------------------- getStaticProps --------------------
 export async function getStaticProps() {
   const rows = readDaily().sort((a, b) =>
@@ -184,26 +228,23 @@ export async function getStaticProps() {
 
   const yearStats = years.map((y) => {
     const d = byYear.get(y) || [];
-    const tmins = d.map((x) => n(x?.tmin)).filter(Number.isFinite);
-    const tmaxs = d.map((x) => n(x?.tmax)).filter(Number.isFinite);
-    const tmeans = d.map((x) => n(x?.tmean)).filter(Number.isFinite);
-    const rains = d.map((x) => n(x?.rain_total)).filter(Number.isFinite);
-    const gusts = d.map((x) => n(x?.gust_max)).filter(Number.isFinite);
+    const tmins = d.map((x) => dailyTmin(x)).filter(Number.isFinite);
+    const tmaxs = d.map((x) => dailyTmax(x)).filter(Number.isFinite);
+    const tmeans = d.map((x) => dailyTmean(x)).filter(Number.isFinite);
+    const rains = d.map((x) => dailyRain(x)).filter(Number.isFinite);
+    const gusts = d.map((x) => dailyGust(x)).filter(Number.isFinite);
 
     return {
       year: y,
       ndays: d.length,
-      tmin: tmins.length ? Math.min(...tmins) : NaN,
-      tmax: tmaxs.length ? Math.max(...tmaxs) : NaN,
-      tmean: avg(tmeans),
-      rain: sum(rains),
+      tmin: tmins.length ? Math.min(...tmins) : null,
+      tmax: tmaxs.length ? Math.max(...tmaxs) : null,
+      tmean: Number.isFinite(avg(tmeans)) ? avg(tmeans) : null,
+      rain: rains.length ? sum(rains) : null,
       rainyDays: rains.filter((x) => x > 0).length,
-      gustMax: gusts.length ? Math.max(...gusts) : NaN,
+      gustMax: gusts.length ? Math.max(...gusts) : null,
     };
   });
-
-  const allTmean = yearStats.map((y) => n(y.tmean)).filter(Number.isFinite);
-  const overallTmean = avg(allTmean);
 
   const rainVals = yearStats.map((y) => n(y.rain)).filter(Number.isFinite);
   const rainMin = rainVals.length ? Math.min(...rainVals) : 0;
@@ -228,14 +269,22 @@ export async function getStaticProps() {
     weekDates = uniqSorted.slice(-7);
   }
 
+  const weekDailyRain = {};
+  for (const d of weekDates) {
+    const row = rows.find((r) => String(r?.date || "").slice(0, 10) === d);
+    weekDailyRain[d] = Number.isFinite(dailyRain(row))
+      ? round1(dailyRain(row))
+      : null;
+  }
+
   return {
     props: {
       start,
       end,
       yearStats,
-      overallTmean,
       norm: { rainMin, rainMax, tmeanMin, tmeanMax },
       weekDates,
+      weekDailyRain,
     },
     revalidate: 300,
   };
@@ -245,9 +294,9 @@ export default function Home({
   yearStats = [],
   start = null,
   end = null,
-  overallTmean = NaN,
   norm = { rainMin: 0, rainMax: 0, tmeanMin: 0, tmeanMax: 0 },
   weekDates = [],
+  weekDailyRain = {},
 }) {
   const [q, setQ] = useState("");
 
@@ -274,12 +323,16 @@ export default function Home({
         subtitle: "Dati storici della stazione, organizzati per anno e mese.",
         start,
         end,
-        showPeriod: true,
+        showPeriod: false,
         currentPath: "/",
       }}
     >
       <div className="weekWrap">
-        <WeekChart weekDates={weekDates} weekLabel={weekLabel} />
+        <WeekChart
+          weekDates={weekDates}
+          weekLabel={weekLabel}
+          weekDailyRain={weekDailyRain}
+        />
       </div>
 
       <section className="section">
@@ -308,18 +361,13 @@ export default function Home({
 
         <div className="grid">
           {filtered.map((y) => (
-            <YearCard
-              key={y.year}
-              y={y}
-              overallTmean={overallTmean}
-              norm={norm}
-            />
+            <YearCard key={y.year} y={y} norm={norm} />
           ))}
 
           {!yearStats.length && (
             <div className="empty">
-              Nessun dato ancora. Metti i CSV in <code>data_raw/clean/AAAA</code> e
-              lancia <code>node ./scripts/build-data.js</code>.
+              Nessun dato ancora. Metti i CSV in <code>data_raw/clean/AAAA</code>{" "}
+              e lancia <code>node ./scripts/build-data.js</code>.
             </div>
           )}
 
@@ -436,7 +484,7 @@ export default function Home({
 }
 
 // -------------------- YearCard --------------------
-function YearCard({ y, overallTmean, norm }) {
+function YearCard({ y, norm }) {
   const router = useRouter();
   const href = `/anni/${y.year}`;
 
@@ -454,19 +502,6 @@ function YearCard({ y, overallTmean, norm }) {
       router.push(href);
     }
   };
-
-  const tDelta =
-    Number.isFinite(n(y.tmean)) && Number.isFinite(n(overallTmean))
-      ? n(y.tmean) - n(overallTmean)
-      : NaN;
-
-  const labelDelta = !Number.isFinite(tDelta)
-    ? null
-    : tDelta >= 0.2
-    ? "Più caldo"
-    : tDelta <= -0.2
-    ? "Più freddo"
-    : "In linea";
 
   const rainBar = (() => {
     const v = n(y.rain);
@@ -500,31 +535,12 @@ function YearCard({ y, overallTmean, norm }) {
 
         <div className="chips" aria-label="Sintesi anno">
           <span className="chip">
-            <b>{y.ndays}</b> giorni
-          </span>
-          <span className="chip">
-            <b>{fmt(y.rain, 0)}</b> mm
-          </span>
-          <span className="chip">
-            <b>{fmt(y.tmean, 1)}</b> °C
+            <b>{Number.isFinite(n(y.ndays)) ? y.ndays : "—"}</b> giorni
           </span>
         </div>
       </div>
 
-      <div className="simple">
-        <div className="metric">
-          <div className="mTop">
-            <span className="mLabel">Pioggia</span>
-            <span className="mValue">{fmt(y.rain, 1)} mm</span>
-          </div>
-          <div className="track" aria-hidden="true">
-            <div
-              className="fill"
-              style={{ width: `${Math.round(rainBar * 100)}%` }}
-            />
-          </div>
-        </div>
-
+      <div className="mainStats">
         <div className="metric">
           <div className="mTop">
             <span className="mLabel">Temperatura media</span>
@@ -536,10 +552,18 @@ function YearCard({ y, overallTmean, norm }) {
               style={{ width: `${Math.round(tBar * 100)}%` }}
             />
           </div>
-          <div className="note">
-            {labelDelta
-              ? `${labelDelta} (${fmtSigned(tDelta, 1)}° vs media archivio)`
-              : "—"}
+        </div>
+
+        <div className="metric">
+          <div className="mTop">
+            <span className="mLabel">Precipitazioni totali</span>
+            <span className="mValue">{fmt(y.rain, 1)} mm</span>
+          </div>
+          <div className="track" aria-hidden="true">
+            <div
+              className="fill"
+              style={{ width: `${Math.round(rainBar * 100)}%` }}
+            />
           </div>
         </div>
       </div>
@@ -569,9 +593,6 @@ function YearCard({ y, overallTmean, norm }) {
         >
           Apri dettagli <span aria-hidden="true">→</span>
         </Link>
-        <div className="hint" aria-hidden="true">
-          mesi + tabella giornaliera
-        </div>
       </div>
 
       <style jsx>{`
@@ -617,13 +638,13 @@ function YearCard({ y, overallTmean, norm }) {
         .chips {
           display: flex;
           flex-wrap: wrap;
-          gap: 6px;
+          gap: 8px;
         }
 
         .chip {
           border: 1px solid #ececec;
           background: rgba(248, 250, 252, 0.92);
-          padding: 5px 8px;
+          padding: 6px 10px;
           border-radius: 999px;
           font-size: 11px;
           font-weight: 900;
@@ -631,17 +652,17 @@ function YearCard({ y, overallTmean, norm }) {
           white-space: nowrap;
         }
 
-        .simple {
-          margin-top: 10px;
+        .mainStats {
+          margin-top: 12px;
           border-top: 1px solid #f1f1f1;
-          padding-top: 10px;
+          padding-top: 12px;
           display: grid;
-          gap: 10px;
+          gap: 12px;
         }
 
         .metric {
           display: grid;
-          gap: 6px;
+          gap: 7px;
         }
 
         .mTop {
@@ -652,20 +673,20 @@ function YearCard({ y, overallTmean, norm }) {
         }
 
         .mLabel {
-          font-size: 12px;
+          font-size: 13px;
           font-weight: 950;
           color: rgba(15, 23, 42, 0.72);
         }
 
         .mValue {
-          font-size: 12px;
+          font-size: 13px;
           font-weight: 950;
-          color: rgba(15, 23, 42, 0.88);
+          color: rgba(15, 23, 42, 0.9);
           white-space: nowrap;
         }
 
         .track {
-          height: 10px;
+          height: 12px;
           border-radius: 999px;
           background: #f1f5f9;
           border: 1px solid #e5e7eb;
@@ -678,14 +699,8 @@ function YearCard({ y, overallTmean, norm }) {
           background: rgba(15, 23, 42, 0.85);
         }
 
-        .note {
-          font-size: 11px;
-          color: rgba(15, 23, 42, 0.6);
-          font-weight: 800;
-        }
-
         .details {
-          margin-top: 10px;
+          margin-top: 12px;
           border-top: 1px solid #f1f1f1;
           padding-top: 8px;
         }
@@ -719,23 +734,24 @@ function YearCard({ y, overallTmean, norm }) {
           border-top: 1px dashed #e7e7e7;
           padding-top: 12px;
           display: flex;
-          justify-content: space-between;
+          justify-content: flex-start;
           align-items: center;
           gap: 10px;
         }
 
         .btn {
           text-decoration: none;
-          color: #fff;
-          background: #0f172a;
+          color: #0f172a;
+          background: #fff;
+          border: 1px solid #e5e7eb;
           padding: 10px 12px;
           border-radius: 16px;
           font-weight: 950;
           font-size: 13px;
-          box-shadow: 0 10px 20px rgba(15, 23, 42, 0.16);
           transition:
             transform 140ms ease,
-            background 140ms ease;
+            background 140ms ease,
+            border-color 140ms ease;
           display: inline-flex;
           align-items: center;
           gap: 8px;
@@ -743,14 +759,8 @@ function YearCard({ y, overallTmean, norm }) {
 
         .btn:hover {
           transform: translateY(-1px);
-          background: #0b1223;
-        }
-
-        .hint {
-          font-size: 11px;
-          color: rgba(15, 23, 42, 0.58);
-          font-weight: 800;
-          white-space: nowrap;
+          background: #f8fafc;
+          border-color: #d7dde5;
         }
       `}</style>
     </article>
@@ -758,7 +768,11 @@ function YearCard({ y, overallTmean, norm }) {
 }
 
 // -------------------- WeekChart (orario, aggregato) --------------------
-function WeekChart({ weekDates = [], weekLabel = "Ultimi giorni disponibili" }) {
+function WeekChart({
+  weekDates = [],
+  weekLabel = "Ultimi giorni disponibili",
+  weekDailyRain = {},
+}) {
   const GROUPS = useMemo(
     () => [
       { key: "temp", label: "Temperatura + Dew point" },
@@ -821,13 +835,14 @@ function WeekChart({ weekDates = [], weekLabel = "Ultimi giorni disponibili" }) 
             solar_sum: 0,
             solar_cnt: 0,
             gust_max: -Infinity,
-            rainrate_max: -Infinity,
             rain_hour_sum: 0,
             dir_sin: 0,
             dir_cos: 0,
             dir_cnt: 0,
           });
         }
+
+        const dailyHourMap = new Map();
 
         for (const dISO of dates) {
           const url = `/data/intraday/${dISO}.json`;
@@ -836,6 +851,8 @@ function WeekChart({ weekDates = [], weekLabel = "Ultimi giorni disponibili" }) 
 
           const arr = await res.json();
           if (!Array.isArray(arr)) continue;
+
+          const hourTotals = new Map();
 
           for (const r of arr) {
             const tt = r?.t ? String(r.t) : "";
@@ -877,13 +894,11 @@ function WeekChart({ weekDates = [], weekLabel = "Ultimi giorni disponibili" }) 
             const gust = Number(r?.gust_kmh);
             if (Number.isFinite(gust)) b.gust_max = Math.max(b.gust_max, gust);
 
-            const rr = Number(r?.rain_rate_mmph);
-            if (Number.isFinite(rr)) {
-              b.rainrate_max = Math.max(b.rainrate_max, rr);
-            }
-
             const r15 = Number(r?.rain_15m_mm);
-            if (Number.isFinite(r15)) b.rain_hour_sum += r15;
+            if (Number.isFinite(r15)) {
+              b.rain_hour_sum += r15;
+              hourTotals.set(hourMs, (hourTotals.get(hourMs) || 0) + r15);
+            }
 
             const dir = Number(r?.wind_dir_deg);
             if (Number.isFinite(dir)) {
@@ -892,6 +907,30 @@ function WeekChart({ weekDates = [], weekLabel = "Ultimi giorni disponibili" }) 
               b.dir_sin += Math.sin(rad);
               b.dir_cnt += 1;
             }
+          }
+
+          dailyHourMap.set(dISO, hourTotals);
+        }
+
+        const adjustedRainHours = new Map();
+
+        for (const dISO of dates) {
+          const hourTotals = dailyHourMap.get(dISO) || new Map();
+          const rawTotal = Array.from(hourTotals.values()).reduce((a, b) => a + b, 0);
+          const ovrTotal = Number.isFinite(n(weekDailyRain?.[dISO]))
+            ? Number(weekDailyRain[dISO])
+            : null;
+
+          const targetTotal = ovrTotal !== null ? ovrTotal : rawTotal;
+
+          if (rawTotal > 0) {
+            const ratio = targetTotal / rawTotal;
+            for (const [hourMs, val] of hourTotals.entries()) {
+              adjustedRainHours.set(hourMs, round1(val * ratio) ?? 0);
+            }
+          } else if (targetTotal > 0) {
+            const endHour = new Date(`${dISO}T23:00:00`).getTime();
+            adjustedRainHours.set(endHour, round1(targetTotal) ?? 0);
           }
         }
 
@@ -935,8 +974,8 @@ function WeekChart({ weekDates = [], weekLabel = "Ultimi giorni disponibili" }) 
             dirV = deg;
           }
 
-          const rainHour = Number.isFinite(b.rain_hour_sum) ? b.rain_hour_sum : 0;
-          cum += rainHour;
+          const rainHourAdj = Number(adjustedRainHours.get(h) || 0);
+          cum += rainHourAdj;
 
           temp.push([h, tempV === null ? null : round1(tempV)]);
           dew.push([h, dewV === null ? null : round1(dewV)]);
@@ -945,11 +984,20 @@ function WeekChart({ weekDates = [], weekLabel = "Ultimi giorni disponibili" }) 
           wind.push([h, windV === null ? null : round1(windV)]);
           gust.push([h, gustV === null ? null : round1(gustV)]);
           dirMean.push([h, dirV === null ? null : round1(dirV)]);
-          rainH.push([h, round1(rainHour)]);
+          rainH.push([h, round1(rainHourAdj)]);
           rainCum.push([h, round1(cum)]);
           uv.push([h, uvV === null ? null : round1(uvV)]);
           solar.push([h, solarV === null ? null : round1(solarV)]);
         }
+
+        const rainTotalWeek = round1(
+          dates.reduce((acc, d) => {
+            const vv = Number.isFinite(n(weekDailyRain?.[d]))
+              ? Number(weekDailyRain[d])
+              : 0;
+            return acc + vv;
+          }, 0)
+        );
 
         if (!alive) return;
 
@@ -963,7 +1011,7 @@ function WeekChart({ weekDates = [], weekLabel = "Ultimi giorni disponibili" }) 
           dirMean,
           rainH,
           rainCum,
-          rainTotalWeek: round1(cum),
+          rainTotalWeek,
           uv,
           solar,
         });
@@ -980,13 +1028,23 @@ function WeekChart({ weekDates = [], weekLabel = "Ultimi giorni disponibili" }) 
     return () => {
       alive = false;
     };
-  }, [weekDates]);
+  }, [weekDates, weekDailyRain]);
 
   const option = useMemo(() => {
     if (!data) return null;
 
-    const gridNoLegend = { left: 55, right: 30, top: 55, bottom: 55 };
-    const gridWithLegend = { left: 55, right: 55, top: 85, bottom: 55 };
+    const baseLegend = {
+      bottom: 36,
+      left: "center",
+      itemGap: 18,
+      textStyle: {
+        fontWeight: 700,
+        color: "rgba(15, 23, 42, 0.7)",
+      },
+    };
+
+    const gridNoLegend = { left: 70, right: 32, top: 55, bottom: 100 };
+    const gridWithLegend = { left: 70, right: 70, top: 85, bottom: 100 };
 
     const toolboxZoom = {
       feature: { dataZoom: { yAxisIndex: "none" }, restore: {} },
@@ -1017,6 +1075,31 @@ function WeekChart({ weekDates = [], weekLabel = "Ultimi giorni disponibili" }) 
       },
     };
 
+    const leftAxis = (name, extra = {}) => ({
+      type: "value",
+      name,
+      nameLocation: "middle",
+      nameRotate: 90,
+      nameGap: 42,
+      axisLabel: { formatter: (v) => Number(v).toFixed(1) },
+      splitLine: { show: true },
+      splitNumber: 6,
+      ...extra,
+    });
+
+    const rightAxis = (name, extra = {}) => ({
+      type: "value",
+      name,
+      position: "right",
+      nameLocation: "middle",
+      nameRotate: -90,
+      nameGap: 42,
+      axisLabel: { formatter: (v) => Number(v).toFixed(1) },
+      splitLine: { show: false },
+      splitNumber: 6,
+      ...extra,
+    });
+
     const minMaxFrom = (pairs) => {
       const ys = (pairs || [])
         .map((p) => p?.[1])
@@ -1043,18 +1126,13 @@ function WeekChart({ weekDates = [], weekLabel = "Ultimi giorni disponibili" }) 
         toolbox: toolboxZoom,
         dataZoom: makeWeekDataZoom(),
         tooltip: tooltipCommon,
-        legend: { top: 40, left: "center" },
+        legend: baseLegend,
         xAxis,
-        yAxis: {
-          type: "value",
-          name: "°C",
+        yAxis: leftAxis("°C", {
           min: ax.min,
           max: ax.max,
           interval: ax.interval,
-          splitNumber: 6,
-          axisLabel: { formatter: (v) => Number(v).toFixed(1) },
-          splitLine: { show: true },
-        },
+        }),
         series: [
           {
             name: "Temperatura (°C)",
@@ -1083,7 +1161,7 @@ function WeekChart({ weekDates = [], weekLabel = "Ultimi giorni disponibili" }) 
 
       return {
         title: {
-          text: `Precipitazioni (orario + cumulata) • Totale: ${fmt1(tWeek)} mm`,
+          text: `Precipitazioni (oraria + cumulata) • Totale: ${fmt1(tWeek)} mm`,
           left: "center",
           top: 10,
         },
@@ -1091,25 +1169,9 @@ function WeekChart({ weekDates = [], weekLabel = "Ultimi giorni disponibili" }) 
         toolbox: toolboxZoom,
         dataZoom: makeWeekDataZoom(),
         tooltip: tooltipCommon,
-        legend: { top: 40, left: "center" },
+        legend: baseLegend,
         xAxis,
-        yAxis: [
-          {
-            type: "value",
-            name: "mm/h",
-            splitNumber: 6,
-            axisLabel: { formatter: (v) => Number(v).toFixed(1) },
-            splitLine: { show: true },
-          },
-          {
-            type: "value",
-            name: "mm cum.",
-            position: "right",
-            splitNumber: 6,
-            axisLabel: { formatter: (v) => Number(v).toFixed(1) },
-            splitLine: { show: false },
-          },
-        ],
+        yAxis: [leftAxis("mm/h"), rightAxis("mm cum.")],
         series: [
           {
             name: "Pioggia oraria (mm)",
@@ -1138,16 +1200,12 @@ function WeekChart({ weekDates = [], weekLabel = "Ultimi giorni disponibili" }) 
         toolbox: toolboxZoom,
         dataZoom: makeWeekDataZoom(),
         tooltip: tooltipCommon,
+        legend: baseLegend,
         xAxis,
-        yAxis: {
-          type: "value",
-          name: "% RH",
+        yAxis: leftAxis("% RH", {
           min: 0,
           max: 100,
-          splitNumber: 6,
-          axisLabel: { formatter: (v) => Number(v).toFixed(1) },
-          splitLine: { show: true },
-        },
+        }),
         series: [
           {
             name: "Umidità (%)",
@@ -1198,25 +1256,16 @@ function WeekChart({ weekDates = [], weekLabel = "Ultimi giorni disponibili" }) 
             return lines.join("<br/>");
           },
         },
-        legend: { top: 40, left: "center" },
+        legend: baseLegend,
         xAxis,
         yAxis: [
+          leftAxis("km/h"),
           {
-            type: "value",
-            name: "km/h",
-            splitNumber: 6,
-            axisLabel: { formatter: (v) => Number(v).toFixed(1) },
-            splitLine: { show: true },
-          },
-          {
-            type: "value",
-            name: "Dir",
-            position: "right",
+            ...rightAxis("Dir"),
             min: 0,
             max: 360,
             interval: 45,
             axisLabel: { formatter: (v) => degToCardinal8(v) },
-            splitLine: { show: false },
           },
         ],
         series: [
@@ -1261,17 +1310,13 @@ function WeekChart({ weekDates = [], weekLabel = "Ultimi giorni disponibili" }) 
         toolbox: toolboxZoom,
         dataZoom: makeWeekDataZoom(),
         tooltip: tooltipCommon,
+        legend: baseLegend,
         xAxis,
-        yAxis: {
-          type: "value",
-          name: "hPa",
+        yAxis: leftAxis("hPa", {
           min: ax.min,
           max: ax.max,
           interval: ax.interval,
-          splitNumber: 6,
-          axisLabel: { formatter: (v) => Number(v).toFixed(1) },
-          splitLine: { show: true },
-        },
+        }),
         series: [
           {
             name: "Pressione (hPa)",
@@ -1292,26 +1337,15 @@ function WeekChart({ weekDates = [], weekLabel = "Ultimi giorni disponibili" }) 
       toolbox: toolboxZoom,
       dataZoom: makeWeekDataZoom(),
       tooltip: tooltipCommon,
-      legend: { top: 40, left: "center" },
+      legend: baseLegend,
       xAxis,
       yAxis: [
-        {
-          type: "value",
-          name: "UV",
+        leftAxis("UV", {
           min: 0,
-          splitNumber: 6,
-          axisLabel: { formatter: (v) => Number(v).toFixed(1) },
-          splitLine: { show: true },
-        },
-        {
-          type: "value",
-          name: "W/m²",
-          position: "right",
+        }),
+        rightAxis("W/m²", {
           min: 0,
-          splitNumber: 6,
-          axisLabel: { formatter: (v) => Number(v).toFixed(1) },
-          splitLine: { show: false },
-        },
+        }),
       ],
       series: [
         {
@@ -1370,7 +1404,7 @@ function WeekChart({ weekDates = [], weekLabel = "Ultimi giorni disponibili" }) 
         {!loading && !err && option && (
           <ReactECharts
             option={option}
-            style={{ height: 360, width: "100%" }}
+            style={{ height: 420, width: "100%" }}
             notMerge={true}
             lazyUpdate={true}
           />

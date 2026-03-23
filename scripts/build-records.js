@@ -41,6 +41,13 @@ function yOf(dateStr) {
 function mOf(dateStr) {
   return String(dateStr).slice(5, 7);
 }
+function daysInMonth(year, month) {
+  return new Date(Number(year), Number(month), 0).getDate();
+}
+function daysInYear(year) {
+  const y = Number(year);
+  return new Date(y, 1, 29).getMonth() === 1 ? 366 : 365;
+}
 
 function sortByValue(arr, dir) {
   const mul = dir === "asc" ? 1 : -1;
@@ -149,6 +156,99 @@ function meanFromArray(arr) {
   }
   return n > 0 ? s / n : null;
 }
+function countWhere(arr, pred) {
+  let n = 0;
+  for (const x of arr) {
+    if (pred(x)) n += 1;
+  }
+  return n;
+}
+function firstNum(...vals) {
+  for (const v of vals) {
+    if (isNum(v)) return v;
+  }
+  return null;
+}
+
+// -------------------- derived getters --------------------
+function getPressAvgDaily(r) {
+  return firstNum(
+    r.press_avg,
+    r.press_mean,
+    isNum(r.press_min) && isNum(r.press_max) ? (r.press_min + r.press_max) / 2 : null
+  );
+}
+function getRhMeanDaily(r) {
+  return firstNum(
+    r.rh_mean,
+    r.humidity_mean,
+    isNum(r.rh_min) && isNum(r.rh_max) ? (r.rh_min + r.rh_max) / 2 : null
+  );
+}
+function getTempRangeDaily(r) {
+  return firstNum(
+    r.trange,
+    isNum(r.tmax) && isNum(r.tmin) ? (r.tmax - r.tmin) : null
+  );
+}
+function getUvMeanDaily(r) {
+  return firstNum(r.uv_mean, r.uv_avg, r.uv_average, r.uv_max);
+}
+function getSolarMeanDaily(r) {
+  return firstNum(r.solar_mean, r.solar_avg, r.solar_average, r.radiation_mean, r.solar_max);
+}
+function getWindAvgDaily(r) {
+  return firstNum(
+    r.wind_avg,
+    r.wind_mean,
+    r.avg_wind,
+    r.wind_speed_avg,
+    r.wind_speed_mean
+  );
+}
+function getGustMeanDaily(r) {
+  return firstNum(
+    r.gust_mean,
+    r.gust_avg,
+    r.avg_gust,
+    r.gust_speed_avg,
+    r.gust_speed_mean
+  );
+}
+function getWindMaxDaily(r) {
+  return firstNum(
+    r.wind_max,
+    r.wind_peak,
+    r.wind_speed_max
+  );
+}
+function getGustMaxDaily(r) {
+  return firstNum(
+    r.gust_max,
+    r.gust_peak,
+    r.max_gust
+  );
+}
+
+// -------------------- coverage helpers --------------------
+function coverageRatio(rows, expectedDays, getter) {
+  let valid = 0;
+  for (const r of rows) {
+    const v = getter(r);
+    if (isNum(v)) valid += 1;
+  }
+  return expectedDays > 0 ? valid / expectedDays : 0;
+}
+function buildCoverageByParam(rows, expectedDays) {
+  return {
+    temperature: coverageRatio(rows, expectedDays, (r) => r.tmean),
+    rain: coverageRatio(rows, expectedDays, (r) => r.rain_total),
+    wind: coverageRatio(rows, expectedDays, (r) => getWindAvgDaily(r)),
+    pressure: coverageRatio(rows, expectedDays, (r) => getPressAvgDaily(r)),
+    humidity: coverageRatio(rows, expectedDays, (r) => getRhMeanDaily(r)),
+    radiation: coverageRatio(rows, expectedDays, (r) => getSolarMeanDaily(r)),
+  };
+}
 
 // -------------------- daily rank helpers --------------------
 function dailyRank(rows, field, dir) {
@@ -160,34 +260,7 @@ function dailyRank(rows, field, dir) {
   }
   return topN(out, dir);
 }
-function dailyRankTempRange(rows, dir) {
-  const out = [];
-  for (const r of rows) {
-    const tmax = r.tmax;
-    const tmin = r.tmin;
-    if (!isNum(tmax) || !isNum(tmin)) continue;
-    out.push({ value: tmax - tmin, date: r.date });
-  }
-  return topN(out, dir);
-}
-
-function getPressAvgDaily(r) {
-  const v = r.press_avg;
-  if (isNum(v)) return v;
-  const pmin = r.press_min;
-  const pmax = r.press_max;
-  if (isNum(pmin) && isNum(pmax)) return (pmin + pmax) / 2;
-  return null;
-}
-function getRhMeanDaily(r) {
-  const v = r.rh_mean;
-  if (isNum(v)) return v;
-  const rmin = r.rh_min;
-  const rmax = r.rh_max;
-  if (isNum(rmin) && isNum(rmax)) return (rmin + rmax) / 2;
-  return null;
-}
-function dailyRankDerived(rows, getter, dir) {
+function dailyRankGetter(rows, getter, dir) {
   const out = [];
   for (const r of rows) {
     const v = getter(r);
@@ -195,6 +268,9 @@ function dailyRankDerived(rows, getter, dir) {
     out.push({ value: v, date: r.date });
   }
   return topN(out, dir);
+}
+function dailyRankTempRange(rows, dir) {
+  return dailyRankGetter(rows, getTempRangeDaily, dir);
 }
 function dailyRankPressDropNext(rowsSortedByDate) {
   const out = [];
@@ -304,9 +380,30 @@ function dayCoverageOK(intr) {
 
 function keyCandidatesFor(intr, kind) {
   const keys = listKeys(intr);
-  if (kind === "rain") return keys.filter((k) => /rain|piogg|precip|pluv/i.test(k));
-  if (kind === "wind") return keys.filter((k) => /wind|vento/i.test(k) && !/gust|raff/i.test(k));
-  if (kind === "gust") return keys.filter((k) => /gust|raff/i.test(k));
+
+  if (kind === "rain") {
+    return keys.filter((k) => /rain|piogg|precip|pluv/i.test(k));
+  }
+
+  if (kind === "wind") {
+    return keys.filter(
+      (k) =>
+        (
+          /wind|vento/i.test(k) ||
+          /windspeed|wind_speed|avgwindspeed|averagewind/i.test(k)
+        ) &&
+        !/gust|raff/i.test(k)
+    );
+  }
+
+  if (kind === "gust") {
+    return keys.filter(
+      (k) =>
+        /gust|raff/i.test(k) ||
+        /windgust|gustspeed|gust_speed/i.test(k)
+    );
+  }
+
   return keys;
 }
 
@@ -475,22 +572,26 @@ function pickBestKeyByKind(intr, kind) {
 // -------------------- precompute derived per-day fields --------------------
 function attachDerivedDailyFields(rows) {
   for (const r of rows) {
-    // init derived fields as null
     r.rain_15m = null;
     r.rain_30m = null;
     r.rain_1h = null;
     r.rain_6h = null;
     r.rain_12h = null;
 
-    r.gust_mean = null;
-    r.wind_avg = null;
-    r.wind_max = null;
+    if (!isNum(r.gust_mean)) {
+      r.gust_mean = firstNum(r.gust_avg, r.avg_gust, r.gust_speed_avg, r.gust_speed_mean);
+    }
+    if (!isNum(r.wind_avg)) {
+      r.wind_avg = firstNum(r.wind_mean, r.avg_wind, r.wind_speed_avg, r.wind_speed_mean);
+    }
+    if (!isNum(r.wind_max)) {
+      r.wind_max = firstNum(r.wind_peak, r.wind_speed_max);
+    }
 
     const intr = safeReadIntraday(r.date);
     if (!intr) continue;
     if (!dayCoverageOK(intr)) continue;
 
-    // ---- rain windows (from increments) ----
     const inc = inferRainIncrements(intr);
     if (inc) {
       const m15 = max(inc);
@@ -506,7 +607,6 @@ function attachDerivedDailyFields(rows) {
       if (isNum(m12h)) r.rain_12h = m12h;
     }
 
-    // ---- gust mean ----
     {
       const k = pickBestKeyByKind(intr, "gust");
       if (k) {
@@ -518,7 +618,6 @@ function attachDerivedDailyFields(rows) {
       }
     }
 
-    // ---- wind avg / wind max ----
     {
       const k = pickBestKeyByKind(intr, "wind");
       if (k) {
@@ -527,8 +626,7 @@ function attachDerivedDailyFields(rows) {
           const wmean = meanFromArray(s);
           const wmax = max(s);
 
-          // controlli di coerenza con gust giornaliero da daily.json, se presente
-          const gustMaxDaily = r.gust_max;
+          const gustMaxDaily = getGustMaxDaily(r);
           if (isNum(wmean)) {
             if (!isNum(gustMaxDaily) || wmean <= gustMaxDaily) r.wind_avg = wmean;
           }
@@ -541,7 +639,7 @@ function attachDerivedDailyFields(rows) {
   }
 }
 
-// -------------------- daily ranks builder (global / subset) --------------------
+// -------------------- daily ranks builder --------------------
 function buildDailyRanks(rowsSortedByDate) {
   return {
     tmax_abs_high: dailyRank(rowsSortedByDate, "tmax", "desc"),
@@ -556,18 +654,17 @@ function buildDailyRanks(rowsSortedByDate) {
     rain_total_high: dailyRank(rowsSortedByDate, "rain_total", "desc"),
     rainrate_max_high: dailyRank(rowsSortedByDate, "rainrate_max", "desc"),
 
-    // intraday-derived windows (precomputed)
     rain_15m_high: dailyRank(rowsSortedByDate, "rain_15m", "desc"),
     rain_30m_high: dailyRank(rowsSortedByDate, "rain_30m", "desc"),
     rain_1h_high: dailyRank(rowsSortedByDate, "rain_1h", "desc"),
     rain_6h_high: dailyRank(rowsSortedByDate, "rain_6h", "desc"),
     rain_12h_high: dailyRank(rowsSortedByDate, "rain_12h", "desc"),
 
-    gust_max_high: dailyRank(rowsSortedByDate, "gust_max", "desc"),
-    gust_mean_high: dailyRank(rowsSortedByDate, "gust_mean", "desc"),
+    gust_max_high: dailyRankGetter(rowsSortedByDate, getGustMaxDaily, "desc"),
+    gust_mean_high: dailyRankGetter(rowsSortedByDate, getGustMeanDaily, "desc"),
 
-    wind_avg_high: dailyRank(rowsSortedByDate, "wind_avg", "desc"),
-    wind_max_high: dailyRank(rowsSortedByDate, "wind_max", "desc"),
+    wind_avg_high: dailyRankGetter(rowsSortedByDate, getWindAvgDaily, "desc"),
+    wind_max_high: dailyRankGetter(rowsSortedByDate, getWindMaxDaily, "desc"),
 
     press_min_low: dailyRank(rowsSortedByDate, "press_min", "asc"),
     press_max_high: dailyRank(rowsSortedByDate, "press_max", "desc"),
@@ -576,7 +673,7 @@ function buildDailyRanks(rowsSortedByDate) {
 
     rh_min_low: dailyRank(rowsSortedByDate, "rh_min", "asc"),
     rh_max_high: dailyRank(rowsSortedByDate, "rh_max", "desc"),
-    rh_mean_high: dailyRankDerived(rowsSortedByDate, getRhMeanDaily, "desc"),
+    rh_mean_high: dailyRankGetter(rowsSortedByDate, getRhMeanDaily, "desc"),
 
     uv_max_high: dailyRank(rowsSortedByDate, "uv_max", "desc"),
     solar_max_high: dailyRank(rowsSortedByDate, "solar_max", "desc"),
@@ -584,75 +681,120 @@ function buildDailyRanks(rowsSortedByDate) {
 }
 
 // -------------------- monthly / yearly aggregations --------------------
-function monthlyAggFromRows(rs) {
-  const tmax_mean = mean(rs.map((r) => r.tmax));
-  const tmin_mean = mean(rs.map((r) => r.tmin));
-  const tmean_mean = mean(rs.map((r) => r.tmean));
-
-  const rain_total = sum(rs.map((r) => r.rain_total));
-  const gust_max = max(rs.map((r) => r.gust_max));
-  const rainrate_max = max(rs.map((r) => r.rainrate_max));
-
-  const press_min = min(rs.map((r) => r.press_min));
-  const press_max = max(rs.map((r) => r.press_max));
-
-  const rh_min = min(rs.map((r) => r.rh_min));
-  const rh_max = max(rs.map((r) => r.rh_max));
-
-  const uv_max = max(rs.map((r) => r.uv_max));
-  const solar_max = max(rs.map((r) => r.solar_max));
+function monthlyAggFromRows(year, month, rs) {
+  const expectedDays = daysInMonth(year, month);
+  const coverage_by_param = buildCoverageByParam(rs, expectedDays);
 
   return {
-    tmax_mean,
-    tmin_mean,
-    tmean_mean,
-    rain_total,
-    gust_max,
-    rainrate_max,
-    press_min,
-    press_max,
-    rh_min,
-    rh_max,
-    uv_max,
-    solar_max,
+    tmax_mean: mean(rs.map((r) => r.tmax)),
+    tmin_mean: mean(rs.map((r) => r.tmin)),
+    tmean_mean: mean(rs.map((r) => r.tmean)),
+    trange_mean: mean(rs.map((r) => getTempRangeDaily(r))),
+
+    rain_total: sum(rs.map((r) => r.rain_total)),
+    rainrate_max: max(rs.map((r) => r.rainrate_max)),
+    rain_15m_high: max(rs.map((r) => r.rain_15m)),
+    rain_30m_high: max(rs.map((r) => r.rain_30m)),
+    rain_1h_high: max(rs.map((r) => r.rain_1h)),
+    rain_6h_high: max(rs.map((r) => r.rain_6h)),
+    rain_12h_high: max(rs.map((r) => r.rain_12h)),
+
+    gust_max: max(rs.map((r) => getGustMaxDaily(r))),
+    gust_mean: mean(rs.map((r) => getGustMeanDaily(r))),
+    wind_avg: mean(rs.map((r) => getWindAvgDaily(r))),
+    wind_max: max(rs.map((r) => getWindMaxDaily(r))),
+
+    press_min: min(rs.map((r) => r.press_min)),
+    press_max: max(rs.map((r) => r.press_max)),
+    press_mean: mean(rs.map((r) => getPressAvgDaily(r))),
+
+    rh_min: min(rs.map((r) => r.rh_min)),
+    rh_max: max(rs.map((r) => r.rh_max)),
+    rh_mean: mean(rs.map((r) => getRhMeanDaily(r))),
+
+    uv_max: max(rs.map((r) => r.uv_max)),
+    uv_mean: mean(rs.map((r) => getUvMeanDaily(r))),
+    solar_max: max(rs.map((r) => r.solar_max)),
+    solar_mean: mean(rs.map((r) => getSolarMeanDaily(r))),
+
+    coverage_by_param,
   };
 }
 
-function yearlyAggFromRows(rs) {
-  const tmax_abs = max(rs.map((r) => r.tmax));
-  const tmin_abs = min(rs.map((r) => r.tmin));
-  const tmean = mean(rs.map((r) => r.tmean));
+function longestDrySpellDays(rs) {
+  const sorted = [...rs].sort((a, b) => a.date.localeCompare(b.date));
+  let best = 0;
+  let cur = 0;
 
-  const rain_total = sum(rs.map((r) => r.rain_total));
-  const gust_max = max(rs.map((r) => r.gust_max));
-  const rainrate_max = max(rs.map((r) => r.rainrate_max));
+  for (const r of sorted) {
+    const rain = r.rain_total;
+    if (isNum(rain) && rain > 1) {
+      if (cur > best) best = cur;
+      cur = 0;
+    } else {
+      cur += 1;
+    }
+  }
+  if (cur > best) best = cur;
+  return best;
+}
 
-  const press_min = min(rs.map((r) => r.press_min));
-  const press_max = max(rs.map((r) => r.press_max));
-
-  const rh_min = min(rs.map((r) => r.rh_min));
-  const rh_max = max(rs.map((r) => r.rh_max));
-
-  const uv_max = max(rs.map((r) => r.uv_max));
-  const solar_max = max(rs.map((r) => r.solar_max));
+function yearlyAggFromRows(year, rs) {
+  const expectedDays = daysInYear(year);
+  const coverage_by_param = buildCoverageByParam(rs, expectedDays);
 
   return {
-    tmax_abs,
-    tmin_abs,
-    tmean,
-    rain_total,
-    gust_max,
-    rainrate_max,
-    press_min,
-    press_max,
-    rh_min,
-    rh_max,
-    uv_max,
-    solar_max,
+    tmax_mean: mean(rs.map((r) => r.tmax)),
+    tmean_mean: mean(rs.map((r) => r.tmean)),
+    tmin_mean: mean(rs.map((r) => r.tmin)),
+    trange_mean: mean(rs.map((r) => getTempRangeDaily(r))),
+
+    rain_total: sum(rs.map((r) => r.rain_total)),
+    rain_days_gt_1mm: countWhere(rs, (r) => isNum(r.rain_total) && r.rain_total > 1),
+    longest_dry_spell: longestDrySpellDays(rs),
+    rainrate_max: max(rs.map((r) => r.rainrate_max)),
+
+    wind_avg_mean: mean(rs.map((r) => getWindAvgDaily(r))),
+    gust_mean: mean(rs.map((r) => getGustMeanDaily(r))),
+
+    press_mean: mean(rs.map((r) => getPressAvgDaily(r))),
+    rh_mean: mean(rs.map((r) => getRhMeanDaily(r))),
+    uv_mean: mean(rs.map((r) => getUvMeanDaily(r))),
+    solar_mean: mean(rs.map((r) => getSolarMeanDaily(r))),
+
+    coverage_by_param,
   };
 }
 
-// ====== ranking per "mese dell'anno" (tutti i Gennaio, tutti i Febbraio, ecc.) ======
+// -------------------- rank builders --------------------
+function rankMonthly(list, field, dir) {
+  return topN(
+    list
+      .filter((x) => isNum(x[field]))
+      .map((x) => ({
+        value: x[field],
+        year: x.year,
+        month: x.month,
+        coverage_by_param: x.coverage_by_param,
+      })),
+    dir
+  );
+}
+
+function rankYearly(list, field, dir) {
+  return topN(
+    list
+      .filter((x) => isNum(x[field]))
+      .map((x) => ({
+        value: x[field],
+        year: x.year,
+        coverage_by_param: x.coverage_by_param,
+      })),
+    dir
+  );
+}
+
+// ====== ranking per "mese dell'anno" ======
 function buildMonthlyByMonthOfYear(rows) {
   const byYM = groupByYM(rows);
 
@@ -660,7 +802,7 @@ function buildMonthlyByMonthOfYear(rows) {
   for (const [ym, rs] of byYM.entries()) {
     const year = Number(ym.slice(0, 4));
     const month = Number(ym.slice(5, 7));
-    const agg = monthlyAggFromRows(rs);
+    const agg = monthlyAggFromRows(year, month, rs);
     monthlyList.push({ year, month, ym, ...agg });
   }
 
@@ -671,29 +813,52 @@ function buildMonthlyByMonthOfYear(rows) {
   const out = {};
   for (const mm of Object.keys(byMonth)) {
     const list = byMonth[mm];
-    const rank = (field, dir) =>
-      topN(
-        list.filter((x) => isNum(x[field])).map((x) => ({ value: x[field], year: x.year, month: x.month })),
-        dir
-      );
 
     out[mm] = {
-      tmax_mean_high: rank("tmax_mean", "desc"),
-      tmax_mean_low: rank("tmax_mean", "asc"),
-      tmin_mean_low: rank("tmin_mean", "asc"),
-      tmin_mean_high: rank("tmin_mean", "desc"),
-      tmean_high: rank("tmean_mean", "desc"),
-      tmean_low: rank("tmean_mean", "asc"),
-      rain_total_high: rank("rain_total", "desc"),
-      gust_max_high: rank("gust_max", "desc"),
-      rainrate_max_high: rank("rainrate_max", "desc"),
+      tmax_mean_high: rankMonthly(list, "tmax_mean", "desc"),
+      tmax_mean_low: rankMonthly(list, "tmax_mean", "asc"),
+      tmin_mean_low: rankMonthly(list, "tmin_mean", "asc"),
+      tmin_mean_high: rankMonthly(list, "tmin_mean", "desc"),
+      tmean_high: rankMonthly(list, "tmean_mean", "desc"),
+      tmean_low: rankMonthly(list, "tmean_mean", "asc"),
+      trange_high: rankMonthly(list, "trange_mean", "desc"),
+      trange_low: rankMonthly(list, "trange_mean", "asc"),
+
+      rain_total_high: rankMonthly(list, "rain_total", "desc"),
+      rainrate_max_high: rankMonthly(list, "rainrate_max", "desc"),
+      rain_15m_high: rankMonthly(list, "rain_15m_high", "desc"),
+      rain_30m_high: rankMonthly(list, "rain_30m_high", "desc"),
+      rain_1h_high: rankMonthly(list, "rain_1h_high", "desc"),
+      rain_6h_high: rankMonthly(list, "rain_6h_high", "desc"),
+      rain_12h_high: rankMonthly(list, "rain_12h_high", "desc"),
+
+      gust_max_high: rankMonthly(list, "gust_max", "desc"),
+      gust_mean_high: rankMonthly(list, "gust_mean", "desc"),
+      wind_avg_high: rankMonthly(list, "wind_avg", "desc"),
+      wind_max_high: rankMonthly(list, "wind_max", "desc"),
+
+      press_min_low: rankMonthly(list, "press_min", "asc"),
+      press_max_high: rankMonthly(list, "press_max", "desc"),
+
+      rh_min_low: rankMonthly(list, "rh_min", "asc"),
+      rh_max_high: rankMonthly(list, "rh_max", "desc"),
+      rh_mean_high: rankMonthly(list, "rh_mean", "desc"),
+
+      uv_max_high: rankMonthly(list, "uv_max", "desc"),
+      solar_max_high: rankMonthly(list, "solar_max", "desc"),
+
+      coverage_summary: list.map((x) => ({
+        year: x.year,
+        month: x.month,
+        coverage_by_param: x.coverage_by_param,
+      })),
     };
   }
 
   return out;
 }
 
-// ====== ranking mensile "dentro un anno" (tra i 12 mesi del 2021, 2022, ...) ======
+// ====== ranking mensile dentro un anno ======
 function buildMonthlyByYear(rows) {
   const byYM = groupByYM(rows);
 
@@ -701,7 +866,7 @@ function buildMonthlyByYear(rows) {
   for (const [ym, rs] of byYM.entries()) {
     const year = Number(ym.slice(0, 4));
     const month = Number(ym.slice(5, 7));
-    const agg = monthlyAggFromRows(rs);
+    const agg = monthlyAggFromRows(year, month, rs);
     monthlyList.push({ year, month, ym, ...agg });
   }
 
@@ -714,28 +879,44 @@ function buildMonthlyByYear(rows) {
 
   const out = {};
   for (const [yy, list] of mapY.entries()) {
-    const rank = (field, dir) =>
-      topN(
-        list.filter((x) => isNum(x[field])).map((x) => ({ value: x[field], year: x.year, month: x.month })),
-        dir
-      );
-
     out[yy] = {
-      tmax_mean_high: rank("tmax_mean", "desc"),
-      tmax_mean_low: rank("tmax_mean", "asc"),
-      tmin_mean_low: rank("tmin_mean", "asc"),
-      tmin_mean_high: rank("tmin_mean", "desc"),
-      tmean_high: rank("tmean_mean", "desc"),
-      tmean_low: rank("tmean_mean", "asc"),
-      rain_total_high: rank("rain_total", "desc"),
-      gust_max_high: rank("gust_max", "desc"),
-      rainrate_max_high: rank("rainrate_max", "desc"),
-      press_min_low: rank("press_min", "asc"),
-      press_max_high: rank("press_max", "desc"),
-      rh_min_low: rank("rh_min", "asc"),
-      rh_max_high: rank("rh_max", "desc"),
-      uv_max_high: rank("uv_max", "desc"),
-      solar_max_high: rank("solar_max", "desc"),
+      tmax_mean_high: rankMonthly(list, "tmax_mean", "desc"),
+      tmax_mean_low: rankMonthly(list, "tmax_mean", "asc"),
+      tmin_mean_low: rankMonthly(list, "tmin_mean", "asc"),
+      tmin_mean_high: rankMonthly(list, "tmin_mean", "desc"),
+      tmean_high: rankMonthly(list, "tmean_mean", "desc"),
+      tmean_low: rankMonthly(list, "tmean_mean", "asc"),
+      trange_high: rankMonthly(list, "trange_mean", "desc"),
+      trange_low: rankMonthly(list, "trange_mean", "asc"),
+
+      rain_total_high: rankMonthly(list, "rain_total", "desc"),
+      rainrate_max_high: rankMonthly(list, "rainrate_max", "desc"),
+      rain_15m_high: rankMonthly(list, "rain_15m_high", "desc"),
+      rain_30m_high: rankMonthly(list, "rain_30m_high", "desc"),
+      rain_1h_high: rankMonthly(list, "rain_1h_high", "desc"),
+      rain_6h_high: rankMonthly(list, "rain_6h_high", "desc"),
+      rain_12h_high: rankMonthly(list, "rain_12h_high", "desc"),
+
+      gust_max_high: rankMonthly(list, "gust_max", "desc"),
+      gust_mean_high: rankMonthly(list, "gust_mean", "desc"),
+      wind_avg_high: rankMonthly(list, "wind_avg", "desc"),
+      wind_max_high: rankMonthly(list, "wind_max", "desc"),
+
+      press_min_low: rankMonthly(list, "press_min", "asc"),
+      press_max_high: rankMonthly(list, "press_max", "desc"),
+
+      rh_min_low: rankMonthly(list, "rh_min", "asc"),
+      rh_max_high: rankMonthly(list, "rh_max", "desc"),
+      rh_mean_high: rankMonthly(list, "rh_mean", "desc"),
+
+      uv_max_high: rankMonthly(list, "uv_max", "desc"),
+      solar_max_high: rankMonthly(list, "solar_max", "desc"),
+
+      coverage_summary: list.map((x) => ({
+        year: x.year,
+        month: x.month,
+        coverage_by_param: x.coverage_by_param,
+      })),
     };
   }
 
@@ -748,26 +929,62 @@ function buildYearly(rows) {
   const yearlyList = [];
   for (const [yy, rs] of byY.entries()) {
     const year = Number(yy);
-    const agg = yearlyAggFromRows(rs);
+    const agg = yearlyAggFromRows(year, rs);
     yearlyList.push({ year, ...agg });
   }
 
-  const rank = (field, dir) =>
-    topN(
-      yearlyList.filter((x) => isNum(x[field])).map((x) => ({ value: x[field], year: x.year })),
-      dir
-    );
-
   return {
-    tmax_abs_high: rank("tmax_abs", "desc"),
-    tmin_abs_low: rank("tmin_abs", "asc"),
-    tmean_high: rank("tmean", "desc"),
-    tmean_low: rank("tmean", "asc"),
-    rain_total_high: rank("rain_total", "desc"),
-    gust_max_high: rank("gust_max", "desc"),
-    rainrate_max_high: rank("rainrate_max", "desc"),
-    press_min_low: rank("press_min", "asc"),
-    press_max_high: rank("press_max", "desc"),
+    tmax_mean_high: rankYearly(yearlyList, "tmax_mean", "desc"),
+    tmax_mean_low: rankYearly(yearlyList, "tmax_mean", "asc"),
+    tmean_high: rankYearly(yearlyList, "tmean_mean", "desc"),
+    tmean_low: rankYearly(yearlyList, "tmean_mean", "asc"),
+    tmin_mean_high: rankYearly(yearlyList, "tmin_mean", "desc"),
+    tmin_mean_low: rankYearly(yearlyList, "tmin_mean", "asc"),
+    trange_mean_high: rankYearly(yearlyList, "trange_mean", "desc"),
+    trange_mean_low: rankYearly(yearlyList, "trange_mean", "asc"),
+
+    rain_total_high: rankYearly(yearlyList, "rain_total", "desc"),
+    rain_total_low: rankYearly(yearlyList, "rain_total", "asc"),
+    rain_days_over_1mm_high: rankYearly(yearlyList, "rain_days_gt_1mm", "desc"),
+    rain_days_over_1mm_low: rankYearly(yearlyList, "rain_days_gt_1mm", "asc"),
+    longest_dry_spell_high: rankYearly(yearlyList, "longest_dry_spell", "desc"),
+    longest_dry_spell_low: rankYearly(yearlyList, "longest_dry_spell", "asc"),
+    rainrate_max_high: rankYearly(yearlyList, "rainrate_max", "desc"),
+
+    wind_avg_high: rankYearly(yearlyList, "wind_avg_mean", "desc"),
+    wind_avg_low: rankYearly(yearlyList, "wind_avg_mean", "asc"),
+    gust_mean_high: rankYearly(yearlyList, "gust_mean", "desc"),
+    gust_mean_low: rankYearly(yearlyList, "gust_mean", "asc"),
+
+    press_mean_high: rankYearly(yearlyList, "press_mean", "desc"),
+    press_mean_low: rankYearly(yearlyList, "press_mean", "asc"),
+
+    rh_mean_high: rankYearly(yearlyList, "rh_mean", "desc"),
+    rh_mean_low: rankYearly(yearlyList, "rh_mean", "asc"),
+
+    uv_mean_high: rankYearly(yearlyList, "uv_mean", "desc"),
+    uv_mean_low: rankYearly(yearlyList, "uv_mean", "asc"),
+    solar_mean_high: rankYearly(yearlyList, "solar_mean", "desc"),
+    solar_mean_low: rankYearly(yearlyList, "solar_mean", "asc"),
+
+    summary: yearlyList.map((x) => ({
+      year: x.year,
+      coverage_by_param: x.coverage_by_param,
+      tmax_mean: x.tmax_mean,
+      tmean_mean: x.tmean_mean,
+      tmin_mean: x.tmin_mean,
+      trange_mean: x.trange_mean,
+      rain_total: x.rain_total,
+      rain_days_gt_1mm: x.rain_days_gt_1mm,
+      longest_dry_spell: x.longest_dry_spell,
+      rainrate_max: x.rainrate_max,
+      wind_avg_mean: x.wind_avg_mean,
+      gust_mean: x.gust_mean,
+      press_mean: x.press_mean,
+      rh_mean: x.rh_mean,
+      uv_mean: x.uv_mean,
+      solar_mean: x.solar_mean,
+    })),
   };
 }
 
@@ -782,13 +999,10 @@ function main() {
     .filter((r) => r && typeof r.date === "string" && r.date.length >= 10)
     .sort((a, b) => a.date.localeCompare(b.date));
 
-  // 1) calcola UNA volta sola i derivati da intraday e li attacca alle righe
   attachDerivedDailyFields(rows);
 
-  // 2) daily global (compatibilità: stessi campi di prima)
   const daily = buildDailyRanks(rows);
 
-  // 3) daily per mese dell'anno / per anno / per anno+mese
   const dailyByMonth = {};
   const byMonth = groupByMonthOfYear(rows);
   for (const mm of Object.keys(byMonth)) {
@@ -813,10 +1027,9 @@ function main() {
     }
   }
 
-  // 4) monthly / yearly (come prima + by_year)
   const monthly = {
-    by_month: buildMonthlyByMonthOfYear(rows), // tutti i Gennaio / Febbraio / ...
-    by_year: buildMonthlyByYear(rows),         // dentro un anno: Gen..Dic del 2021, ecc.
+    by_month: buildMonthlyByMonthOfYear(rows),
+    by_year: buildMonthlyByYear(rows),
   };
 
   const yearly = buildYearly(rows);
@@ -824,17 +1037,12 @@ function main() {
   const out = {
     generated_at: new Date().toISOString(),
     top_n: TOP_N,
-
-    // compatibilità (pagina attuale): records.daily.tmax_abs_high ecc.
     daily: {
       ...daily,
-
-      // nuove viste per filtri veri (no "filtro dentro top globale")
-      by_month: dailyByMonth,           // "01".."12"
-      by_year: dailyByYear,             // "2021"...
-      by_year_month: dailyByYearMonth,  // "2021" -> "01" -> ...
+      by_month: dailyByMonth,
+      by_year: dailyByYear,
+      by_year_month: dailyByYearMonth,
     },
-
     monthly,
     yearly,
   };
