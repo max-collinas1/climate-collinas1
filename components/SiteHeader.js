@@ -57,7 +57,6 @@ export default function SiteHeader({
             <span className="navStripText">Condizioni attuali</span>
           </Link>
 
-          {/* FIX IMPORTANTE */}
           <Link
             href="/grafici-previsione"
             className={`navStripLink ${
@@ -65,6 +64,16 @@ export default function SiteHeader({
             }`}
           >
             <span className="navStripText">Grafici di previsione</span>
+          </Link>
+
+          {/* NUOVO LINK */}
+          <Link
+            href="/confronto-climatico"
+            className={`navStripLink ${
+              isActive("/confronto-climatico") ? "active" : ""
+            }`}
+          >
+            <span className="navStripText">Confronto climatico</span>
           </Link>
         </nav>
       </div>

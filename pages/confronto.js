@@ -714,7 +714,6 @@ export default function ConfrontoPage({ dailyRows }) {
   }, []);
 
   const chartOption = useMemo(() => {
-    // ---------------------- GIORNI ----------------------
     if (mode === "giorni") {
       const selected = daySelections
         .slice(0, activeCount)
@@ -809,7 +808,6 @@ export default function ConfrontoPage({ dailyRows }) {
       });
     }
 
-    // ---------------------- MESI ----------------------
     if (mode === "mesi") {
       const selected = monthSelections
         .slice(0, activeCount)
@@ -869,22 +867,9 @@ export default function ConfrontoPage({ dailyRows }) {
       }
 
       if (param === "rain") {
-        return buildSimpleLineChart({
-          baseChart,
-          title: "Precipitazione giornaliera",
-          xAxis,
-          yName: "mm",
-          formatValue: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} mm`),
-          seriesData,
-          colors,
-          getValue: (map, d) => safeVal(map.get(Number(d))?.rain_total),
-        });
-      }
-
-      if (param === "rain_cum") {
         return {
           ...baseChart,
-          title: { ...baseChart.title, text: "Precipitazione cumulata" },
+          title: { ...baseChart.title, text: "Precipitazione giornaliera" },
           xAxis: { ...baseChart.xAxis, data: xAxis },
           tooltip: {
             trigger: "axis",
@@ -911,10 +896,27 @@ export default function ConfrontoPage({ dailyRows }) {
             name: s.label,
             type: "bar",
             barMaxWidth: 18,
-            data: cumulative(xAxis.map((d) => n(s.map.get(Number(d))?.rain_total))),
+            data: xAxis.map((d) => safeVal(s.map.get(Number(d))?.rain_total)),
             itemStyle: { color: colors[i] },
           })),
         };
+      }
+
+      if (param === "rain_cum") {
+        return buildSimpleLineChart({
+          baseChart,
+          title: "Precipitazione cumulata",
+          xAxis,
+          yName: "mm",
+          formatValue: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} mm`),
+          seriesData,
+          colors,
+          getValue: (map, d) => {
+            const vals = xAxis.slice(0, Number(d)).map((dd) => n(map.get(Number(dd))?.rain_total));
+            const cum = cumulative(vals);
+            return cum[cum.length - 1] ?? null;
+          },
+        });
       }
 
       if (param === "humidity_max") {
@@ -1035,7 +1037,6 @@ export default function ConfrontoPage({ dailyRows }) {
       });
     }
 
-    // ---------------------- ANNI ----------------------
     const selected = yearSelections
       .slice(0, activeCount)
       .map((s, i) => ({
@@ -1064,12 +1065,24 @@ export default function ConfrontoPage({ dailyRows }) {
       }));
     }
 
-    function buildYearCumBarSeries(getValue) {
+    function buildYearBarSeries(getValue) {
       return yearRows.map((s, i) => ({
         name: s.label,
         type: "bar",
         barMaxWidth: 12,
+        data: xAxis.map((_, idx) => getValue(s.rows[idx])),
+        itemStyle: { color: colors[i] },
+      }));
+    }
+
+    function buildYearCumLineSeries(getValue) {
+      return yearRows.map((s, i) => ({
+        name: s.label,
+        type: "line",
         data: cumulative(xAxis.map((_, idx) => n(getValue(s.rows[idx])))),
+        showSymbol: false,
+        connectNulls: false,
+        lineStyle: { width: 3, color: colors[i] },
         itemStyle: { color: colors[i] },
       }));
     }
@@ -1087,11 +1100,11 @@ export default function ConfrontoPage({ dailyRows }) {
     }
 
     if (param === "rain") {
-      return buildYearChart(baseChart, "Precipitazione giornaliera", xAxis, "mm", yearRows, (v) => `${Number(v).toFixed(1)} mm`, buildYearSeries((r) => safeVal(r?.rain_total)));
+      return buildYearChart(baseChart, "Precipitazione giornaliera", xAxis, "mm", yearRows, (v) => `${Number(v).toFixed(1)} mm`, buildYearBarSeries((r) => safeVal(r?.rain_total)));
     }
 
     if (param === "rain_cum") {
-      return buildYearChart(baseChart, "Precipitazione cumulata", xAxis, "mm", yearRows, (v) => `${Number(v).toFixed(1)} mm`, buildYearCumBarSeries((r) => safeVal(r?.rain_total)));
+      return buildYearChart(baseChart, "Precipitazione cumulata", xAxis, "mm", yearRows, (v) => `${Number(v).toFixed(1)} mm`, buildYearCumLineSeries((r) => safeVal(r?.rain_total)));
     }
 
     if (param === "humidity_max") {
@@ -1253,7 +1266,7 @@ export default function ConfrontoPage({ dailyRows }) {
           <div className="heroHead">
             <div>
               <div className="kicker">Archivio meteo</div>
-              <h1 className="pageTitle">Confronti climatici</h1>
+              <h1 className="pageTitle">Confronto climatico</h1>
               <p className="pageSub">
                 Confronto tra giorni, mesi e anni diversi con cumulata totale, cumulata grafica per la precipitazione e barra in basso per restringere l&apos;intervallo del grafico.
               </p>
