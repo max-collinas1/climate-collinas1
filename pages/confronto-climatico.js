@@ -203,6 +203,132 @@ function makeUniqueLabels(labels) {
   });
 }
 
+function pickColor(i) {
+  const colors = [
+    "#ff2d20",
+    "#2563eb",
+    "#2f9e44",
+    "#f28c28",
+    "#7c3aed",
+    "#0891b2",
+    "#dc2626",
+    "#65a30d",
+    "#ea580c",
+    "#0f766e",
+    "#4f46e5",
+    "#be185d",
+  ];
+  return colors[i % colors.length];
+}
+
+function buildEmptyChart(baseChart, text = "Seleziona almeno un elemento per visualizzare il grafico") {
+  return {
+    animation: false,
+    grid: { left: 72, right: 56, top: 58, bottom: 120 },
+    title: { left: "center", top: 10, text: "" },
+    legend: { show: false },
+    toolbox: { feature: { restore: {} }, right: 10, top: 10 },
+    tooltip: { show: false },
+    xAxis: {
+      type: "category",
+      data: [],
+      axisLine: { show: false },
+      axisTick: { show: false },
+      axisLabel: { show: false },
+      splitLine: { show: false },
+    },
+    yAxis: {
+      type: "value",
+      axisLine: { show: false },
+      axisTick: { show: false },
+      axisLabel: { show: false },
+      splitLine: { show: false },
+    },
+    dataZoom: [],
+    graphic: [
+      {
+        type: "text",
+        left: "center",
+        top: "middle",
+        style: {
+          text,
+          fill: "#64748b",
+          fontSize: 18,
+          fontWeight: 700,
+        },
+      },
+    ],
+    series: [],
+  };
+}
+
+function gaussianKernel(radius = 2, sigma = 1.2) {
+  const kernel = [];
+  let sum = 0;
+  for (let i = -radius; i <= radius; i += 1) {
+    const w = Math.exp(-(i * i) / (2 * sigma * sigma));
+    kernel.push(w);
+    sum += w;
+  }
+  return kernel.map((v) => v / sum);
+}
+
+function gaussianSmooth(values, radius = 2, sigma = 1.2) {
+  const arr = (values || []).map((v) => n(v)).map((v) => (Number.isFinite(v) ? v : 0));
+  if (!arr.length) return [];
+  const kernel = gaussianKernel(radius, sigma);
+  const out = [];
+
+  for (let i = 0; i < arr.length; i += 1) {
+    let s = 0;
+    for (let k = -radius; k <= radius; k += 1) {
+      const ix = i + k;
+      if (ix >= 0 && ix < arr.length) s += arr[ix] * kernel[k + radius];
+    }
+    out.push(Number(s.toFixed(3)));
+  }
+
+  return out;
+}
+
+function computeDistributionCurve(values, { binCount = 20, clampMin = null } = {}) {
+  const vals = (values || []).map(n).filter(Number.isFinite);
+  if (!vals.length) return null;
+
+  let min = Math.min(...vals);
+  let max = Math.max(...vals);
+
+  if (clampMin !== null) min = Math.min(min, clampMin);
+
+  if (min === max) {
+    min -= 0.5;
+    max += 0.5;
+  }
+
+  const width = (max - min) / binCount;
+  const labels = [];
+  const counts = Array.from({ length: binCount }, () => 0);
+
+  for (let i = 0; i < binCount; i += 1) {
+    const start = min + i * width;
+    const end = i === binCount - 1 ? max : min + (i + 1) * width;
+    const center = start + (end - start) / 2;
+    labels.push(center.toFixed(1));
+  }
+
+  for (const v of vals) {
+    let idx = Math.floor((v - min) / width);
+    if (idx < 0) idx = 0;
+    if (idx >= binCount) idx = binCount - 1;
+    counts[idx] += 1;
+  }
+
+  return {
+    xLabels: labels,
+    smoothCounts: gaussianSmooth(counts, 2, 1.15),
+  };
+}
+
 // -----------------------------------------------------
 // COMPAT FIELDS
 // -----------------------------------------------------
@@ -427,7 +553,7 @@ const DAILY_PARAMS = [
   { key: "solar", label: "Radiazione solare" },
 ];
 
-const PERIOD_PARAMS = [
+const MONTH_PARAMS = [
   { key: "temp_max", label: "Temperatura massima" },
   { key: "temp_mean", label: "Temperatura media" },
   { key: "temp_min", label: "Temperatura minima" },
@@ -443,7 +569,23 @@ const PERIOD_PARAMS = [
   { key: "solar", label: "Radiazione media" },
 ];
 
-const MAX_COMPARE = 4;
+const YEAR_PARAMS = [
+  { key: "temp_max", label: "Temperatura massima" },
+  { key: "temp_mean", label: "Temperatura media" },
+  { key: "temp_min", label: "Temperatura minima" },
+  { key: "rain", label: "Precipitazione giornaliera" },
+  { key: "rain_cum", label: "Precipitazione cumulata" },
+  { key: "humidity_max", label: "Umidità massima" },
+  { key: "humidity_mean", label: "Umidità media" },
+  { key: "humidity_min", label: "Umidità minima" },
+  { key: "wind", label: "Vento medio" },
+  { key: "gust", label: "Raffiche" },
+  { key: "pressure", label: "Pressione media" },
+  { key: "uv", label: "UV medio" },
+  { key: "solar", label: "Radiazione media" },
+  { key: "temp_mean_dist", label: "Distribuzione temperature medie giornaliere" },
+  { key: "rain_dist", label: "Distribuzione precipitazioni giornaliere" },
+];
 
 // -----------------------------------------------------
 // PAGE
@@ -486,77 +628,39 @@ export default function ConfrontoPage({ dailyRows }) {
     return map;
   }, [availableDates]);
 
-  const allMonths = useMemo(() => {
-    return Array.from(new Set(daily.map((r) => r.date.slice(0, 7)))).sort();
-  }, [daily]);
-
   const [mode, setMode] = useState("giorni");
   const [param, setParam] = useState("temp");
 
-  const dayDefaults = useMemo(() => {
-    const last = availableDates[availableDates.length - 1] || "";
-    const prev = availableDates[availableDates.length - 2] || last || "";
-    const prev2 = availableDates[availableDates.length - 3] || prev || "";
-    const prev3 = availableDates[availableDates.length - 4] || prev2 || "";
-    return [prev3, prev2, prev, last].filter(Boolean);
-  }, [availableDates]);
-
-  const monthDefaults = useMemo(() => {
-    const last = allMonths[allMonths.length - 1] || "";
-    const prev = allMonths[allMonths.length - 2] || last || "";
-    const prev2 = allMonths[allMonths.length - 3] || prev || "";
-    const prev3 = allMonths[allMonths.length - 4] || prev2 || "";
-    return [prev3, prev2, prev, last].filter(Boolean);
-  }, [allMonths]);
-
-  const yearDefaults = useMemo(() => {
-    const last = availableYears[availableYears.length - 1] || "";
-    const prev = availableYears[availableYears.length - 2] || last || "";
-    const prev2 = availableYears[availableYears.length - 3] || prev || "";
-    const prev3 = availableYears[availableYears.length - 4] || prev2 || "";
-    return [prev3, prev2, prev, last].filter(Boolean);
-  }, [availableYears]);
-
-  const [daySelections, setDaySelections] = useState(() =>
-    Array.from({ length: MAX_COMPARE }, (_, i) => ({
-      year: dayDefaults[i]?.slice(0, 4) || availableYears[0] || "",
-      month: dayDefaults[i]?.slice(5, 7) || (monthsByYear[availableYears[0] || ""]?.[0] || ""),
-      day: dayDefaults[i]?.slice(8, 10) || "",
-    }))
-  );
-
-  const [monthSelections, setMonthSelections] = useState(() =>
-    Array.from({ length: MAX_COMPARE }, (_, i) => ({
-      year: monthDefaults[i]?.slice(0, 4) || availableYears[0] || "",
-      month: monthDefaults[i]?.slice(5, 7) || "",
-    }))
-  );
-
-  const [yearSelections, setYearSelections] = useState(() =>
-    Array.from({ length: MAX_COMPARE }, (_, i) => ({
-      year: yearDefaults[i] || availableYears[0] || "",
-    }))
-  );
-
-  const [activeCount, setActiveCount] = useState(2);
+  const [daySelections, setDaySelections] = useState([]);
+  const [monthSelections, setMonthSelections] = useState([]);
+  const [yearSelections, setYearSelections] = useState([]);
   const [intradayData, setIntradayData] = useState({});
 
-  useEffect(() => {
-    if (mode === "giorni" && !DAILY_PARAMS.some((p) => p.key === param)) {
-      setParam("temp");
-    }
-    if ((mode === "mesi" || mode === "anni") && !PERIOD_PARAMS.some((p) => p.key === param)) {
-      setParam("temp_max");
-    }
-  }, [mode, param]);
+  const currentParams = useMemo(() => {
+    if (mode === "giorni") return DAILY_PARAMS;
+    if (mode === "mesi") return MONTH_PARAMS;
+    return YEAR_PARAMS;
+  }, [mode]);
 
   useEffect(() => {
-    if (mode !== "giorni") return;
+    const valid = currentParams.some((p) => p.key === param);
+    if (!valid) setParam(currentParams[0]?.key || "");
+  }, [mode, currentParams, param]);
+
+  useEffect(() => {
+    if (mode !== "giorni") {
+      setIntradayData({});
+      return;
+    }
 
     const ids = daySelections
-      .slice(0, activeCount)
       .map((s) => (s.year && s.month && s.day ? `${s.year}-${s.month}-${s.day}` : ""))
       .filter(Boolean);
+
+    if (!ids.length) {
+      setIntradayData({});
+      return;
+    }
 
     let alive = true;
 
@@ -595,7 +699,37 @@ export default function ConfrontoPage({ dailyRows }) {
     return () => {
       alive = false;
     };
-  }, [mode, activeCount, daySelections]);
+  }, [mode, daySelections]);
+
+  function addDaySelection() {
+    const y = availableYears[availableYears.length - 1] || "";
+    const m = monthsByYear[y]?.[monthsByYear[y]?.length - 1] || "";
+    const d = daysByYearMonth[`${y}-${m}`]?.[daysByYearMonth[`${y}-${m}`]?.length - 1] || "";
+    setDaySelections((prev) => [...prev, { year: y, month: m, day: d }]);
+  }
+
+  function addMonthSelection() {
+    const y = availableYears[availableYears.length - 1] || "";
+    const m = monthsByYear[y]?.[monthsByYear[y]?.length - 1] || "";
+    setMonthSelections((prev) => [...prev, { year: y, month: m }]);
+  }
+
+  function addYearSelection() {
+    const y = availableYears[availableYears.length - 1] || "";
+    setYearSelections((prev) => [...prev, { year: y }]);
+  }
+
+  function removeDaySelection(index) {
+    setDaySelections((prev) => prev.filter((_, i) => i !== index));
+  }
+
+  function removeMonthSelection(index) {
+    setMonthSelections((prev) => prev.filter((_, i) => i !== index));
+  }
+
+  function removeYearSelection(index) {
+    setYearSelections((prev) => prev.filter((_, i) => i !== index));
+  }
 
   function updateDaySelection(index, patch) {
     setDaySelections((prev) => {
@@ -644,13 +778,10 @@ export default function ConfrontoPage({ dailyRows }) {
     });
   }
 
-  const currentParams = mode === "giorni" ? DAILY_PARAMS : PERIOD_PARAMS;
-  const colors = ["#ff2d20", "#2563eb", "#2f9e44", "#f28c28"];
-
   const seriesLabels = useMemo(() => {
     if (mode === "giorni") {
       return makeUniqueLabels(
-        daySelections.slice(0, activeCount).map((s) => {
+        daySelections.map((s) => {
           if (!s.year || !s.month || !s.day) return "—";
           return formatDateIt(`${s.year}-${s.month}-${s.day}`);
         })
@@ -659,15 +790,15 @@ export default function ConfrontoPage({ dailyRows }) {
 
     if (mode === "mesi") {
       return makeUniqueLabels(
-        monthSelections.slice(0, activeCount).map((s) => {
+        monthSelections.map((s) => {
           if (!s.year || !s.month) return "—";
           return formatMonthYear(`${s.year}-${s.month}`);
         })
       );
     }
 
-    return makeUniqueLabels(yearSelections.slice(0, activeCount).map((s) => s.year || "—"));
-  }, [mode, activeCount, daySelections, monthSelections, yearSelections]);
+    return makeUniqueLabels(yearSelections.map((s) => s.year || "—"));
+  }, [mode, daySelections, monthSelections, yearSelections]);
 
   const baseChart = useMemo(() => {
     return {
@@ -675,6 +806,7 @@ export default function ConfrontoPage({ dailyRows }) {
       grid: { left: 72, right: 56, top: 58, bottom: 120 },
       title: { left: "center", top: 10 },
       legend: {
+        show: true,
         bottom: 44,
         left: "center",
         itemGap: 16,
@@ -685,6 +817,9 @@ export default function ConfrontoPage({ dailyRows }) {
       xAxis: {
         type: "category",
         axisLabel: { rotate: 0, margin: 14 },
+      },
+      yAxis: {
+        type: "value",
       },
       dataZoom: [
         {
@@ -710,29 +845,35 @@ export default function ConfrontoPage({ dailyRows }) {
           },
         },
       ],
+      graphic: [],
+      series: [],
     };
   }, []);
 
   const chartOption = useMemo(() => {
     if (mode === "giorni") {
       const selected = daySelections
-        .slice(0, activeCount)
         .map((s, i) => ({
           iso: s.year && s.month && s.day ? `${s.year}-${s.month}-${s.day}` : "",
           label: seriesLabels[i],
+          color: pickColor(i),
         }))
         .filter((x) => x.iso);
+
+      if (!selected.length) return buildEmptyChart(baseChart);
 
       const xAxis = Array.from(
         new Set(selected.flatMap((item) => (intradayData[item.iso] || []).map((r) => r.time)))
       ).sort();
 
+      if (!xAxis.length) return buildEmptyChart(baseChart, "Nessun dato intraday disponibile per la selezione");
+
       if (param === "temp") {
-        return buildDayLineChart(baseChart, "Temperatura", xAxis, "°C", selected, intradayData, colors, (row) => safeVal(row?.temp), (v) => `${Number(v).toFixed(1)} °C`);
+        return buildDayLineChart(baseChart, "Temperatura", xAxis, "°C", selected, intradayData, (row) => safeVal(row?.temp), (v) => `${Number(v).toFixed(1)} °C`);
       }
 
       if (param === "rh") {
-        return buildDayLineChart(baseChart, "Umidità relativa", xAxis, "%", selected, intradayData, colors, (row) => safeVal(row?.rh), (v) => `${Math.round(Number(v))} %`, {
+        return buildDayLineChart(baseChart, "Umidità relativa", xAxis, "%", selected, intradayData, (row) => safeVal(row?.rh), (v) => `${Math.round(Number(v))} %`, {
           min: 0,
           max: 100,
           axisLabelFormatter: (v) => `${Math.round(Number(v))}`,
@@ -744,6 +885,15 @@ export default function ConfrontoPage({ dailyRows }) {
           ...baseChart,
           title: { ...baseChart.title, text: "Precipitazioni cumulate" },
           xAxis: { ...baseChart.xAxis, data: xAxis },
+          yAxis: {
+            type: "value",
+            name: "mm",
+            nameLocation: "middle",
+            nameRotate: 90,
+            nameGap: 52,
+            scale: true,
+            axisLabel: { formatter: (v) => Number(v).toFixed(1) },
+          },
           tooltip: {
             trigger: "axis",
             order: "seriesAsc",
@@ -756,53 +906,47 @@ export default function ConfrontoPage({ dailyRows }) {
                 }))
               ),
           },
-          yAxis: {
-            type: "value",
-            name: "mm",
-            nameLocation: "middle",
-            nameRotate: 90,
-            nameGap: 52,
-            scale: true,
-            axisLabel: { formatter: (v) => Number(v).toFixed(1) },
-          },
-          series: selected.map((s, i) => {
+          series: selected.map((s) => {
             const map = new Map((intradayData[s.iso] || []).map((r) => [r.time, r]));
             return {
               name: s.label,
-              type: "bar",
-              barMaxWidth: 18,
+              type: "line",
               data: cumulative(xAxis.map((t) => n(map.get(t)?.rain))),
-              itemStyle: { color: colors[i] },
+              showSymbol: false,
+              connectNulls: false,
+              lineStyle: { width: 3, color: s.color },
+              itemStyle: { color: s.color },
+              smooth: false,
             };
           }),
         };
       }
 
       if (param === "wind") {
-        return buildDayLineChart(baseChart, "Vento medio", xAxis, "km/h", selected, intradayData, colors, (row) => safeVal(row?.wind), (v) => `${Number(v).toFixed(1)} km/h`, {
+        return buildDayLineChart(baseChart, "Vento medio", xAxis, "km/h", selected, intradayData, (row) => safeVal(row?.wind), (v) => `${Number(v).toFixed(1)} km/h`, {
           axisLabelFormatter: (v) => Number(v).toFixed(0),
         });
       }
 
       if (param === "gust") {
-        return buildDayLineChart(baseChart, "Raffiche", xAxis, "km/h", selected, intradayData, colors, (row) => safeVal(row?.gust), (v) => `${Number(v).toFixed(1)} km/h`, {
+        return buildDayLineChart(baseChart, "Raffiche", xAxis, "km/h", selected, intradayData, (row) => safeVal(row?.gust), (v) => `${Number(v).toFixed(1)} km/h`, {
           axisLabelFormatter: (v) => Number(v).toFixed(0),
         });
       }
 
       if (param === "press") {
-        return buildDayLineChart(baseChart, "Pressione relativa", xAxis, "hPa", selected, intradayData, colors, (row) => safeVal(row?.press), (v) => `${Number(v).toFixed(1)} hPa`, {
+        return buildDayLineChart(baseChart, "Pressione relativa", xAxis, "hPa", selected, intradayData, (row) => safeVal(row?.press), (v) => `${Number(v).toFixed(1)} hPa`, {
           axisLabelFormatter: (v) => Number(v).toFixed(0),
         });
       }
 
       if (param === "uv") {
-        return buildDayLineChart(baseChart, "Indice UV", xAxis, "UV", selected, intradayData, colors, (row) => safeVal(row?.uv), (v) => `${Number(v).toFixed(1)}`, {
+        return buildDayLineChart(baseChart, "Indice UV", xAxis, "UV", selected, intradayData, (row) => safeVal(row?.uv), (v) => `${Number(v).toFixed(1)}`, {
           axisLabelFormatter: (v) => Number(v).toFixed(1),
         });
       }
 
-      return buildDayLineChart(baseChart, "Radiazione solare", xAxis, "W/m²", selected, intradayData, colors, (row) => safeVal(row?.solar), (v) => `${Math.round(Number(v))} W/m²`, {
+      return buildDayLineChart(baseChart, "Radiazione solare", xAxis, "W/m²", selected, intradayData, (row) => safeVal(row?.solar), (v) => `${Math.round(Number(v))} W/m²`, {
         axisLabelFormatter: (v) => `${Math.round(Number(v))}`,
         nameGap: 56,
       });
@@ -810,12 +954,14 @@ export default function ConfrontoPage({ dailyRows }) {
 
     if (mode === "mesi") {
       const selected = monthSelections
-        .slice(0, activeCount)
         .map((s, i) => ({
           ym: s.year && s.month ? `${s.year}-${s.month}` : "",
           label: seriesLabels[i],
+          color: pickColor(i),
         }))
         .filter((x) => x.ym);
+
+      if (!selected.length) return buildEmptyChart(baseChart);
 
       const maxDays = Math.max(...selected.map((s) => daysInMonth(s.ym.slice(0, 4), s.ym.slice(5, 7))), 31);
       const xAxis = Array.from({ length: maxDays }, (_, i) => String(i + 1));
@@ -828,42 +974,15 @@ export default function ConfrontoPage({ dailyRows }) {
       });
 
       if (param === "temp_max") {
-        return buildSimpleLineChart({
-          baseChart,
-          title: "Temperatura massima",
-          xAxis,
-          yName: "°C",
-          formatValue: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} °C`),
-          seriesData,
-          colors,
-          getValue: (map, d) => safeVal(map.get(Number(d))?.tmax),
-        });
+        return buildSimpleLineChart({ baseChart, title: "Temperatura massima", xAxis, yName: "°C", formatValue: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} °C`), seriesData, getValue: (map, d) => safeVal(map.get(Number(d))?.tmax) });
       }
 
       if (param === "temp_mean") {
-        return buildSimpleLineChart({
-          baseChart,
-          title: "Temperatura media",
-          xAxis,
-          yName: "°C",
-          formatValue: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} °C`),
-          seriesData,
-          colors,
-          getValue: (map, d) => safeVal(map.get(Number(d))?.tmean),
-        });
+        return buildSimpleLineChart({ baseChart, title: "Temperatura media", xAxis, yName: "°C", formatValue: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} °C`), seriesData, getValue: (map, d) => safeVal(map.get(Number(d))?.tmean) });
       }
 
       if (param === "temp_min") {
-        return buildSimpleLineChart({
-          baseChart,
-          title: "Temperatura minima",
-          xAxis,
-          yName: "°C",
-          formatValue: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} °C`),
-          seriesData,
-          colors,
-          getValue: (map, d) => safeVal(map.get(Number(d))?.tmin),
-        });
+        return buildSimpleLineChart({ baseChart, title: "Temperatura minima", xAxis, yName: "°C", formatValue: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} °C`), seriesData, getValue: (map, d) => safeVal(map.get(Number(d))?.tmin) });
       }
 
       if (param === "rain") {
@@ -871,6 +990,15 @@ export default function ConfrontoPage({ dailyRows }) {
           ...baseChart,
           title: { ...baseChart.title, text: "Precipitazione giornaliera" },
           xAxis: { ...baseChart.xAxis, data: xAxis },
+          yAxis: {
+            type: "value",
+            name: "mm",
+            nameLocation: "middle",
+            nameRotate: 90,
+            nameGap: 52,
+            scale: true,
+            axisLabel: { formatter: (v) => Number(v).toFixed(1) },
+          },
           tooltip: {
             trigger: "axis",
             order: "seriesAsc",
@@ -883,21 +1011,12 @@ export default function ConfrontoPage({ dailyRows }) {
                 }))
               ),
           },
-          yAxis: {
-            type: "value",
-            name: "mm",
-            nameLocation: "middle",
-            nameRotate: 90,
-            nameGap: 52,
-            scale: true,
-            axisLabel: { formatter: (v) => Number(v).toFixed(1) },
-          },
-          series: seriesData.map((s, i) => ({
+          series: seriesData.map((s) => ({
             name: s.label,
             type: "bar",
             barMaxWidth: 18,
             data: xAxis.map((d) => safeVal(s.map.get(Number(d))?.rain_total)),
-            itemStyle: { color: colors[i] },
+            itemStyle: { color: s.color },
           })),
         };
       }
@@ -910,7 +1029,6 @@ export default function ConfrontoPage({ dailyRows }) {
           yName: "mm",
           formatValue: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} mm`),
           seriesData,
-          colors,
           getValue: (map, d) => {
             const vals = xAxis.slice(0, Number(d)).map((dd) => n(map.get(Number(dd))?.rain_total));
             const cum = cumulative(vals);
@@ -920,170 +1038,150 @@ export default function ConfrontoPage({ dailyRows }) {
       }
 
       if (param === "humidity_max") {
-        return buildSimpleLineChart({
-          baseChart,
-          title: "Umidità massima",
-          xAxis,
-          yName: "%",
-          formatValue: (v) => (v == null ? "—" : `${Math.round(Number(v))} %`),
-          seriesData,
-          colors,
-          yMin: 0,
-          yMax: 100,
-          getValue: (map, d) => safeVal(getRhMax(map.get(Number(d)))),
-          axisLabelFormatter: (v) => `${Math.round(Number(v))}`,
-        });
+        return buildSimpleLineChart({ baseChart, title: "Umidità massima", xAxis, yName: "%", formatValue: (v) => (v == null ? "—" : `${Math.round(Number(v))} %`), seriesData, yMin: 0, yMax: 100, getValue: (map, d) => safeVal(getRhMax(map.get(Number(d)))), axisLabelFormatter: (v) => `${Math.round(Number(v))}` });
       }
 
       if (param === "humidity_mean") {
-        return buildSimpleLineChart({
-          baseChart,
-          title: "Umidità media",
-          xAxis,
-          yName: "%",
-          formatValue: (v) => (v == null ? "—" : `${Math.round(Number(v))} %`),
-          seriesData,
-          colors,
-          yMin: 0,
-          yMax: 100,
-          getValue: (map, d) => safeVal(getRhMean(map.get(Number(d)))),
-          axisLabelFormatter: (v) => `${Math.round(Number(v))}`,
-        });
+        return buildSimpleLineChart({ baseChart, title: "Umidità media", xAxis, yName: "%", formatValue: (v) => (v == null ? "—" : `${Math.round(Number(v))} %`), seriesData, yMin: 0, yMax: 100, getValue: (map, d) => safeVal(getRhMean(map.get(Number(d)))), axisLabelFormatter: (v) => `${Math.round(Number(v))}` });
       }
 
       if (param === "humidity_min") {
-        return buildSimpleLineChart({
-          baseChart,
-          title: "Umidità minima",
-          xAxis,
-          yName: "%",
-          formatValue: (v) => (v == null ? "—" : `${Math.round(Number(v))} %`),
-          seriesData,
-          colors,
-          yMin: 0,
-          yMax: 100,
-          getValue: (map, d) => safeVal(getRhMin(map.get(Number(d)))),
-          axisLabelFormatter: (v) => `${Math.round(Number(v))}`,
-        });
+        return buildSimpleLineChart({ baseChart, title: "Umidità minima", xAxis, yName: "%", formatValue: (v) => (v == null ? "—" : `${Math.round(Number(v))} %`), seriesData, yMin: 0, yMax: 100, getValue: (map, d) => safeVal(getRhMin(map.get(Number(d)))), axisLabelFormatter: (v) => `${Math.round(Number(v))}` });
       }
 
       if (param === "wind") {
-        return buildSimpleLineChart({
-          baseChart,
-          title: "Vento medio",
-          xAxis,
-          yName: "km/h",
-          formatValue: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} km/h`),
-          seriesData,
-          colors,
-          getValue: (map, d) => safeVal(map.get(Number(d))?.wind_avg),
-          axisLabelFormatter: (v) => Number(v).toFixed(0),
-        });
+        return buildSimpleLineChart({ baseChart, title: "Vento medio", xAxis, yName: "km/h", formatValue: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} km/h`), seriesData, getValue: (map, d) => safeVal(map.get(Number(d))?.wind_avg), axisLabelFormatter: (v) => Number(v).toFixed(0) });
       }
 
       if (param === "gust") {
-        return buildSimpleLineChart({
-          baseChart,
-          title: "Raffiche",
-          xAxis,
-          yName: "km/h",
-          formatValue: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} km/h`),
-          seriesData,
-          colors,
-          getValue: (map, d) => safeVal(map.get(Number(d))?.gust_max),
-          axisLabelFormatter: (v) => Number(v).toFixed(0),
-        });
+        return buildSimpleLineChart({ baseChart, title: "Raffiche", xAxis, yName: "km/h", formatValue: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} km/h`), seriesData, getValue: (map, d) => safeVal(map.get(Number(d))?.gust_max), axisLabelFormatter: (v) => Number(v).toFixed(0) });
       }
 
       if (param === "pressure") {
-        return buildSimpleLineChart({
-          baseChart,
-          title: "Pressione media",
-          xAxis,
-          yName: "hPa",
-          formatValue: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} hPa`),
-          seriesData,
-          colors,
-          getValue: (map, d) => safeVal(map.get(Number(d))?.press_avg),
-          axisLabelFormatter: (v) => Number(v).toFixed(0),
-        });
+        return buildSimpleLineChart({ baseChart, title: "Pressione media", xAxis, yName: "hPa", formatValue: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} hPa`), seriesData, getValue: (map, d) => safeVal(map.get(Number(d))?.press_avg), axisLabelFormatter: (v) => Number(v).toFixed(0) });
       }
 
       if (param === "uv") {
-        return buildSimpleLineChart({
-          baseChart,
-          title: "UV medio",
-          xAxis,
-          yName: "UV",
-          formatValue: (v) => (v == null ? "—" : `${Number(v).toFixed(1)}`),
-          seriesData,
-          colors,
-          getValue: (map, d) => safeVal(map.get(Number(d))?.uv_mean_pos),
-          axisLabelFormatter: (v) => Number(v).toFixed(1),
-        });
+        return buildSimpleLineChart({ baseChart, title: "UV medio", xAxis, yName: "UV", formatValue: (v) => (v == null ? "—" : `${Number(v).toFixed(1)}`), seriesData, getValue: (map, d) => safeVal(map.get(Number(d))?.uv_mean_pos), axisLabelFormatter: (v) => Number(v).toFixed(1) });
       }
 
-      return buildSimpleLineChart({
-        baseChart,
-        title: "Radiazione media",
-        xAxis,
-        yName: "W/m²",
-        formatValue: (v) => (v == null ? "—" : `${Math.round(Number(v))} W/m²`),
-        seriesData,
-        colors,
-        getValue: (map, d) => safeVal(map.get(Number(d))?.solar_mean_pos),
-        axisLabelFormatter: (v) => `${Math.round(Number(v))}`,
-        nameGap: 56,
-      });
+      return buildSimpleLineChart({ baseChart, title: "Radiazione media", xAxis, yName: "W/m²", formatValue: (v) => (v == null ? "—" : `${Math.round(Number(v))} W/m²`), seriesData, getValue: (map, d) => safeVal(map.get(Number(d))?.solar_mean_pos), axisLabelFormatter: (v) => `${Math.round(Number(v))}`, nameGap: 56 });
     }
 
     const selected = yearSelections
-      .slice(0, activeCount)
       .map((s, i) => ({
         year: s.year || "",
         label: seriesLabels[i],
+        color: pickColor(i),
       }))
       .filter((x) => x.year);
+
+    if (!selected.length) return buildEmptyChart(baseChart);
 
     const yearRows = selected.map((s) => ({
       ...s,
       rows: aggregateYearRows(daily, s.year),
     }));
 
+    if (param === "temp_mean_dist" || param === "rain_dist") {
+      const curves = yearRows.map((s) => {
+        const values = param === "temp_mean_dist" ? s.rows.map((r) => r.tmean) : s.rows.map((r) => r.rain_total);
+
+        const dist = computeDistributionCurve(values, {
+          binCount: param === "temp_mean_dist" ? 20 : 22,
+          clampMin: param === "rain_dist" ? 0 : null,
+        });
+
+        return { ...s, dist };
+      });
+
+      const firstValid = curves.find((x) => x.dist);
+      if (!firstValid) return buildEmptyChart(baseChart, "Nessun dato disponibile per la distribuzione");
+
+      const xAxis = firstValid.dist.xLabels;
+
+      return {
+        ...baseChart,
+        title: {
+          ...baseChart.title,
+          text: param === "temp_mean_dist" ? "Distribuzione temperature medie giornaliere" : "Distribuzione precipitazioni giornaliere",
+        },
+        xAxis: {
+          ...baseChart.xAxis,
+          data: xAxis,
+          axisLabel: { rotate: 0, margin: 14 },
+          name: param === "temp_mean_dist" ? "°C" : "mm",
+          nameLocation: "middle",
+          nameGap: 34,
+        },
+        yAxis: {
+          type: "value",
+          name: "Frequenza",
+          nameLocation: "middle",
+          nameRotate: 90,
+          nameGap: 52,
+          scale: true,
+          axisLabel: { formatter: (v) => Number(v).toFixed(0) },
+        },
+        tooltip: {
+          trigger: "axis",
+          order: "seriesAsc",
+          formatter: (params) =>
+            axisTooltipFormatter(
+              params,
+              curves.map((s) => ({
+                name: s.label,
+                formatter: (v) => `${Number(v).toFixed(1)} giorni`,
+              }))
+            ),
+        },
+        series: curves.map((s) => ({
+          name: s.label,
+          type: "line",
+          data: s.dist ? s.dist.smoothCounts : xAxis.map(() => null),
+          showSymbol: false,
+          smooth: true,
+          connectNulls: false,
+          lineStyle: { width: 3, color: s.color },
+          itemStyle: { color: s.color },
+        })),
+      };
+    }
+
     const maxDays = Math.max(...yearRows.map((s) => s.rows.length), 366, 365);
     const xAxis = Array.from({ length: maxDays }, (_, i) => String(i + 1));
 
     function buildYearSeries(getValue) {
-      return yearRows.map((s, i) => ({
+      return yearRows.map((s) => ({
         name: s.label,
         type: "line",
         data: xAxis.map((_, idx) => getValue(s.rows[idx])),
         showSymbol: false,
         connectNulls: false,
-        lineStyle: { width: 3, color: colors[i] },
-        itemStyle: { color: colors[i] },
+        lineStyle: { width: 3, color: s.color },
+        itemStyle: { color: s.color },
       }));
     }
 
     function buildYearBarSeries(getValue) {
-      return yearRows.map((s, i) => ({
+      return yearRows.map((s) => ({
         name: s.label,
         type: "bar",
         barMaxWidth: 12,
         data: xAxis.map((_, idx) => getValue(s.rows[idx])),
-        itemStyle: { color: colors[i] },
+        itemStyle: { color: s.color },
       }));
     }
 
     function buildYearCumLineSeries(getValue) {
-      return yearRows.map((s, i) => ({
+      return yearRows.map((s) => ({
         name: s.label,
         type: "line",
         data: cumulative(xAxis.map((_, idx) => n(getValue(s.rows[idx])))),
         showSymbol: false,
         connectNulls: false,
-        lineStyle: { width: 3, color: colors[i] },
-        itemStyle: { color: colors[i] },
+        lineStyle: { width: 3, color: s.color },
+        itemStyle: { color: s.color },
       }));
     }
 
@@ -1159,22 +1257,22 @@ export default function ConfrontoPage({ dailyRows }) {
       axisLabelFormatter: (v) => `${Math.round(Number(v))}`,
       nameGap: 56,
     });
-  }, [
-    mode,
-    param,
-    activeCount,
-    daySelections,
-    monthSelections,
-    yearSelections,
-    seriesLabels,
-    intradayData,
-    daily,
-    baseChart,
-  ]);
+  }, [mode, param, daySelections, monthSelections, yearSelections, seriesLabels, intradayData, daily, baseChart]);
+
+  const chartKey = useMemo(() => {
+    return JSON.stringify({
+      mode,
+      param,
+      days: daySelections,
+      months: monthSelections,
+      years: yearSelections,
+      intradayKeys: Object.keys(intradayData).sort(),
+    });
+  }, [mode, param, daySelections, monthSelections, yearSelections, intradayData]);
 
   const summaries = useMemo(() => {
     if (mode === "giorni") {
-      return daySelections.slice(0, activeCount).map((s) => {
+      return daySelections.map((s) => {
         const iso = s.year && s.month && s.day ? `${s.year}-${s.month}-${s.day}` : "";
         const rows = iso ? intradayData[iso] || [] : [];
         const sum = summarizeDailyIntraday(rows);
@@ -1244,35 +1342,34 @@ export default function ConfrontoPage({ dailyRows }) {
     }
 
     if (mode === "mesi") {
-      return monthSelections.slice(0, activeCount).map((s) => {
+      return monthSelections.map((s) => {
         const ym = s.year && s.month ? `${s.year}-${s.month}` : "";
         const rows = ym ? aggregateMonthRows(daily, s.year, s.month) : [];
         const sum = summarizePeriodDailyRows(rows);
-        return buildPeriodSummaryCard(param, ym ? formatMonthYear(ym) : "—", sum);
+        return buildPeriodSummaryCard(param, ym ? formatMonthYear(ym) : "—", sum, rows);
       });
     }
 
-    return yearSelections.slice(0, activeCount).map((s) => {
+    return yearSelections.map((s) => {
       const rows = s.year ? aggregateYearRows(daily, s.year) : [];
       const sum = summarizePeriodDailyRows(rows);
-      return buildPeriodSummaryCard(param, s.year || "—", sum);
+      return buildPeriodSummaryCard(param, s.year || "—", sum, rows);
     });
-  }, [mode, param, activeCount, daySelections, monthSelections, yearSelections, intradayData, daily]);
+  }, [mode, param, daySelections, monthSelections, yearSelections, intradayData, daily]);
+
+  const summaryCols = summaries.length === 0 ? 1 : Math.min(summaries.length, 4);
 
   return (
-    <SiteLayout headerProps={{}}>
+    <SiteLayout
+      headerProps={{
+        title: "Confronto climatico",
+        subtitle: "Confronto tra giorni, mesi e anni di tutti i parametri",
+        showPeriod: false,
+        currentPath: "/confronto-climatico",
+      }}
+    >
       <div className="wrap">
         <section className="hero">
-          <div className="heroHead">
-            <div>
-              <div className="kicker">Archivio meteo</div>
-              <h1 className="pageTitle">Confronto climatico</h1>
-              <p className="pageSub">
-                Confronto tra giorni, mesi e anni diversi con cumulata totale, cumulata grafica per la precipitazione e barra in basso per restringere l&apos;intervallo del grafico.
-              </p>
-            </div>
-          </div>
-
           <div className="topControls">
             <div className="controlCard">
               <div className="controlLabel">Tipo di confronto</div>
@@ -1285,22 +1382,6 @@ export default function ConfrontoPage({ dailyRows }) {
                     onClick={() => setMode(opt.key)}
                   >
                     {opt.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="controlCard">
-              <div className="controlLabel">Numero confronti</div>
-              <div className="pillRow">
-                {[2, 3, 4].map((count) => (
-                  <button
-                    key={count}
-                    type="button"
-                    className={`pill ${activeCount === count ? "active" : ""}`}
-                    onClick={() => setActiveCount(count)}
-                  >
-                    {count}
                   </button>
                 ))}
               </div>
@@ -1321,173 +1402,226 @@ export default function ConfrontoPage({ dailyRows }) {
           </div>
 
           {mode === "giorni" && (
-            <div className="selectorsGrid">
-              {daySelections.slice(0, activeCount).map((sel, index) => {
-                const months = monthsByYear[sel.year] || [];
-                const days = daysByYearMonth[`${sel.year}-${sel.month}`] || [];
+            <>
+              <div className="toolbarRow">
+                <button type="button" className="addButton" onClick={addDaySelection}>
+                  + Aggiungi giorno
+                </button>
+              </div>
 
-                return (
-                  <div className="selectorCard" key={`day-${index}`}>
-                    <div className="selectorTitle">Giorno {index + 1}</div>
+              {daySelections.length > 0 && (
+                <div className="selectorsGrid">
+                  {daySelections.map((sel, index) => {
+                    const months = monthsByYear[sel.year] || [];
+                    const days = daysByYearMonth[`${sel.year}-${sel.month}`] || [];
 
-                    <div className="tripleGrid">
-                      <div>
-                        <div className="miniLabel">Anno</div>
-                        <div className="selectWrap">
-                          <select
-                            className="selectNative"
-                            value={sel.year}
-                            onChange={(e) => updateDaySelection(index, { year: e.target.value })}
-                          >
-                            {availableYears.map((y) => (
-                              <option key={y} value={y}>
-                                {y}
-                              </option>
-                            ))}
-                          </select>
+                    return (
+                      <div className="selectorCard" key={`day-${index}`}>
+                        <div className="selectorHead">
+                          <div className="selectorTitle">Giorno {index + 1}</div>
+                          <button type="button" className="removeButton" onClick={() => removeDaySelection(index)}>
+                            Rimuovi
+                          </button>
+                        </div>
+
+                        <div className="tripleGrid">
+                          <div>
+                            <div className="miniLabel">Anno</div>
+                            <div className="selectWrap">
+                              <select
+                                className="selectNative"
+                                value={sel.year}
+                                onChange={(e) => updateDaySelection(index, { year: e.target.value })}
+                              >
+                                {availableYears.map((y) => (
+                                  <option key={y} value={y}>
+                                    {y}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          </div>
+
+                          <div>
+                            <div className="miniLabel">Mese</div>
+                            <div className="selectWrap">
+                              <select
+                                className="selectNative"
+                                value={sel.month}
+                                onChange={(e) => updateDaySelection(index, { month: e.target.value })}
+                              >
+                                {months.map((m) => (
+                                  <option key={m} value={m}>
+                                    {MONTHS_IT_FULL[Number(m) - 1]}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          </div>
+
+                          <div>
+                            <div className="miniLabel">Giorno</div>
+                            <div className="selectWrap">
+                              <select
+                                className="selectNative"
+                                value={sel.day}
+                                onChange={(e) => updateDaySelection(index, { day: e.target.value })}
+                              >
+                                {days.map((d) => (
+                                  <option key={d} value={d}>
+                                    {Number(d)}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          </div>
                         </div>
                       </div>
-
-                      <div>
-                        <div className="miniLabel">Mese</div>
-                        <div className="selectWrap">
-                          <select
-                            className="selectNative"
-                            value={sel.month}
-                            onChange={(e) => updateDaySelection(index, { month: e.target.value })}
-                          >
-                            {months.map((m) => (
-                              <option key={m} value={m}>
-                                {MONTHS_IT_FULL[Number(m) - 1]}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                      </div>
-
-                      <div>
-                        <div className="miniLabel">Giorno</div>
-                        <div className="selectWrap">
-                          <select
-                            className="selectNative"
-                            value={sel.day}
-                            onChange={(e) => updateDaySelection(index, { day: e.target.value })}
-                          >
-                            {days.map((d) => (
-                              <option key={d} value={d}>
-                                {Number(d)}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+                    );
+                  })}
+                </div>
+              )}
+            </>
           )}
 
           {mode === "mesi" && (
-            <div className="selectorsGrid">
-              {monthSelections.slice(0, activeCount).map((sel, index) => {
-                const months = monthsByYear[sel.year] || [];
+            <>
+              <div className="toolbarRow">
+                <button type="button" className="addButton" onClick={addMonthSelection}>
+                  + Aggiungi mese
+                </button>
+              </div>
 
-                return (
-                  <div className="selectorCard" key={`month-${index}`}>
-                    <div className="selectorTitle">Mese {index + 1}</div>
+              {monthSelections.length > 0 && (
+                <div className="selectorsGrid">
+                  {monthSelections.map((sel, index) => {
+                    const months = monthsByYear[sel.year] || [];
 
-                    <div className="doubleGrid">
-                      <div>
-                        <div className="miniLabel">Mese</div>
-                        <div className="selectWrap">
-                          <select
-                            className="selectNative"
-                            value={sel.month}
-                            onChange={(e) => updateMonthSelection(index, { month: e.target.value })}
-                          >
-                            {months.map((m) => (
-                              <option key={m} value={m}>
-                                {MONTHS_IT_FULL[Number(m) - 1]}
-                              </option>
-                            ))}
-                          </select>
+                    return (
+                      <div className="selectorCard" key={`month-${index}`}>
+                        <div className="selectorHead">
+                          <div className="selectorTitle">Mese {index + 1}</div>
+                          <button type="button" className="removeButton" onClick={() => removeMonthSelection(index)}>
+                            Rimuovi
+                          </button>
+                        </div>
+
+                        <div className="doubleGrid">
+                          <div>
+                            <div className="miniLabel">Mese</div>
+                            <div className="selectWrap">
+                              <select
+                                className="selectNative"
+                                value={sel.month}
+                                onChange={(e) => updateMonthSelection(index, { month: e.target.value })}
+                              >
+                                {months.map((m) => (
+                                  <option key={m} value={m}>
+                                    {MONTHS_IT_FULL[Number(m) - 1]}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          </div>
+
+                          <div>
+                            <div className="miniLabel">Anno</div>
+                            <div className="selectWrap">
+                              <select
+                                className="selectNative"
+                                value={sel.year}
+                                onChange={(e) => updateMonthSelection(index, { year: e.target.value })}
+                              >
+                                {availableYears.map((y) => (
+                                  <option key={y} value={y}>
+                                    {y}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          </div>
                         </div>
                       </div>
-
-                      <div>
-                        <div className="miniLabel">Anno</div>
-                        <div className="selectWrap">
-                          <select
-                            className="selectNative"
-                            value={sel.year}
-                            onChange={(e) => updateMonthSelection(index, { year: e.target.value })}
-                          >
-                            {availableYears.map((y) => (
-                              <option key={y} value={y}>
-                                {y}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+                    );
+                  })}
+                </div>
+              )}
+            </>
           )}
 
           {mode === "anni" && (
-            <div className="selectorsGrid">
-              {yearSelections.slice(0, activeCount).map((sel, index) => (
-                <div className="selectorCard" key={`year-${index}`}>
-                  <div className="selectorTitle">Anno {index + 1}</div>
+            <>
+              <div className="toolbarRow">
+                <button type="button" className="addButton" onClick={addYearSelection}>
+                  + Aggiungi anno
+                </button>
+              </div>
 
-                  <div className="singleGrid">
-                    <div>
-                      <div className="miniLabel">Anno</div>
-                      <div className="selectWrap">
-                        <select
-                          className="selectNative"
-                          value={sel.year}
-                          onChange={(e) => updateYearSelection(index, { year: e.target.value })}
-                        >
-                          {availableYears.map((y) => (
-                            <option key={y} value={y}>
-                              {y}
-                            </option>
-                          ))}
-                        </select>
+              {yearSelections.length > 0 && (
+                <div className="selectorsGrid">
+                  {yearSelections.map((sel, index) => (
+                    <div className="selectorCard" key={`year-${index}`}>
+                      <div className="selectorHead">
+                        <div className="selectorTitle">Anno {index + 1}</div>
+                        <button type="button" className="removeButton" onClick={() => removeYearSelection(index)}>
+                          Rimuovi
+                        </button>
+                      </div>
+
+                      <div className="singleGrid">
+                        <div>
+                          <div className="miniLabel">Anno</div>
+                          <div className="selectWrap">
+                            <select
+                              className="selectNative"
+                              value={sel.year}
+                              onChange={(e) => updateYearSelection(index, { year: e.target.value })}
+                            >
+                              {availableYears.map((y) => (
+                                <option key={y} value={y}>
+                                  {y}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
                       </div>
                     </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+
+          {summaries.length > 0 && (
+            <div className={`summaryGrid cols-${summaryCols}`}>
+              {summaries.map((card, index) => (
+                <div className="summaryCard" key={`${card.title}-${index}`}>
+                  <div className="summaryTitle">{card.title}</div>
+                  <div className="summaryList">
+                    {card.items.map(([k, v]) => (
+                      <div className="summaryRow" key={`${card.title}-${k}`}>
+                        <span>{k}</span>
+                        <strong>{v}</strong>
+                      </div>
+                    ))}
                   </div>
                 </div>
               ))}
             </div>
           )}
-
-          <div className={`summaryGrid cols-${activeCount}`}>
-            {summaries.map((card, index) => (
-              <div className="summaryCard" key={`${card.title}-${index}`}>
-                <div className="summaryTitle">{card.title}</div>
-                <div className="summaryList">
-                  {card.items.map(([k, v]) => (
-                    <div className="summaryRow" key={`${card.title}-${k}`}>
-                      <span>{k}</span>
-                      <strong>{v}</strong>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
         </section>
 
         {mounted && (
           <section className="chartSection">
             <div className="chartBox">
-              <ReactECharts option={chartOption} style={{ height: 560, width: "100%" }} />
+              <ReactECharts
+                key={chartKey}
+                option={chartOption}
+                notMerge={true}
+                lazyUpdate={false}
+                style={{ height: 560, width: "100%" }}
+              />
             </div>
           </section>
         )}
@@ -1506,40 +1640,9 @@ export default function ConfrontoPage({ dailyRows }) {
             padding: 22px;
           }
 
-          .heroHead {
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-start;
-            gap: 18px;
-            margin-bottom: 18px;
-          }
-
-          .kicker {
-            font-size: 12px;
-            letter-spacing: 0.14em;
-            text-transform: uppercase;
-            opacity: 0.6;
-            margin-bottom: 8px;
-          }
-
-          .pageTitle {
-            margin: 0;
-            font-size: 42px;
-            line-height: 1;
-            letter-spacing: -0.04em;
-          }
-
-          .pageSub {
-            margin: 10px 0 0;
-            font-size: 14px;
-            line-height: 1.5;
-            color: #667085;
-            font-weight: 700;
-          }
-
           .topControls {
             display: grid;
-            grid-template-columns: 1fr 1fr 1.4fr;
+            grid-template-columns: 1fr 1.4fr;
             gap: 12px;
           }
 
@@ -1598,11 +1701,53 @@ export default function ConfrontoPage({ dailyRows }) {
             border-color: #cfd8ea;
           }
 
+          .toolbarRow {
+            margin-top: 12px;
+            display: flex;
+            justify-content: flex-start;
+          }
+
+          .addButton {
+            appearance: none;
+            border: 1px solid #cfd8ea;
+            background: #f5f8ff;
+            color: #0b1b3b;
+            border-radius: 14px;
+            padding: 12px 16px;
+            font-size: 14px;
+            font-weight: 900;
+            cursor: pointer;
+          }
+
           .selectorsGrid {
             margin-top: 12px;
             display: grid;
             grid-template-columns: repeat(2, minmax(0, 1fr));
             gap: 12px;
+          }
+
+          .selectorHead {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 12px;
+          }
+
+          .selectorHead .selectorTitle {
+            margin-bottom: 0;
+          }
+
+          .removeButton {
+            appearance: none;
+            border: 1px solid #ead1d1;
+            background: #fff7f7;
+            color: #991b1b;
+            border-radius: 12px;
+            padding: 8px 12px;
+            font-size: 12px;
+            font-weight: 900;
+            cursor: pointer;
           }
 
           .tripleGrid {
@@ -1676,6 +1821,10 @@ export default function ConfrontoPage({ dailyRows }) {
             gap: 12px;
           }
 
+          .summaryGrid.cols-1 {
+            grid-template-columns: 1fr;
+          }
+
           .summaryGrid.cols-2 {
             grid-template-columns: repeat(2, minmax(0, 1fr));
           }
@@ -1737,11 +1886,7 @@ export default function ConfrontoPage({ dailyRows }) {
 
           @media (max-width: 1280px) {
             .topControls {
-              grid-template-columns: 1fr 1fr;
-            }
-
-            .controlCardWide {
-              grid-column: 1 / -1;
+              grid-template-columns: 1fr;
             }
 
             .summaryGrid.cols-4 {
@@ -1767,20 +1912,7 @@ export default function ConfrontoPage({ dailyRows }) {
           }
 
           @media (max-width: 720px) {
-            .topControls {
-              grid-template-columns: 1fr;
-            }
-
-            .pageTitle {
-              font-size: 32px;
-            }
-          }
-
-          @media (max-width: 520px) {
-            .pageTitle {
-              font-size: 28px;
-            }
-
+            .addButton,
             .pill {
               width: 100%;
             }
@@ -1791,23 +1923,11 @@ export default function ConfrontoPage({ dailyRows }) {
   );
 }
 
-function buildDayLineChart(baseChart, title, xAxis, yName, selected, intradayData, colors, getValue, formatter, extra = {}) {
+function buildDayLineChart(baseChart, title, xAxis, yName, selected, intradayData, getValue, formatter, extra = {}) {
   return {
     ...baseChart,
     title: { ...baseChart.title, text: title },
     xAxis: { ...baseChart.xAxis, data: xAxis },
-    tooltip: {
-      trigger: "axis",
-      order: "seriesAsc",
-      formatter: (params) =>
-        axisTooltipFormatter(
-          params,
-          selected.map((s) => ({
-            name: s.label,
-            formatter: (v) => (v == null ? "—" : formatter(v)),
-          }))
-        ),
-    },
     yAxis: {
       type: "value",
       name: yName,
@@ -1828,7 +1948,19 @@ function buildDayLineChart(baseChart, title, xAxis, yName, selected, intradayDat
           }),
       },
     },
-    series: selected.map((s, i) => {
+    tooltip: {
+      trigger: "axis",
+      order: "seriesAsc",
+      formatter: (params) =>
+        axisTooltipFormatter(
+          params,
+          selected.map((s) => ({
+            name: s.label,
+            formatter: (v) => (v == null ? "—" : formatter(v)),
+          }))
+        ),
+    },
+    series: selected.map((s) => {
       const map = new Map((intradayData[s.iso] || []).map((r) => [r.time, r]));
       return {
         name: s.label,
@@ -1836,8 +1968,8 @@ function buildDayLineChart(baseChart, title, xAxis, yName, selected, intradayDat
         data: xAxis.map((t) => getValue(map.get(t))),
         showSymbol: false,
         connectNulls: false,
-        lineStyle: { width: 3, color: colors[i] },
-        itemStyle: { color: colors[i] },
+        lineStyle: { width: 3, color: s.color },
+        itemStyle: { color: s.color },
       };
     }),
   };
@@ -1850,7 +1982,6 @@ function buildSimpleLineChart({
   yName,
   formatValue,
   seriesData,
-  colors,
   getValue,
   yMin,
   yMax,
@@ -1861,18 +1992,6 @@ function buildSimpleLineChart({
     ...baseChart,
     title: { ...baseChart.title, text: title },
     xAxis: { ...baseChart.xAxis, data: xAxis },
-    tooltip: {
-      trigger: "axis",
-      order: "seriesAsc",
-      formatter: (params) =>
-        axisTooltipFormatter(
-          params,
-          seriesData.map((s) => ({
-            name: s.label,
-            formatter: formatValue,
-          }))
-        ),
-    },
     yAxis: {
       type: "value",
       name: yName,
@@ -1893,14 +2012,26 @@ function buildSimpleLineChart({
           }),
       },
     },
-    series: seriesData.map((s, i) => ({
+    tooltip: {
+      trigger: "axis",
+      order: "seriesAsc",
+      formatter: (params) =>
+        axisTooltipFormatter(
+          params,
+          seriesData.map((s) => ({
+            name: s.label,
+            formatter: formatValue,
+          }))
+        ),
+    },
+    series: seriesData.map((s) => ({
       name: s.label,
       type: "line",
       data: xAxis.map((d) => getValue(s.map, d)),
       showSymbol: false,
       connectNulls: false,
-      lineStyle: { width: 3, color: colors[i] },
-      itemStyle: { color: colors[i] },
+      lineStyle: { width: 3, color: s.color },
+      itemStyle: { color: s.color },
     })),
   };
 }
@@ -1910,18 +2041,6 @@ function buildYearChart(baseChart, title, xAxis, yName, yearRows, formatter, ser
     ...baseChart,
     title: { ...baseChart.title, text: title },
     xAxis: { ...baseChart.xAxis, data: xAxis, axisLabel: { rotate: 0, margin: 14, interval: 29 } },
-    tooltip: {
-      trigger: "axis",
-      order: "seriesAsc",
-      formatter: (params) =>
-        axisTooltipFormatter(
-          params,
-          yearRows.map((s) => ({
-            name: s.label,
-            formatter: (v) => (v == null ? "—" : formatter(v)),
-          }))
-        ),
-    },
     yAxis: {
       type: "value",
       name: yName,
@@ -1938,15 +2057,28 @@ function buildYearChart(baseChart, title, xAxis, yName, yearRows, formatter, ser
             if (yName === "%") return `${Math.round(Number(v))}`;
             if (yName === "W/m²") return `${Math.round(Number(v))}`;
             if (yName === "hPa" || yName === "km/h") return Number(v).toFixed(0);
+            if (yName === "Frequenza") return Number(v).toFixed(0);
             return Number(v).toFixed(1);
           }),
       },
+    },
+    tooltip: {
+      trigger: "axis",
+      order: "seriesAsc",
+      formatter: (params) =>
+        axisTooltipFormatter(
+          params,
+          yearRows.map((s) => ({
+            name: s.label,
+            formatter: (v) => (v == null ? "—" : formatter(v)),
+          }))
+        ),
     },
     series,
   };
 }
 
-function buildPeriodSummaryCard(param, title, sum) {
+function buildPeriodSummaryCard(param, title, sum, rows = []) {
   if (param === "temp_max") {
     return { title, items: [["Media periodo", `${fmt(sum.tmax_mean, 1)} °C`]] };
   }
@@ -2001,6 +2133,33 @@ function buildPeriodSummaryCard(param, title, sum) {
 
   if (param === "uv") {
     return { title, items: [["Media periodo", fmt(sum.uv_mean, 1)]] };
+  }
+
+  if (param === "temp_mean_dist") {
+    const vals = rows.map((r) => r.tmean).map(n).filter(Number.isFinite);
+    return {
+      title,
+      items: [
+        ["Giorni validi", String(vals.length)],
+        ["Media", `${fmt(avgFinite(vals), 1)} °C`],
+        ["Min", `${fmt(minFinite(vals), 1)} °C`],
+        ["Max", `${fmt(maxFinite(vals), 1)} °C`],
+      ],
+    };
+  }
+
+  if (param === "rain_dist") {
+    const vals = rows.map((r) => r.rain_total).map(n).filter(Number.isFinite);
+    const rainy = vals.filter((v) => v > 0).length;
+    return {
+      title,
+      items: [
+        ["Giorni validi", String(vals.length)],
+        ["Giorni piovosi", String(rainy)],
+        ["Media", `${fmt(avgFinite(vals), 1)} mm`],
+        ["Massima", `${fmt(maxFinite(vals), 1)} mm`],
+      ],
+    };
   }
 
   return {
