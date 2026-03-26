@@ -4,6 +4,7 @@ import Link from "next/link";
 import dynamic from "next/dynamic";
 import { useMemo, useState } from "react";
 import { useRouter } from "next/router";
+import SiteLayout from "../../components/SiteLayout";
 
 const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
 
@@ -52,19 +53,34 @@ function toNull(x) {
   const n = Number(String(x).replace(",", "."));
   return Number.isFinite(n) ? n : null;
 }
-function round1(x) {
-  const n = toNull(x);
-  if (n === null) return null;
-  return Math.round((n + Number.EPSILON) * 10) / 10;
+
+function n(x) {
+  if (x === null || x === undefined || x === "") return NaN;
+  const v = Number(String(x).replace(",", "."));
+  return Number.isFinite(v) ? v : NaN;
 }
+
+function round1(x) {
+  const v = toNull(x);
+  if (v === null) return null;
+  return Math.round((v + Number.EPSILON) * 10) / 10;
+}
+
 function fmt1(x, fallback = "—") {
   const r = round1(x);
   return r === null ? fallback : r.toFixed(1);
 }
+
 function fmt2(x, fallback = "—") {
-  const n = toNull(x);
-  return n === null ? fallback : n.toFixed(2);
+  const v = toNull(x);
+  return v === null ? fallback : v.toFixed(2);
 }
+
+function fmtInt(x, fallback = "—") {
+  const v = toNull(x);
+  return v === null ? fallback : String(Math.round(v));
+}
+
 function getRainTotal(d) {
   const v = toNull(d?.rain_total);
   if (v !== null) return v;
@@ -72,11 +88,37 @@ function getRainTotal(d) {
   if (v2 !== null) return v2;
   return 0;
 }
+
+function getRhMin(d) {
+  const a = n(d?.rh_min);
+  if (Number.isFinite(a)) return a;
+  const b = n(d?.rh_pct_min);
+  if (Number.isFinite(b)) return b;
+  return NaN;
+}
+
+function getRhMax(d) {
+  const a = n(d?.rh_max);
+  if (Number.isFinite(a)) return a;
+  const b = n(d?.rh_pct_max);
+  if (Number.isFinite(b)) return b;
+  return NaN;
+}
+
+function getRhMean(d) {
+  const a = n(d?.rh_mean);
+  if (Number.isFinite(a)) return a;
+  const b = n(d?.rh_pct_mean);
+  if (Number.isFinite(b)) return b;
+  return NaN;
+}
+
 function minMax(arr) {
   const v = arr.filter((x) => Number.isFinite(x));
   if (!v.length) return { min: 0, max: 1 };
   return { min: Math.min(...v), max: Math.max(...v) };
 }
+
 function niceStep(range, targetTicks = 6) {
   if (!Number.isFinite(range) || range <= 0) return 1;
   const rough = range / targetTicks;
@@ -90,6 +132,7 @@ function niceStep(range, targetTicks = 6) {
   else step = 10;
   return step * pow10;
 }
+
 function axisNice(min, max, targetTicks = 6) {
   if (!Number.isFinite(min) || !Number.isFinite(max) || min === max) {
     return { min: 0, max: 1, interval: 0.2 };
@@ -100,12 +143,21 @@ function axisNice(min, max, targetTicks = 6) {
   const niceMax = Math.ceil(max / interval) * interval;
   return { min: niceMin, max: niceMax, interval };
 }
+
 function degToCardinal8(v) {
-  const n = Number(v);
-  if (!Number.isFinite(n)) return "—";
-  const d = ((n % 360) + 360) % 360;
+  const n0 = Number(v);
+  if (!Number.isFinite(n0)) return "—";
+  const d = ((n0 % 360) + 360) % 360;
   const ix = Math.round(d / 45) % 8;
   return ["N", "NE", "E", "SE", "S", "SW", "W", "NW"][ix];
+}
+
+function degToCardinal16(v) {
+  const n0 = Number(v);
+  if (!Number.isFinite(n0)) return "—";
+  const d = ((n0 % 360) + 360) % 360;
+  const ix = Math.round(d / 22.5) % 16;
+  return ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"][ix];
 }
 
 const MONTHS_IT = [
@@ -144,9 +196,10 @@ function formatMonthIT(ym) {
   return `${monthName} ${yyyy}`;
 }
 
-function pad2(n) {
-  return String(n).padStart(2, "0");
+function pad2(v) {
+  return String(v).padStart(2, "0");
 }
+
 function buildLabels(stepMin = 15) {
   const out = [];
   for (let t = 0; t < 24 * 60; t += stepMin) {
@@ -156,6 +209,7 @@ function buildLabels(stepMin = 15) {
   }
   return out;
 }
+
 function mapIntradayByHHMM(intraday) {
   const m = new Map();
   for (const x of intraday || []) {
@@ -164,6 +218,7 @@ function mapIntradayByHHMM(intraday) {
   }
   return m;
 }
+
 function maxFinite(arr) {
   let m = -Infinity;
   let ok = false;
@@ -176,14 +231,16 @@ function maxFinite(arr) {
   }
   return ok ? m : null;
 }
-function defaultZoomPercent(n, windowPoints = 144) {
-  if (!Number.isFinite(n) || n <= 0) return { start: 0, end: 100 };
-  if (n <= windowPoints) return { start: 0, end: 100 };
-  const start = ((n - windowPoints) / n) * 100;
+
+function defaultZoomPercent(nPoints, windowPoints = 144) {
+  if (!Number.isFinite(nPoints) || nPoints <= 0) return { start: 0, end: 100 };
+  if (nPoints <= windowPoints) return { start: 0, end: 100 };
+  const start = ((nPoints - windowPoints) / nPoints) * 100;
   return { start, end: 100 };
 }
-function makeDataZoom(n, windowPoints = 144) {
-  const { start, end } = defaultZoomPercent(n, windowPoints);
+
+function makeDataZoom(nPoints, windowPoints = 144) {
+  const { start, end } = defaultZoomPercent(nPoints, windowPoints);
   return [
     {
       type: "inside",
@@ -205,65 +262,17 @@ function makeDataZoom(n, windowPoints = 144) {
   ];
 }
 
-function KpiCard({ label, value, unit, hint }) {
-  return (
-    <div className="kpi">
-      <div className="kpiLabel">{label}</div>
-      <div className="kpiValue">
-        {value} {unit ? <span className="kpiUnit">{unit}</span> : null}
-      </div>
-      {hint ? <div className="kpiHint">{hint}</div> : null}
-
-      <style jsx>{`
-        .kpi {
-          border: 1px solid #e9e9e9;
-          border-radius: 18px;
-          background: rgba(255, 255, 255, 0.92);
-          box-shadow: 0 10px 26px rgba(15, 23, 42, 0.06);
-          padding: 12px 14px;
-        }
-        .kpiLabel {
-          font-size: 12px;
-          font-weight: 900;
-          color: rgba(15, 23, 42, 0.68);
-        }
-        .kpiValue {
-          margin-top: 6px;
-          font-size: 22px;
-          font-weight: 950;
-          letter-spacing: -0.01em;
-          color: #0f172a;
-          white-space: nowrap;
-        }
-        .kpiUnit {
-          font-size: 12px;
-          font-weight: 900;
-          color: rgba(15, 23, 42, 0.58);
-          margin-left: 6px;
-        }
-        .kpiHint {
-          margin-top: 6px;
-          font-size: 11px;
-          font-weight: 800;
-          color: rgba(15, 23, 42, 0.55);
-        }
-      `}</style>
-    </div>
-  );
-}
-
 // -------------------- page --------------------
 export default function DayPage({ day, intraday, prev, next, compareOptions = [] }) {
   const router = useRouter();
 
   if (!day) {
     return (
-      <main style={{ padding: 20, fontFamily: "system-ui" }}>
-        <p>
-          <Link href="/">← Home</Link>
-        </p>
-        <p>Giorno non trovato.</p>
-      </main>
+      <SiteLayout headerProps={{}}>
+        <main style={{ padding: 20, fontFamily: "system-ui" }}>
+          <p>Giorno non trovato.</p>
+        </main>
+      </SiteLayout>
     );
   }
 
@@ -287,8 +296,8 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
 
   const rain15 = labels.map((hhmm) => {
     const v = byHHMM.get(hhmm)?.rain_15m_mm;
-    const n = Number(v);
-    return Number.isFinite(n) ? n : null;
+    const n0 = Number(v);
+    return Number.isFinite(n0) ? n0 : null;
   });
 
   let acc = 0;
@@ -297,14 +306,11 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
     return acc;
   });
 
-  const CHART_H = 360;
+  const CHART_H = 340;
   const chartStyle = { height: CHART_H, width: "100%" };
 
   const N = labels.length;
   const DZ = makeDataZoom(N, 144);
-
-  const gridNoLegend = { left: 55, right: 30, top: 55, bottom: 55 };
-  const gridWithLegend = { left: 55, right: 55, top: 85, bottom: 55 };
 
   const tm = minMax([...temp, ...dew].map((x) => (Number.isFinite(x) ? x : NaN)));
   const tAxis = axisNice(
@@ -313,282 +319,309 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
     6
   );
 
-  const ACCENT_RED = "#d62728";
-  const xAxisCommon = {
-    type: "category",
-    data: labels,
-    boundaryGap: false,
-    axisLabel: { hideOverlap: true },
+  const gridNoLegend = { left: 72, right: 56, top: 58, bottom: 92 };
+  const gridWithLegend = { left: 72, right: 56, top: 58, bottom: 92 };
+
+  const COLORS = {
+    red: "#ff2d20",
+    orange: "#f28c28",
+    grayDark: "#4b5563",
+    blueLight: "#60a5fa",
+    blue: "#2563eb",
+    indigo: "#312e81",
+    greenStrong: "#2f9e44",
+    windDir: "#f4a261",
   };
 
-  const toolboxZoom = {
-    feature: {
-      dataZoom: { yAxisIndex: "none" },
-      restore: {},
+  const baseChart = {
+    animation: false,
+    grid: gridNoLegend,
+    xAxis: {
+      type: "category",
+      data: labels,
+      boundaryGap: false,
+      axisLabel: { hideOverlap: true, margin: 14 },
     },
-    right: 10,
-    top: 8,
+    title: { left: "center", top: 10 },
+    legend: {
+      bottom: 8,
+      left: "center",
+      itemGap: 16,
+      padding: [8, 10, 2, 10],
+    },
+    toolbox: { feature: { dataZoom: { yAxisIndex: "none" }, restore: {} }, right: 10, top: 10 },
+    tooltip: { trigger: "axis", order: "seriesAsc" },
+    dataZoom: DZ,
   };
 
   const tempDewOption = {
-    title: { text: "Temperatura e Punto di rugiada", left: "center", top: 10 },
+    ...baseChart,
     grid: gridWithLegend,
-    toolbox: toolboxZoom,
-    dataZoom: DZ,
+    title: { ...baseChart.title, text: "Temperatura e punto di rugiada" },
     tooltip: {
       trigger: "axis",
-      valueFormatter: (v) => (v === null || v === undefined ? "—" : Number(v).toFixed(1)),
+      order: "seriesAsc",
+      valueFormatter: (v) => (v === null || v === undefined ? "—" : `${Number(v).toFixed(1)} °C`),
     },
-    legend: { top: 40, left: "center" },
-    xAxis: xAxisCommon,
-    yAxis: [
-      {
-        type: "value",
-        name: "°C",
-        min: tAxis.min,
-        max: tAxis.max,
-        interval: tAxis.interval,
-        splitNumber: 6,
-        scale: false,
-        axisLabel: { formatter: (v) => Number(v).toFixed(1) },
-        splitLine: { show: true },
-      },
-    ],
+    yAxis: {
+      type: "value",
+      name: "°C",
+      nameLocation: "middle",
+      nameRotate: 90,
+      nameGap: 52,
+      min: tAxis.min,
+      max: tAxis.max,
+      interval: tAxis.interval,
+      splitNumber: 6,
+      scale: false,
+      axisLabel: { formatter: (v) => Number(v).toFixed(1) },
+    },
     series: [
       {
-        name: "Temperatura (°C)",
+        name: "Temperatura",
         type: "line",
         data: temp,
         showSymbol: false,
         connectNulls: false,
         smooth: false,
-        lineStyle: { width: 2 },
+        lineStyle: { width: 3, color: COLORS.grayDark },
+        itemStyle: { color: COLORS.grayDark },
       },
       {
-        name: "Punto di rugiada (°C)",
+        name: "Punto di rugiada",
         type: "line",
         data: dew,
         showSymbol: false,
         connectNulls: false,
         smooth: false,
-        lineStyle: { width: 2, color: ACCENT_RED },
-        itemStyle: { color: ACCENT_RED },
+        lineStyle: { width: 2, color: COLORS.red },
+        itemStyle: { color: COLORS.red },
       },
     ],
   };
 
   const rhOption = {
-    title: { text: "Umidità", left: "center", top: 10 },
-    grid: gridNoLegend,
-    toolbox: toolboxZoom,
-    dataZoom: DZ,
+    ...baseChart,
+    title: { ...baseChart.title, text: "Umidità" },
     tooltip: {
       trigger: "axis",
-      valueFormatter: (v) => (v === null || v === undefined ? "—" : Number(v).toFixed(1)),
+      order: "seriesAsc",
+      valueFormatter: (v) => (v === null || v === undefined ? "—" : `${Number(v).toFixed(1)} %`),
     },
-    xAxis: xAxisCommon,
     yAxis: {
       type: "value",
-      name: "% RH",
-      position: "left",
+      name: "%",
+      nameLocation: "middle",
+      nameRotate: 90,
+      nameGap: 52,
       min: 0,
       max: 100,
-      scale: true,
-      axisLabel: { formatter: (v) => Number(v).toFixed(1) },
-      splitNumber: 6,
+      splitNumber: 5,
+      axisLabel: { formatter: (v) => `${Math.round(Number(v))}` },
     },
     series: [
       {
-        name: "Umidità (%)",
+        name: "Umidità",
         type: "line",
         data: rh,
         showSymbol: false,
         connectNulls: false,
         smooth: false,
-        lineStyle: { width: 2 },
+        lineStyle: { width: 3, color: COLORS.grayDark },
+        itemStyle: { color: COLORS.grayDark },
       },
     ],
   };
 
   const rainOption = {
-    title: { text: "Precipitazioni", left: "center", top: 10 },
+    ...baseChart,
     grid: gridWithLegend,
-    toolbox: toolboxZoom,
-    dataZoom: DZ,
+    title: { ...baseChart.title, text: "Precipitazioni" },
     tooltip: {
       trigger: "axis",
+      order: "seriesAsc",
       valueFormatter: (v) => (v === null || v === undefined ? "—" : Number(v).toFixed(1)),
     },
-    legend: { top: 40, left: "center" },
-    xAxis: xAxisCommon,
     yAxis: [
       {
         type: "value",
-        name: "mm (15 min)",
-        scale: false,
-        splitNumber: 6,
+        name: "mm",
+        nameLocation: "middle",
+        nameRotate: 90,
+        nameGap: 52,
+        scale: true,
+        splitNumber: 5,
+        alignTicks: true,
         axisLabel: { formatter: (v) => Number(v).toFixed(1) },
-        splitLine: { show: true },
       },
       {
         type: "value",
-        name: "mm cum.",
-        position: "right",
-        scale: false,
-        splitNumber: 6,
+        name: "mm",
+        nameLocation: "middle",
+        nameRotate: 270,
+        nameGap: 56,
+        scale: true,
+        splitNumber: 5,
+        alignTicks: true,
         axisLabel: { formatter: (v) => Number(v).toFixed(1) },
-        splitLine: { show: false },
       },
     ],
     series: [
-      { name: "15 min (mm)", type: "bar", data: rain15, yAxisIndex: 0 },
       {
-        name: "Cumulata (mm)",
+        name: "Cumulata",
         type: "line",
         data: rainCum,
         yAxisIndex: 1,
         showSymbol: false,
-        smooth: false,
         connectNulls: false,
+        smooth: false,
+        lineStyle: { width: 4, color: COLORS.greenStrong },
+        itemStyle: { color: COLORS.greenStrong },
+        z: 6,
+      },
+      {
+        name: "Pioggia 15 min",
+        type: "bar",
+        data: rain15,
+        yAxisIndex: 0,
+        itemStyle: { color: "#4f6fd5" },
+        z: 2,
       },
     ],
   };
 
   const windOption = {
-    title: { text: "Vento medio e Raffiche", left: "center", top: 10 },
+    ...baseChart,
     grid: gridWithLegend,
-    toolbox: toolboxZoom,
-    dataZoom: DZ,
+    title: { ...baseChart.title, text: "Vento" },
     tooltip: {
       trigger: "axis",
+      order: "seriesAsc",
       formatter: (params) => {
-        const time = params?.[0]?.axisValue ?? "";
-        const lines = [`${time}`];
-        for (const p of params || []) {
+        if (!Array.isArray(params) || !params.length) return "";
+        const time = params[0]?.axisValue ?? "";
+        const lines = [`<b>${time}</b>`];
+        for (const p of params) {
           if (p.seriesName === "Direzione") {
-            lines.push(`${p.marker}${p.seriesName}: ${p.data === null ? "—" : degToCardinal8(p.data)}`);
+            lines.push(
+              `${p.marker}${p.seriesName}: <b>${
+                p.data === null ? "—" : `${degToCardinal16(p.data)} (${Math.round(Number(p.data))}°)`
+              }</b>`
+            );
           } else {
-            lines.push(`${p.marker}${p.seriesName}: ${p.data === null ? "—" : Number(p.data).toFixed(1)}`);
+            lines.push(
+              `${p.marker}${p.seriesName}: <b>${p.data === null ? "—" : `${Number(p.data).toFixed(1)} km/h`}</b>`
+            );
           }
         }
         return lines.join("<br/>");
       },
     },
-    legend: { top: 40, left: "center" },
-    xAxis: xAxisCommon,
     yAxis: [
       {
         type: "value",
         name: "km/h",
-        scale: false,
-        splitNumber: 6,
-        axisLabel: { formatter: (v) => Number(v).toFixed(1) },
-        splitLine: { show: true },
+        nameLocation: "middle",
+        nameRotate: 90,
+        nameGap: 52,
+        scale: true,
+        splitNumber: 5,
+        alignTicks: true,
+        axisLabel: { formatter: (v) => Number(v).toFixed(0) },
       },
       {
         type: "value",
-        name: "Dir",
-        position: "right",
+        name: "",
         min: 0,
         max: 360,
         interval: 45,
-        scale: false,
-        splitNumber: 8,
-        axisLabel: { formatter: (v) => degToCardinal8(v) },
-        splitLine: { show: false },
+        axisLabel: { formatter: (v) => degToCardinal16(v) },
       },
     ],
     series: [
       {
-        name: "Vento medio",
-        type: "line",
-        data: wind,
-        showSymbol: false,
-        connectNulls: false,
-        smooth: false,
-        yAxisIndex: 0,
-      },
-      {
         name: "Raffiche",
         type: "line",
         data: gust,
+        yAxisIndex: 0,
         showSymbol: false,
         connectNulls: false,
         smooth: false,
+        lineStyle: { width: 2, color: "#a3c614" },
+        itemStyle: { color: "#a3c614" },
+      },
+      {
+        name: "Vento medio",
+        type: "line",
+        data: wind,
         yAxisIndex: 0,
+        showSymbol: false,
+        connectNulls: false,
+        smooth: false,
+        lineStyle: { width: 2, color: "#4f6fd5" },
+        itemStyle: { color: "#4f6fd5" },
       },
       {
         name: "Direzione",
         type: "scatter",
         data: windDir,
         yAxisIndex: 1,
-        symbolSize: 5,
-        itemStyle: { color: "#2ca02c" },
+        symbolSize: 7,
+        itemStyle: { color: COLORS.windDir },
       },
     ],
   };
 
   const pressOption = {
-    title: { text: "Pressione", left: "center", top: 10 },
-    grid: gridNoLegend,
-    toolbox: toolboxZoom,
-    dataZoom: DZ,
+    ...baseChart,
+    title: { ...baseChart.title, text: "Pressione" },
     tooltip: {
       trigger: "axis",
-      valueFormatter: (v) => (v === null || v === undefined ? "—" : Number(v).toFixed(1)),
+      order: "seriesAsc",
+      valueFormatter: (v) => (v === null || v === undefined ? "—" : `${Number(v).toFixed(1)} hPa`),
     },
-    xAxis: xAxisCommon,
     yAxis: {
       type: "value",
       name: "hPa",
+      nameLocation: "middle",
+      nameRotate: 90,
+      nameGap: 52,
       scale: true,
-      axisLabel: { formatter: (v) => Number(v).toFixed(1) },
-      splitNumber: 6,
+      splitNumber: 5,
+      axisLabel: { formatter: (v) => Number(v).toFixed(0) },
     },
     series: [
       {
-        name: "Pressione (hPa)",
+        name: "Pressione",
         type: "line",
         data: press,
         showSymbol: false,
         connectNulls: false,
         smooth: false,
+        lineStyle: { width: 3, color: COLORS.grayDark },
+        itemStyle: { color: COLORS.grayDark },
       },
     ],
   };
 
-  const uvSolarOption = {
-    title: { text: "UV e Radiazione Solare", left: "center", top: 10 },
-    grid: gridWithLegend,
-    toolbox: toolboxZoom,
-    dataZoom: DZ,
+  const uvOption = {
+    ...baseChart,
+    title: { ...baseChart.title, text: "UV" },
     tooltip: {
       trigger: "axis",
+      order: "seriesAsc",
       valueFormatter: (v) => (v === null || v === undefined ? "—" : Number(v).toFixed(1)),
     },
-    legend: { top: 40, left: "center" },
-    xAxis: xAxisCommon,
-    yAxis: [
-      {
-        type: "value",
-        name: "UV",
-        scale: false,
-        min: 0,
-        splitNumber: 6,
-        axisLabel: { formatter: (v) => Number(v).toFixed(1) },
-        splitLine: { show: true },
-      },
-      {
-        type: "value",
-        name: "W/m²",
-        position: "right",
-        scale: false,
-        min: 0,
-        splitNumber: 6,
-        axisLabel: { formatter: (v) => Number(v).toFixed(1) },
-        splitLine: { show: false },
-      },
-    ],
+    yAxis: {
+      type: "value",
+      name: "UV",
+      nameLocation: "middle",
+      nameRotate: 90,
+      nameGap: 52,
+      scale: true,
+      splitNumber: 5,
+      axisLabel: { formatter: (v) => Number(v).toFixed(1) },
+    },
     series: [
       {
         name: "UV",
@@ -597,18 +630,40 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
         showSymbol: false,
         connectNulls: false,
         smooth: false,
-        yAxisIndex: 0,
+        lineStyle: { width: 3, color: COLORS.grayDark },
+        itemStyle: { color: COLORS.grayDark },
       },
+    ],
+  };
+
+  const solarOption = {
+    ...baseChart,
+    title: { ...baseChart.title, text: "Radiazione" },
+    tooltip: {
+      trigger: "axis",
+      order: "seriesAsc",
+      valueFormatter: (v) => (v === null || v === undefined ? "—" : `${Math.round(Number(v))} W/m²`),
+    },
+    yAxis: {
+      type: "value",
+      name: "W/m²",
+      nameLocation: "middle",
+      nameRotate: 90,
+      nameGap: 56,
+      scale: true,
+      splitNumber: 5,
+      axisLabel: { formatter: (v) => `${Math.round(Number(v))}` },
+    },
+    series: [
       {
-        name: "Radiazione (W/m²)",
+        name: "Radiazione",
         type: "line",
         data: solar,
         showSymbol: false,
         connectNulls: false,
         smooth: false,
-        yAxisIndex: 1,
-        lineStyle: { width: 2, color: ACCENT_RED },
-        itemStyle: { color: ACCENT_RED },
+        lineStyle: { width: 3, color: COLORS.grayDark },
+        itemStyle: { color: COLORS.grayDark },
       },
     ],
   };
@@ -617,34 +672,15 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
   const rain15Max = maxFinite(rain15);
   const rain1h = toNull(day?.rain_1h_max);
 
-  const tabs = useMemo(
-    () => [
-      { key: "temp", label: "Temperatura", option: tempDewOption },
-      { key: "rh", label: "Umidità", option: rhOption },
-      { key: "rain", label: "Pioggia", option: rainOption },
-      { key: "wind", label: "Vento", option: windOption },
-      { key: "press", label: "Pressione", option: pressOption },
-      { key: "uv", label: "UV/Radiazione", option: uvSolarOption },
-    ],
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [day.date]
-  );
-
-  const [activeTab, setActiveTab] = useState("temp");
-  const [showAllCharts, setShowAllCharts] = useState(false);
-  const active = tabs.find((t) => t.key === activeTab) || tabs[0];
-  const oneChartKey = `${day.date}::${activeTab}::one`;
-
   const compareAvailable = compareOptions.filter((x) => x?.date && x.year && x.date !== day.date);
   const [comparePick, setComparePick] = useState(compareAvailable?.[0]?.date ?? "");
+  const [showTable, setShowTable] = useState(false);
 
   function onCompareChange(e) {
     const targetDate = String(e.target.value || "");
     setComparePick(targetDate);
     if (targetDate) router.push(`/giorni/${targetDate}`);
   }
-
-  const [showTable, setShowTable] = useState(false);
 
   const tableRows = useMemo(() => {
     return labels.map((hhmm, i) => {
@@ -667,697 +703,954 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
         _has: !!t,
       };
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [day.date]);
+  }, [labels, byHHMM, windDir, temp, dew, rh, press, wind, gust, rain15, rainCum, uv, solar]);
+
+  const dirTxt = Number.isFinite(n(day?.wind_dir_mean_deg)) ? degToCardinal16(day.wind_dir_mean_deg) : "—";
 
   return (
-    <main className="page">
-      <div className="container">
-        {/* TOP BAR */}
-        <div className="topBar">
-          <div className="topMain">
-            <div className="crumbs" role="navigation" aria-label="Breadcrumb">
-              <Link className="navChip" href="/">
-                <span className="chipIcon">←</span>
-                <span>Home</span>
-              </Link>
-
-              <Link className="navChip" href={`/anni/${year}`}>
-                <span>{year}</span>
-              </Link>
-
-              <Link className="navChip" href={`/mesi/${year}/${month}`}>
-                <span>{formatMonthIT(ym)}</span>
-              </Link>
-            </div>
-
-            <div className="navActions">
-              <Link
-                className={`navChip ghost ${!prev ? "disabled" : ""}`}
-                href={prev ? `/giorni/${prev}` : "#"}
-                aria-disabled={!prev}
-              >
-                <span className="chipIcon">←</span>
-                <span>Precedente</span>
-              </Link>
-
-              <span className="navChip selectDayChip staticChip" aria-disabled="true">
-                <span>Seleziona giorno</span>
-              </span>
-
-              <Link
-                className={`navChip ghost ${!next ? "disabled" : ""}`}
-                href={next ? `/giorni/${next}` : "#"}
-                aria-disabled={!next}
-              >
-                <span>Successivo</span>
-                <span className="chipIcon">→</span>
-              </Link>
-            </div>
-          </div>
-
-          <div className={`compareCompact ${compareAvailable.length ? "" : "disabled"}`}>
-            <div className="compareMiniLabel">Confronto {mmdd}</div>
-            <select
-              className="compareSelect"
-              value={comparePick}
-              onChange={onCompareChange}
-              disabled={!compareAvailable.length}
-            >
-              <option value="">
-                {compareAvailable.length ? "Stesso giorno in…" : "Nessun altro anno"}
-              </option>
-              {compareAvailable.map((o) => (
-                <option key={o.date} value={o.date}>
-                  {o.year} → {o.date}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-
-        {/* HEADER */}
+    <SiteLayout headerProps={{}}>
+      <div className="wrap">
         <header className="hero">
-          <div className="heroInner">
-            <div className="heroTitle">
-              <h1 className="h1">{formatDateIT(day.date)}</h1>
-              <div className="sub">Dettaglio giornaliero</div>
+          <div className="dayTopRow">
+            <div className="dayBlock">
+              <div className="kicker">Giorno</div>
+
+              <div className="dayAndNav">
+                <div>
+                  <h1 className="dayTitle">{formatDateIT(day.date)}</h1>
+                  <div className="daySubline">
+                    <Link href={`/anni/${year}`} className="subLink">
+                      {year}
+                    </Link>
+                    <span className="subSep">•</span>
+                    <Link href={`/mesi/${year}/${month}`} className="subLink">
+                      {formatMonthIT(ym)}
+                    </Link>
+                  </div>
+                </div>
+
+                <div className="dayNav">
+                  {prev ? (
+                    <Link href={`/giorni/${prev}`} className="dayNavLink">
+                      <span className="navArrow">←</span>
+                      <span>Precedente</span>
+                    </Link>
+                  ) : (
+                    <span className="dayNavLink disabled">
+                      <span className="navArrow">←</span>
+                      <span>Precedente</span>
+                    </span>
+                  )}
+
+                  <div className="daySelectWrap" aria-hidden="true">
+                    <span className="daySelectLabel">Seleziona giorno</span>
+                  </div>
+
+                  {next ? (
+                    <Link href={`/giorni/${next}`} className="dayNavLink">
+                      <span>Successivo</span>
+                      <span className="navArrow">→</span>
+                    </Link>
+                  ) : (
+                    <span className="dayNavLink disabled">
+                      <span>Successivo</span>
+                      <span className="navArrow">→</span>
+                    </span>
+                  )}
+                </div>
+              </div>
             </div>
           </div>
+
+          {compareAvailable.length > 0 && (
+            <section className="compareBar" aria-label={`Confronto ${mmdd}`}>
+              <div className="compareBarHead">Confronto {mmdd}</div>
+
+              <div className="compareBarInner">
+                <label htmlFor="compare-day-select" className="srOnly">
+                  Confronta lo stesso giorno in un altro anno
+                </label>
+                <select
+                  id="compare-day-select"
+                  className="compareSelect"
+                  value={comparePick}
+                  onChange={onCompareChange}
+                >
+                  <option value="">Stesso giorno in…</option>
+                  {compareAvailable.map((o) => (
+                    <option key={o.date} value={o.date}>
+                      {o.year} → {o.date}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </section>
+          )}
+
+          <section className="summaryCompact">
+            <div className="summaryHead">
+              <div>
+                <h2>Riepilogo giornaliero</h2>
+                <p>Lettura rapida dei dati principali del giorno.</p>
+              </div>
+            </div>
+
+            <div className="summaryRows">
+              <div className="summaryRow">
+                <div className="summaryLabel">Temperature</div>
+                <div className="summaryMetrics three">
+                  <div className="summaryMetric">
+                    <span className="summaryKey">Max</span>
+                    <strong>{fmt1(day.tmax)} °C</strong>
+                  </div>
+                  <div className="summaryMetric">
+                    <span className="summaryKey">Media</span>
+                    <strong>{fmt1(day.tmean)} °C</strong>
+                  </div>
+                  <div className="summaryMetric">
+                    <span className="summaryKey">Min</span>
+                    <strong>{fmt1(day.tmin)} °C</strong>
+                  </div>
+                </div>
+              </div>
+
+              <div className="summaryRow">
+                <div className="summaryLabel">Precipitazioni</div>
+                <div className="summaryMetrics three">
+                  <div className="summaryMetric">
+                    <span className="summaryKey">Totale</span>
+                    <strong>{fmt1(rainDay, "0.0")} mm</strong>
+                  </div>
+                  <div className="summaryMetric">
+                    <span className="summaryKey">Max 15 min</span>
+                    <strong>{rain15Max === null ? "—" : `${fmt1(rain15Max)} mm`}</strong>
+                  </div>
+                  <div className="summaryMetric">
+                    <span className="summaryKey">Max 1h</span>
+                    <strong>{rain1h === null ? "—" : `${fmt1(rain1h)} mm`}</strong>
+                  </div>
+                </div>
+              </div>
+
+              <div className="summaryRow">
+                <div className="summaryLabel">Umidità</div>
+                <div className="summaryMetrics three">
+                  <div className="summaryMetric">
+                    <span className="summaryKey">Max</span>
+                    <strong>{fmtInt(getRhMax(day))} %</strong>
+                  </div>
+                  <div className="summaryMetric">
+                    <span className="summaryKey">Media</span>
+                    <strong>{fmtInt(getRhMean(day))} %</strong>
+                  </div>
+                  <div className="summaryMetric">
+                    <span className="summaryKey">Min</span>
+                    <strong>{fmtInt(getRhMin(day))} %</strong>
+                  </div>
+                </div>
+              </div>
+
+              <div className="summaryRow">
+                <div className="summaryLabel">Vento</div>
+                <div className="summaryMetrics three">
+                  <div className="summaryMetric">
+                    <span className="summaryKey">Medio</span>
+                    <strong>{fmt1(day.wind_avg)} km/h</strong>
+                  </div>
+                  <div className="summaryMetric">
+                    <span className="summaryKey">Raffica max</span>
+                    <strong>{fmt1(day.gust_max)} km/h</strong>
+                  </div>
+                  <div className="summaryMetric">
+                    <span className="summaryKey">Direzione media</span>
+                    <strong>{dirTxt}</strong>
+                  </div>
+                </div>
+              </div>
+
+              <div className="summaryRow">
+                <div className="summaryLabel">Pressione</div>
+                <div className="summaryMetrics three">
+                  <div className="summaryMetric">
+                    <span className="summaryKey">Max</span>
+                    <strong>{fmt1(day.press_max)} hPa</strong>
+                  </div>
+                  <div className="summaryMetric">
+                    <span className="summaryKey">Media</span>
+                    <strong>{fmt1(day.press_avg)} hPa</strong>
+                  </div>
+                  <div className="summaryMetric">
+                    <span className="summaryKey">Min</span>
+                    <strong>{fmt1(day.press_min)} hPa</strong>
+                  </div>
+                </div>
+              </div>
+
+              <div className="summaryRow dual">
+                <div className="summaryHalf">
+                  <div className="summaryLabel">UV</div>
+                  <div className="summaryMetrics two">
+                    <div className="summaryMetric">
+                      <span className="summaryKey">UV medio</span>
+                      <strong>{fmt1(day.uv_mean_pos)}</strong>
+                    </div>
+                    <div className="summaryMetric">
+                      <span className="summaryKey">UV max</span>
+                      <strong>{fmt1(day.uv_max)}</strong>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="summaryHalf">
+                  <div className="summaryLabel">Radiazione</div>
+                  <div className="summaryMetrics two">
+                    <div className="summaryMetric">
+                      <span className="summaryKey">Rad media</span>
+                      <strong>{Number.isFinite(n(day.solar_mean_pos)) ? `${Math.round(n(day.solar_mean_pos))} W/m²` : "—"}</strong>
+                    </div>
+                    <div className="summaryMetric">
+                      <span className="summaryKey">Rad max</span>
+                      <strong>{Number.isFinite(n(day.solar_max)) ? `${Math.round(n(day.solar_max))} W/m²` : "—"}</strong>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section className="rainNotice">
+            <div className="rainNoticeBadge">Attenzione</div>
+            <div className="rainNoticeText">
+              Il totale di pioggia del giorno mostrato nel riepilogo è il dato più affidabile. Il grafico della
+              pioggia può risultare più basso perché usa dati intraday provenienti da una fonte diversa. In caso di
+              differenza, considera corretto il totale giornaliero indicato nel riepilogo.
+            </div>
+          </section>
         </header>
 
-        {/* AVVISO PIOGGIA */}
-        <section className="rainNotice">
-          <div className="rainNoticeBadge">Attenzione</div>
-          <div className="rainNoticeText">
-            Il totale di pioggia del giorno mostrato nel riepilogo è il dato più affidabile. Il grafico della pioggia
-            può risultare più basso perché usa dati intraday provenienti da una fonte diversa. In caso di differenza,
-            considera corretto il totale giornaliero indicato nel riepilogo.
-          </div>
-        </section>
-
-        {/* KPI SUMMARY */}
-        <section className="panel">
-          <div className="panelHead">
-            <div>
-              <div className="panelTitle">Riepilogo</div>
-              <div className="panelHint">Valori principali del giorno.</div>
-            </div>
-          </div>
-
-          <div className="kpiGrid">
-            <KpiCard label="Temperatura max" value={fmt1(day.tmax)} unit="°C" />
-            <KpiCard label="Temperatura media" value={fmt1(day.tmean)} unit="°C" />
-            <KpiCard label="Temperatura min" value={fmt1(day.tmin)} unit="°C" />
-
-            <KpiCard label="Pioggia giorno" value={fmt1(rainDay, "0.0")} unit="mm" />
-            <KpiCard
-              label="Pioggia max 15 min"
-              value={rain15Max === null ? "—" : fmt1(rain15Max)}
-              unit="mm"
-              hint="Picco su 15 minuti"
-            />
-            <KpiCard
-              label="Pioggia max 1h"
-              value={rain1h === null ? "—" : fmt1(rain1h)}
-              unit="mm"
-              hint="Picco su 1 ora"
-            />
-
-            <KpiCard label="Vento medio" value={fmt1(day.wind_avg)} unit="km/h" />
-            <KpiCard label="Vento max" value={fmt1(day.wind_max)} unit="km/h" />
-            <KpiCard label="Raffica max" value={fmt1(day.gust_max)} unit="km/h" />
-          </div>
-        </section>
-
-        {/* CHARTS */}
-        <section className="panel">
-          <div className="panelHead chartsHead">
-            <div>
-              <div className="panelTitle">Grafici intraday</div>
-              <div className="panelHint">Seleziona un grafico oppure mostra tutto.</div>
+        {intraday.length ? (
+          <section className="charts2">
+            <div className="chartBox chartBoxWide">
+              <ReactECharts option={tempDewOption} style={chartStyle} />
             </div>
 
-            <div className="chartTools">
-              <button className="toggle" onClick={() => setShowAllCharts((s) => !s)}>
-                {showAllCharts ? "Mostra 1 grafico" : "Mostra tutti i grafici"}
-              </button>
+            <div className="chartBox">
+              <ReactECharts option={rainOption} style={chartStyle} />
             </div>
-          </div>
+            <div className="chartBox">
+              <ReactECharts option={rhOption} style={chartStyle} />
+            </div>
 
-          {!intraday.length ? (
-            <div className="muted">Nessun dato intraday per questo giorno.</div>
-          ) : (
-            <>
-              {!showAllCharts && (
-                <>
-                  <div className="tabs">
-                    {tabs.map((t) => (
-                      <button
-                        key={t.key}
-                        className={`tab ${activeTab === t.key ? "active" : ""}`}
-                        onClick={() => setActiveTab(t.key)}
-                      >
-                        {t.label}
-                      </button>
-                    ))}
-                  </div>
+            <div className="chartBox">
+              <ReactECharts option={windOption} style={chartStyle} />
+            </div>
+            <div className="chartBox">
+              <ReactECharts option={pressOption} style={chartStyle} />
+            </div>
 
-                  <div className="chartBox">
-                    <ReactECharts
-                      key={oneChartKey}
-                      option={active.option}
-                      style={chartStyle}
-                      notMerge={true}
-                      lazyUpdate={true}
-                    />
-                  </div>
-                </>
-              )}
+            <div className="chartBox">
+              <ReactECharts option={uvOption} style={chartStyle} />
+            </div>
+            <div className="chartBox">
+              <ReactECharts option={solarOption} style={chartStyle} />
+            </div>
+          </section>
+        ) : (
+          <section className="noDataBox">
+            Nessun dato intraday per questo giorno.
+          </section>
+        )}
 
-              {showAllCharts && (
-                <div className="allCharts">
-                  {tabs.map((t) => (
-                    <div key={`${day.date}::${t.key}::all`} className="chartBox">
-                      <ReactECharts
-                        option={t.option}
-                        style={chartStyle}
-                        notMerge={true}
-                        lazyUpdate={true}
-                      />
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              <div className="tablePanel">
-                <button className="tableToggle" onClick={() => setShowTable((v) => !v)}>
-                  {showTable ? "Nascondi tabella dati giornalieri" : "Mostra tabella dati giornalieri"}
-                </button>
-
-                {showTable && (
-                  <div className="tableWrap">
-                    <table className="dataTable">
-                      <thead>
-                        <tr>
-                          <th>Ora</th>
-                          <th>T (°C)</th>
-                          <th>Td (°C)</th>
-                          <th>UR (%)</th>
-                          <th>Press (hPa)</th>
-                          <th>Vento (km/h)</th>
-                          <th>Raff. (km/h)</th>
-                          <th>Dir</th>
-                          <th>Pioggia 15m (mm)</th>
-                          <th>Cumulata (mm)</th>
-                          <th>UV</th>
-                          <th>Rad (W/m²)</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {tableRows.map((r) => (
-                          <tr key={r.time} className={!r._has ? "missing" : ""}>
-                            <td className="mono">{r.time}</td>
-                            <td>{r.temp == null ? "—" : fmt1(r.temp)}</td>
-                            <td>{r.dew == null ? "—" : fmt1(r.dew)}</td>
-                            <td>{r.rh == null ? "—" : fmt1(r.rh)}</td>
-                            <td>{r.press == null ? "—" : fmt1(r.press)}</td>
-                            <td>{r.wind == null ? "—" : fmt1(r.wind)}</td>
-                            <td>{r.gust == null ? "—" : fmt1(r.gust)}</td>
-                            <td className="mono">
-                              {r.dirDeg == null ? "—" : `${r.dirCard} (${Math.round(r.dirDeg)}°)`}
-                            </td>
-                            <td>{r.rain15 == null ? "—" : fmt2(r.rain15)}</td>
-                            <td>{r.rainCum == null ? "—" : fmt2(r.rainCum)}</td>
-                            <td>{r.uv == null ? "—" : fmt1(r.uv)}</td>
-                            <td>{r.solar == null ? "—" : fmt1(r.solar)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                    <div className="tableHint">
-                      Nota: le righe sbiadite indicano assenza dato a quell’orario.
-                    </div>
-                  </div>
-                )}
-              </div>
-            </>
-          )}
+        <section className="dayTableHead">
+          <div className="dayTableTitle">Riepilogo giornaliero</div>
         </section>
-      </div>
 
-      <style jsx>{`
-        .page {
-          padding: 16px 14px 60px;
-          font-family: system-ui;
-          background: radial-gradient(900px 420px at 15% 0%, rgba(59, 130, 246, 0.08), transparent 55%),
-            radial-gradient(900px 420px at 85% 10%, rgba(16, 185, 129, 0.06), transparent 60%),
-            linear-gradient(180deg, #ffffff, #f8fafc);
-          min-height: 100vh;
-        }
+        <section className="recordsAction">
+          <button
+            type="button"
+            className={`toggleRecords ${showTable ? "active" : ""}`}
+            onClick={() => setShowTable((v) => !v)}
+            aria-expanded={showTable}
+            aria-controls="table-day-data"
+          >
+            {showTable ? "Nascondi tabella dati giornalieri" : "Mostra tabella dati giornalieri"}
+          </button>
+        </section>
 
-        .container {
-          max-width: 1100px;
-          margin: 0 auto;
-        }
+        {showTable && (
+          <section id="table-day-data" className="tableWrap">
+            <table>
+              <thead>
+                <tr className="groupRow">
+                  <th className="group stickyHead bR" colSpan={1}>
+                    Ora
+                  </th>
+                  <th className="group bR" colSpan={2}>
+                    Temperature
+                  </th>
+                  <th className="group bR" colSpan={1}>
+                    Umidità
+                  </th>
+                  <th className="group bR" colSpan={1}>
+                    Pressione
+                  </th>
+                  <th className="group bR" colSpan={3}>
+                    Vento
+                  </th>
+                  <th className="group bR" colSpan={2}>
+                    Precipitazioni
+                  </th>
+                  <th className="group bR" colSpan={1}>
+                    UV
+                  </th>
+                  <th className="group" colSpan={1}>
+                    Radiazione
+                  </th>
+                </tr>
 
-        .topBar {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 14px;
-          padding: 8px 10px;
-          position: sticky;
-          top: 0;
-          z-index: 5;
-          backdrop-filter: blur(10px);
-          background: rgba(248, 250, 252, 0.82);
-          border: 1px solid rgba(15, 23, 42, 0.08);
-          border-radius: 16px;
-          box-shadow: 0 8px 20px rgba(15, 23, 42, 0.05);
-        }
+                <tr className="colRow">
+                  <th className="bR stickyHead"> </th>
 
-        .topMain {
-          min-width: 0;
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 14px;
-          flex: 1;
-        }
+                  <th>T</th>
+                  <th className="bR">Td</th>
 
-        .crumbs,
-        .navActions {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          flex-wrap: wrap;
-          min-width: 0;
-        }
+                  <th className="bR">UR</th>
 
-        .navChip {
-          text-decoration: none;
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          gap: 8px;
-          white-space: nowrap;
-          padding: 8px 12px;
-          border-radius: 999px;
-          border: 1px solid rgba(15, 23, 42, 0.08);
-          background: rgba(255, 255, 255, 0.72);
-          color: rgba(15, 23, 42, 0.86);
-          font-size: 13px;
-          font-weight: 850;
-          line-height: 1;
-          transition: all 140ms ease;
-          box-shadow: 0 3px 10px rgba(15, 23, 42, 0.04);
-        }
+                  <th className="bR">Press</th>
 
-        .navChip:hover {
-          transform: translateY(-1px);
-          background: #ffffff;
-          border-color: rgba(15, 23, 42, 0.14);
-          box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
-          color: #0f172a;
-        }
+                  <th>Vento</th>
+                  <th>Raff.</th>
+                  <th className="bR">Dir</th>
 
-        .navChip:focus-visible {
-          outline: 3px solid rgba(59, 130, 246, 0.28);
-          outline-offset: 2px;
-        }
+                  <th>15 min</th>
+                  <th className="bR">Cumulata</th>
 
-        .navChip.ghost {
-          background: transparent;
-          border-color: transparent;
-          box-shadow: none;
-          color: rgba(15, 23, 42, 0.72);
-        }
+                  <th className="bR">UV</th>
 
-        .navChip.ghost:hover {
-          background: rgba(255, 255, 255, 0.8);
-          border-color: rgba(15, 23, 42, 0.08);
-          color: #0f172a;
-          box-shadow: 0 6px 16px rgba(15, 23, 42, 0.06);
-        }
+                  <th>Rad</th>
+                </tr>
+              </thead>
 
-        .navChip.disabled {
-          pointer-events: none;
-          opacity: 0.45;
-        }
+              <tbody>
+                {tableRows.map((r) => (
+                  <tr key={r.time} className={!r._has ? "missing" : ""}>
+                    <td className="date sticky bR">{r.time}</td>
 
-        .selectDayChip {
-          min-width: 150px;
-          padding-left: 18px;
-          padding-right: 18px;
-          background: rgba(255, 255, 255, 0.95);
-          border-color: rgba(15, 23, 42, 0.1);
-          color: #0f172a;
-          font-weight: 900;
-        }
+                    <td>{r.temp == null ? "—" : `${fmt1(r.temp)} °C`}</td>
+                    <td className="bR">{r.dew == null ? "—" : `${fmt1(r.dew)} °C`}</td>
 
-        .staticChip {
-          cursor: default;
-          user-select: none;
-          pointer-events: none;
-        }
+                    <td className="bR">{r.rh == null ? "—" : `${fmt1(r.rh)} %`}</td>
 
-        .staticChip:hover {
-          transform: none;
-          background: rgba(255, 255, 255, 0.95);
-          border-color: rgba(15, 23, 42, 0.1);
-          box-shadow: 0 3px 10px rgba(15, 23, 42, 0.04);
-          color: #0f172a;
-        }
+                    <td className="bR">{r.press == null ? "—" : `${fmt1(r.press)} hPa`}</td>
 
-        .chipIcon {
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          width: 16px;
-          height: 16px;
-          border-radius: 999px;
-          font-size: 11px;
-          font-weight: 900;
-          background: rgba(15, 23, 42, 0.06);
-        }
+                    <td>{r.wind == null ? "—" : `${fmt1(r.wind)} km/h`}</td>
+                    <td>{r.gust == null ? "—" : `${fmt1(r.gust)} km/h`}</td>
+                    <td className="bR">{r.dirDeg == null ? "—" : `${r.dirCard} (${Math.round(r.dirDeg)}°)`}</td>
 
-        .compareCompact {
-          flex: 0 0 230px;
-          display: grid;
-          gap: 4px;
-          padding-left: 12px;
-          border-left: 1px solid rgba(15, 23, 42, 0.08);
-        }
+                    <td>{r.rain15 == null ? "—" : `${fmt2(r.rain15)} mm`}</td>
+                    <td className="bR">{r.rainCum == null ? "—" : `${fmt2(r.rainCum)} mm`}</td>
 
-        .compareCompact.disabled {
-          opacity: 0.6;
-        }
+                    <td className="bR">{r.uv == null ? "—" : fmt1(r.uv)}</td>
 
-        .compareMiniLabel {
-          font-size: 11px;
-          font-weight: 900;
-          color: rgba(15, 23, 42, 0.58);
-          padding-left: 2px;
-        }
+                    <td>{r.solar == null ? "—" : `${fmt1(r.solar)} W/m²`}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
 
-        .compareSelect {
-          width: 100%;
-          border: 1px solid rgba(15, 23, 42, 0.1);
-          border-radius: 12px;
-          padding: 8px 10px;
-          font-weight: 850;
-          font-size: 13px;
-          color: #0f172a;
-          background: rgba(255, 255, 255, 0.9);
-          outline: none;
-        }
+            <div className="tableHint">
+              Nota: le righe sbiadite indicano assenza dato a quell’orario.
+            </div>
+          </section>
+        )}
 
-        .hero {
-          border: 1px solid #e9e9e9;
-          border-radius: 24px;
-          background: rgba(255, 255, 255, 0.92);
-          box-shadow: 0 12px 36px rgba(15, 23, 42, 0.08);
-          padding: 18px;
-          margin-top: 10px;
-        }
+        <style jsx>{`
+          .wrap {
+            background: transparent;
+          }
 
-        .heroInner {
-          display: flex;
-          align-items: flex-end;
-          justify-content: space-between;
-          gap: 14px;
-          flex-wrap: wrap;
-        }
+          .hero {
+            border: 1px solid #ececec;
+            border-radius: 18px;
+            background: rgba(255, 255, 255, 0.9);
+            box-shadow: 0 1px 0 rgba(0, 0, 0, 0.02), 0 12px 34px rgba(0, 0, 0, 0.04);
+            padding: 22px;
+          }
 
-        .h1 {
-          margin: 0;
-          font-size: 44px;
-          line-height: 1.05;
-          letter-spacing: -0.02em;
-          color: #0f172a;
-          font-weight: 950;
-        }
+          .dayTopRow {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 18px;
+          }
 
-        .sub {
-          margin-top: 6px;
-          font-weight: 800;
-          color: rgba(15, 23, 42, 0.66);
-        }
+          .dayBlock {
+            width: 100%;
+          }
 
-        .rainNotice {
-          margin-top: 14px;
-          border: 1px solid rgba(245, 158, 11, 0.26);
-          background: linear-gradient(180deg, rgba(255, 251, 235, 0.96), rgba(255, 247, 237, 0.96));
-          border-radius: 20px;
-          box-shadow: 0 8px 22px rgba(15, 23, 42, 0.05);
-          padding: 14px 16px;
-        }
+          .kicker {
+            font-size: 12px;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            opacity: 0.6;
+            margin-bottom: 8px;
+          }
 
-        .rainNoticeBadge {
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          padding: 6px 10px;
-          border-radius: 999px;
-          background: rgba(245, 158, 11, 0.14);
-          color: #9a3412;
-          font-size: 12px;
-          font-weight: 950;
-          margin-bottom: 8px;
-        }
+          .dayAndNav {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 24px;
+            flex-wrap: wrap;
+          }
 
-        .rainNoticeText {
-          font-size: 14px;
-          line-height: 1.5;
-          font-weight: 800;
-          color: rgba(15, 23, 42, 0.78);
-        }
+          .dayTitle {
+            margin: 0;
+            font-size: 68px;
+            line-height: 1;
+            letter-spacing: -0.04em;
+            color: #0f172a;
+          }
 
-        .panel {
-          margin-top: 14px;
-          border: 1px solid #e9e9e9;
-          border-radius: 24px;
-          background: rgba(255, 255, 255, 0.92);
-          box-shadow: 0 10px 26px rgba(15, 23, 42, 0.06);
-          padding: 14px;
-        }
+          .daySubline {
+            margin-top: 10px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+            font-size: 14px;
+            font-weight: 800;
+            color: #64748b;
+          }
 
-        .panelHead {
-          display: flex;
-          align-items: flex-end;
-          justify-content: space-between;
-          gap: 12px;
-          flex-wrap: wrap;
-          padding: 2px 4px 10px;
-        }
+          .subLink {
+            text-decoration: none;
+            color: #64748b;
+          }
 
-        .panelTitle {
-          font-weight: 950;
-          letter-spacing: -0.01em;
-          color: #0f172a;
-          font-size: 16px;
-        }
+          .subLink:hover {
+            text-decoration: underline;
+            color: #0f172a;
+          }
 
-        .panelHint {
-          margin-top: 4px;
-          font-size: 12px;
-          font-weight: 800;
-          color: rgba(15, 23, 42, 0.6);
-        }
+          .subSep {
+            opacity: 0.5;
+          }
 
-        .kpiGrid {
-          display: grid;
-          grid-template-columns: repeat(3, 1fr);
-          gap: 10px;
-        }
+          .dayNav {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+          }
 
-        .chartsHead {
-          align-items: center;
-        }
+          .dayNavLink {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            text-decoration: none;
+            color: #111827;
+            font-weight: 700;
+            padding: 10px 12px;
+            border-radius: 999px;
+            background: #fff;
+            border: 1px solid #e5e7eb;
+            transition: background 120ms ease, transform 120ms ease, box-shadow 120ms ease;
+          }
 
-        .chartTools {
-          display: flex;
-          gap: 10px;
-        }
+          .dayNavLink:hover {
+            background: #f8fafc;
+            transform: translateY(-1px);
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.06);
+          }
 
-        .toggle {
-          border: 1px solid #e7e7e7;
-          background: rgba(255, 255, 255, 0.95);
-          border-radius: 14px;
-          padding: 10px 12px;
-          font-weight: 950;
-          color: #0f172a;
-          cursor: pointer;
-          transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
-        }
+          .dayNavLink.disabled {
+            opacity: 0.45;
+            pointer-events: none;
+          }
 
-        .toggle:hover {
-          transform: translateY(-1px);
-          border-color: #d6d6d6;
-          background: #fff;
-        }
+          .navArrow {
+            font-size: 14px;
+            line-height: 1;
+          }
 
-        .tabs {
-          display: flex;
-          flex-wrap: wrap;
-          gap: 8px;
-          padding: 2px 4px 10px;
-        }
+          .daySelectWrap {
+            position: relative;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 190px;
+            height: 46px;
+            padding: 0 18px;
+            border-radius: 999px;
+            background: linear-gradient(180deg, #ffffff, #f8fafc);
+            border: 1px solid #e5e7eb;
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+          }
 
-        .tab {
-          border: 1px solid #e7e7e7;
-          background: rgba(248, 250, 252, 0.8);
-          border-radius: 999px;
-          padding: 8px 10px;
-          font-weight: 950;
-          font-size: 12px;
-          color: rgba(15, 23, 42, 0.74);
-          cursor: pointer;
-          transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
-        }
+          .daySelectLabel {
+            font-weight: 900;
+            font-size: 15px;
+            color: #0f172a;
+          }
 
-        .tab:hover {
-          transform: translateY(-1px);
-          border-color: #d6d6d6;
-          background: #fff;
-        }
+          .compareBar {
+            margin-top: 18px;
+            border: 1px solid #ececec;
+            border-radius: 16px;
+            background: #fcfcfc;
+            padding: 16px 16px 14px;
+          }
 
-        .tab.active {
-          background: #0f172a;
-          border-color: #0f172a;
-          color: #fff;
-        }
+          .compareBarHead {
+            font-size: 13px;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: #374151;
+            font-weight: 900;
+            margin-bottom: 14px;
+            text-align: center;
+          }
 
-        .chartBox {
-          border: 1px solid #ececec;
-          border-radius: 18px;
-          background: #fff;
-          padding: 8px;
-        }
+          .compareBarInner {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+          }
 
-        .allCharts {
-          display: grid;
-          grid-template-columns: 1fr;
-          gap: 12px;
-        }
+          .compareSelect {
+            appearance: none;
+            -webkit-appearance: none;
+            -moz-appearance: none;
+            min-width: 260px;
+            height: 46px;
+            padding: 0 16px;
+            border-radius: 999px;
+            background: linear-gradient(180deg, #ffffff, #f8fafc);
+            border: 1px solid #e5e7eb;
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+            font-weight: 900;
+            font-size: 15px;
+            color: #0f172a;
+            cursor: pointer;
+            color-scheme: light;
+          }
 
-        .muted {
-          opacity: 0.7;
-          font-weight: 800;
-          padding: 6px 4px;
-        }
+          .compareSelect:focus {
+            outline: none;
+            box-shadow: 0 0 0 2px rgba(15, 23, 42, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+          }
 
-        .tablePanel {
-          margin-top: 12px;
-          border-top: 1px solid rgba(15, 23, 42, 0.08);
-          padding-top: 12px;
-        }
+          .compareSelect option,
+          .compareSelect optgroup {
+            color: #111111;
+            background: #ffffff;
+          }
 
-        .tableToggle {
-          border: 1px solid #e7e7e7;
-          background: rgba(248, 250, 252, 0.8);
-          border-radius: 14px;
-          padding: 10px 12px;
-          font-weight: 950;
-          color: #0f172a;
-          cursor: pointer;
-          transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
-        }
+          .summaryCompact {
+            margin-top: 18px;
+            border-top: 1px solid #efefef;
+            padding-top: 18px;
+          }
 
-        .tableToggle:hover {
-          transform: translateY(-1px);
-          border-color: #d6d6d6;
-          background: #fff;
-        }
+          .summaryHead {
+            display: flex;
+            align-items: flex-end;
+            justify-content: space-between;
+            gap: 14px;
+            margin-bottom: 16px;
+          }
 
-        .tableWrap {
-          margin-top: 10px;
-          border: 1px solid #ececec;
-          border-radius: 16px;
-          background: #fff;
-          overflow: auto;
-        }
+          .summaryHead h2 {
+            margin: 0;
+            font-size: 18px;
+            line-height: 1.15;
+            font-weight: 950;
+            letter-spacing: -0.02em;
+          }
 
-        .dataTable {
-          width: 100%;
-          border-collapse: collapse;
-          font-size: 12px;
-        }
+          .summaryHead p {
+            margin: 5px 0 0;
+            font-size: 13px;
+            line-height: 1.4;
+            color: #666;
+            font-weight: 700;
+          }
 
-        .dataTable th,
-        .dataTable td {
-          padding: 10px 10px;
-          border-bottom: 1px solid #f0f0f0;
-          text-align: left;
-          white-space: nowrap;
-        }
+          .summaryRows {
+            display: grid;
+            gap: 10px;
+          }
 
-        .dataTable thead th {
-          position: sticky;
-          top: 0;
-          background: #ffffff;
-          z-index: 1;
-          font-weight: 950;
-          color: rgba(15, 23, 42, 0.78);
-          border-bottom: 1px solid #e9e9e9;
-        }
-
-        .mono {
-          font-variant-numeric: tabular-nums;
-          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
-            "Courier New", monospace;
-        }
-
-        .missing {
-          opacity: 0.55;
-        }
-
-        .tableHint {
-          padding: 10px 12px;
-          font-size: 11px;
-          font-weight: 800;
-          color: rgba(15, 23, 42, 0.55);
-        }
-
-        @media (max-width: 1100px) {
-          .topBar {
-            flex-direction: column;
+          .summaryRow {
+            display: grid;
+            grid-template-columns: 190px 1fr;
+            gap: 14px;
             align-items: stretch;
+            border: 1px solid #ececec;
+            border-radius: 16px;
+            background: #fcfcfc;
+            padding: 14px 16px;
           }
 
-          .topMain {
-            flex-direction: column;
+          .summaryRow.dual {
+            grid-template-columns: 1fr 1fr;
+            padding: 0;
+            border: 0;
+            background: transparent;
+          }
+
+          .summaryHalf {
+            display: grid;
+            grid-template-columns: 190px 1fr;
+            gap: 14px;
             align-items: stretch;
+            border: 1px solid #ececec;
+            border-radius: 16px;
+            background: #fcfcfc;
+            padding: 14px 16px;
           }
 
-          .compareCompact {
-            flex: unset;
-            padding-left: 0;
-            border-left: 0;
-            border-top: 1px solid rgba(15, 23, 42, 0.08);
-            padding-top: 8px;
-          }
-        }
-
-        @media (max-width: 980px) {
-          .kpiGrid {
-            grid-template-columns: 1fr;
+          .summaryLabel {
+            display: flex;
+            align-items: center;
+            font-size: 15px;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: #4b5563;
+            font-weight: 900;
+            padding-right: 8px;
+            border-right: 1px solid #ececec;
           }
 
-          .h1 {
-            font-size: 34px;
+          .summaryMetrics {
+            display: grid;
+            gap: 10px;
+            align-items: center;
+          }
+
+          .summaryMetrics.three {
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+          }
+
+          .summaryMetrics.two {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+          }
+
+          .summaryMetric {
+            min-width: 0;
+          }
+
+          .summaryKey {
+            display: block;
+            font-size: 10px;
+            color: #6b7280;
+            font-weight: 800;
+            margin-bottom: 5px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+          }
+
+          .summaryMetric strong {
+            display: block;
+            font-size: 19px;
+            line-height: 1.05;
+            font-weight: 900;
+            letter-spacing: -0.02em;
+            color: #0f172a;
+          }
+
+          .rainNotice {
+            margin-top: 18px;
+            border: 1px solid rgba(245, 158, 11, 0.26);
+            background: linear-gradient(180deg, rgba(255, 251, 235, 0.96), rgba(255, 247, 237, 0.96));
+            border-radius: 16px;
+            padding: 14px 16px;
+          }
+
+          .rainNoticeBadge {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 6px 10px;
+            border-radius: 999px;
+            background: rgba(245, 158, 11, 0.14);
+            color: #9a3412;
+            font-size: 12px;
+            font-weight: 950;
+            margin-bottom: 8px;
           }
 
           .rainNoticeText {
+            font-size: 14px;
+            line-height: 1.5;
+            font-weight: 800;
+            color: rgba(15, 23, 42, 0.78);
+          }
+
+          .charts2 {
+            margin-top: 12px;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+          }
+
+          .chartBox {
+            border: 1px solid #e7e7e7;
+            border-radius: 16px;
+            padding: 10px;
+            background: rgba(255, 255, 255, 0.94);
+          }
+
+          .chartBoxWide {
+            grid-column: 1 / -1;
+          }
+
+          .noDataBox {
+            margin-top: 12px;
+            border: 1px solid #e7e7e7;
+            border-radius: 16px;
+            padding: 18px;
+            background: rgba(255, 255, 255, 0.94);
+            font-weight: 800;
+            color: #475569;
+          }
+
+          .dayTableHead {
+            margin-top: 16px;
+            display: flex;
+            justify-content: center;
+          }
+
+          .dayTableTitle {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 11px 22px;
+            min-width: 220px;
+            border-radius: 999px;
+            background: linear-gradient(180deg, #ffffff, #f8fafc);
+            border: 1px solid #e5e7eb;
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+            font-weight: 900;
+            font-size: 15px;
+            color: #0f172a;
+          }
+
+          .recordsAction {
+            margin-top: 14px;
+          }
+
+          .toggleRecords {
+            appearance: none;
+            border: 1px solid #d8dbe2;
+            background: #fff;
+            color: #0b1b3b;
+            border-radius: 14px;
+            padding: 12px 16px;
+            font-size: 14px;
+            font-weight: 900;
+            line-height: 1;
+            cursor: pointer;
+            box-shadow: 0 2px 10px rgba(12, 25, 56, 0.04);
+            transition: transform 120ms ease, box-shadow 120ms ease, background 120ms ease;
+          }
+
+          .toggleRecords:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 8px 20px rgba(12, 25, 56, 0.08);
+            background: #fbfcff;
+          }
+
+          .toggleRecords.active {
+            background: #f5f8ff;
+          }
+
+          .tableWrap {
+            margin-top: 10px;
+            border: 1px solid #e7e7e7;
+            border-radius: 16px;
+            overflow: auto;
+            background: rgba(255, 255, 255, 0.94);
+          }
+
+          table {
+            width: 100%;
+            border-collapse: collapse;
+            min-width: 1400px;
+          }
+
+          thead th {
+            position: sticky;
+            top: 0;
+            background: #fff;
+            border-bottom: 1px solid #e7e7e7;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            opacity: 0.85;
+            padding: 10px 10px;
+            text-align: center;
+            white-space: nowrap;
+            user-select: none;
+          }
+
+          .groupRow th {
+            font-size: 11px;
+            letter-spacing: 0.12em;
+            opacity: 0.9;
+            border-bottom: 0;
+            padding: 12px 10px 12px;
+            background: #fbfbfb;
+          }
+
+          .colRow th {
+            top: 44px;
+            background: #fff;
+            border-top: 1px solid #efefef;
+            padding-top: 12px;
+          }
+
+          .group {
+            font-weight: 950;
+          }
+
+          tbody td {
+            border-bottom: 1px solid #f1f1f1;
+            padding: 9px 10px;
+            white-space: nowrap;
+            text-align: center;
             font-size: 13px;
           }
 
-          :global(.echarts-for-react) {
-            height: 320px !important;
+          .bR {
+            border-right: 1px solid #e9e9e9;
           }
-        }
-      `}</style>
-    </main>
+
+          tbody tr:hover td {
+            background: #fafafa;
+          }
+
+          tbody tr:nth-child(even) td {
+            background: #fcfcfc;
+          }
+
+          .sticky {
+            position: sticky;
+            left: 0;
+            z-index: 10;
+            background: #fff;
+            box-shadow: 2px 0 0 #e9e9e9;
+          }
+
+          tbody tr:nth-child(even) td.sticky {
+            background: #fcfcfc;
+          }
+
+          tbody tr:hover td.sticky {
+            background: #fafafa;
+          }
+
+          .stickyHead {
+            position: sticky;
+            left: 0;
+            z-index: 20;
+            background: #fbfbfb;
+            box-shadow: 2px 0 0 #e9e9e9;
+          }
+
+          .colRow .stickyHead {
+            background: #fff;
+          }
+
+          .date {
+            font-weight: 900;
+          }
+
+          .missing {
+            opacity: 0.55;
+          }
+
+          .tableHint {
+            padding: 10px 12px;
+            font-size: 11px;
+            font-weight: 800;
+            color: rgba(15, 23, 42, 0.55);
+          }
+
+          .srOnly {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            white-space: nowrap;
+            border: 0;
+          }
+
+          @media (max-width: 1100px) {
+            .summaryRow {
+              grid-template-columns: 1fr;
+            }
+
+            .summaryHalf {
+              grid-template-columns: 1fr;
+            }
+
+            .summaryLabel {
+              border-right: 0;
+              border-bottom: 1px solid #ececec;
+              padding-right: 0;
+              padding-bottom: 10px;
+            }
+
+            .summaryRow.dual {
+              grid-template-columns: 1fr;
+            }
+
+            .charts2 {
+              grid-template-columns: 1fr;
+            }
+
+            .chartBoxWide {
+              grid-column: auto;
+            }
+
+            .dayAndNav {
+              align-items: flex-start;
+            }
+          }
+
+          @media (max-width: 720px) {
+            .summaryMetrics.three,
+            .summaryMetrics.two {
+              grid-template-columns: 1fr;
+            }
+
+            .dayNav {
+              width: 100%;
+            }
+
+            .daySelectWrap,
+            .compareSelect {
+              width: 100%;
+              min-width: 100%;
+            }
+          }
+
+          @media (max-width: 520px) {
+            .dayTitle {
+              font-size: 52px;
+            }
+
+            .summaryMetric strong {
+              font-size: 20px;
+            }
+          }
+        `}</style>
+      </div>
+    </SiteLayout>
   );
 }

@@ -1,22 +1,49 @@
-// ===================== month.js (PARTE 1/2) =====================
 import fs from "fs";
 import path from "path";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/router";
+import SiteLayout from "../../../components/SiteLayout";
 
 const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
 
 // -------------------- data load --------------------
 function readDaily() {
   const filePath = path.join(process.cwd(), "data", "daily.json");
-  return JSON.parse(fs.readFileSync(filePath, "utf8"));
+  if (!fs.existsSync(filePath)) return [];
+  const raw = JSON.parse(fs.readFileSync(filePath, "utf8"));
+  return Array.isArray(raw) ? raw : [];
+}
+
+function readMonthlyOverrides() {
+  const filePath = path.join(process.cwd(), "data", "monthly_overrides.json");
+  if (!fs.existsSync(filePath)) return [];
+  const raw = JSON.parse(fs.readFileSync(filePath, "utf8"));
+  return Array.isArray(raw) ? raw : [];
+}
+
+function findMonthlyOverride(overrides, ym, field) {
+  return (
+    (overrides || []).find(
+      (o) =>
+        String(o?.scope ?? "") === "month" &&
+        String(o?.ym ?? "") === String(ym) &&
+        String(o?.field ?? "") === String(field)
+    ) || null
+  );
 }
 
 export async function getStaticPaths() {
   const rows = readDaily();
 
-  const ymSet = new Set(rows.map((r) => String(r.date).slice(0, 7)));
+  const ymSet = new Set(
+    rows
+      .map((r) => String(r?.date ?? "").trim())
+      .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d))
+      .map((d) => d.slice(0, 7))
+  );
+
   const paths = Array.from(ymSet)
     .sort()
     .map((ym) => {
@@ -29,28 +56,45 @@ export async function getStaticPaths() {
 
 export async function getStaticProps({ params }) {
   const rows = readDaily();
+  const overrides = readMonthlyOverrides();
 
-  const year = String(params.year);
-  const month = String(params.month).padStart(2, "0");
+  const year = String(params?.year ?? "");
+  const month = String(params?.month ?? "").padStart(2, "0");
   const ym = `${year}-${month}`;
 
   const days = rows
-    .filter((r) => String(r.date).startsWith(ym + "-"))
+    .filter((r) => String(r?.date ?? "").startsWith(ym + "-"))
     .sort((a, b) => String(a.date).localeCompare(String(b.date)));
 
   const monthsInYear = Array.from(
     new Set(
       rows
-        .filter((r) => String(r.date).startsWith(year + "-"))
+        .filter((r) => String(r?.date ?? "").startsWith(year + "-"))
         .map((r) => String(r.date).slice(0, 7))
     )
   ).sort();
 
-  // ---- prev/next mese (navigazione su tutti i mesi disponibili)
-  const allMonths = Array.from(new Set(rows.map((r) => String(r.date).slice(0, 7)))).sort();
+  const allMonths = Array.from(
+    new Set(
+      rows
+        .map((r) => String(r?.date ?? "").trim())
+        .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d))
+        .map((d) => d.slice(0, 7))
+    )
+  ).sort();
+
   const mix = allMonths.indexOf(ym);
   const prevMonth = mix > 0 ? allMonths[mix - 1] : null;
   const nextMonth = mix >= 0 && mix < allMonths.length - 1 ? allMonths[mix + 1] : null;
+
+  const compareOptions = allMonths
+    .filter((itemYm) => String(itemYm).slice(5, 7) === month)
+    .map((itemYm) => ({
+      year: String(itemYm).slice(0, 4),
+      ym: itemYm,
+    }));
+
+  const rainOverride = findMonthlyOverride(overrides, ym, "rainSum");
 
   return {
     props: {
@@ -61,6 +105,15 @@ export async function getStaticProps({ params }) {
       monthsInYear,
       prevMonth,
       nextMonth,
+      compareOptions,
+      rainOverride: rainOverride
+        ? {
+            value: rainOverride.value ?? null,
+            source: rainOverride.source ?? "",
+            label: rainOverride.label ?? "",
+            note: rainOverride.note ?? "",
+          }
+        : null,
     },
   };
 }
@@ -71,16 +124,19 @@ function n(x) {
   const v = Number(x);
   return Number.isFinite(v) ? v : NaN;
 }
+
 function fmt(x, d = 1) {
   const v = n(x);
   if (!Number.isFinite(v)) return "—";
   return v.toFixed(d);
 }
+
 function fmtInt(x) {
   const v = n(x);
   if (!Number.isFinite(v)) return "—";
   return String(Math.round(v));
 }
+
 function sumFinite(arr) {
   let s = 0;
   let ok = false;
@@ -93,6 +149,7 @@ function sumFinite(arr) {
   }
   return ok ? s : NaN;
 }
+
 function avgFinite(arr) {
   let s = 0;
   let c = 0;
@@ -105,6 +162,7 @@ function avgFinite(arr) {
   }
   return c ? s / c : NaN;
 }
+
 function minFinite(arr) {
   let m = Infinity;
   let ok = false;
@@ -117,6 +175,7 @@ function minFinite(arr) {
   }
   return ok ? m : NaN;
 }
+
 function maxFinite(arr) {
   let m = -Infinity;
   let ok = false;
@@ -130,7 +189,27 @@ function maxFinite(arr) {
   return ok ? m : NaN;
 }
 
-// media circolare gradi
+function applyRainMonthOverride(rawValue, override) {
+  const ov = n(override?.value);
+  if (Number.isFinite(ov)) {
+    return {
+      value: ov,
+      isOverride: true,
+      source: String(override?.source ?? ""),
+      label: String(override?.label ?? "Dato ARPAS"),
+      note: String(override?.note ?? ""),
+    };
+  }
+
+  return {
+    value: rawValue,
+    isOverride: false,
+    source: "",
+    label: "",
+    note: "",
+  };
+}
+
 function circMeanDeg(arr) {
   let sx = 0;
   let sy = 0;
@@ -163,19 +242,27 @@ const MONTHS_IT_FULL = [
   "Novembre",
   "Dicembre",
 ];
+
 function monthFullFromMm(mm) {
   const m = Number(mm);
   return MONTHS_IT_FULL[m - 1] || mm;
 }
+
 function monthFullFromYm(ym) {
   const mm = Number(String(ym).slice(5, 7));
   return MONTHS_IT_FULL[mm - 1] || String(ym).slice(5, 7);
 }
+
+function monthNum(ym) {
+  return String(ym).slice(5, 7);
+}
+
 function dayOfMonthLabel(dateStr) {
   if (!dateStr || String(dateStr).length < 10) return "—";
   const dd = Number(String(dateStr).slice(8, 10));
   return Number.isFinite(dd) ? String(dd) : "—";
 }
+
 function degToCardinal16(v) {
   const n0 = Number(v);
   if (!Number.isFinite(n0)) return "—";
@@ -183,9 +270,7 @@ function degToCardinal16(v) {
   const ix = Math.round(d / 22.5) % 16;
   return ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"][ix];
 }
-const DIR_CATS_16 = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"];
 
-// umidità
 function getRhMin(d) {
   const a = n(d?.rh_min);
   if (Number.isFinite(a)) return a;
@@ -193,6 +278,7 @@ function getRhMin(d) {
   if (Number.isFinite(b)) return b;
   return NaN;
 }
+
 function getRhMax(d) {
   const a = n(d?.rh_max);
   if (Number.isFinite(a)) return a;
@@ -200,6 +286,7 @@ function getRhMax(d) {
   if (Number.isFinite(b)) return b;
   return NaN;
 }
+
 function getRhMean(d) {
   const a = n(d?.rh_mean);
   if (Number.isFinite(a)) return a;
@@ -208,21 +295,10 @@ function getRhMean(d) {
   return NaN;
 }
 
-// serie con null per buchi
 function seriesLine(arr) {
   return arr.map((v) => (Number.isFinite(n(v)) ? n(v) : null));
 }
 
-// serie category (stringhe) con null per buchi
-function seriesCat(arr) {
-  return arr.map((v) => {
-    if (v === null || v === undefined) return null;
-    const s = String(v);
-    return s && s !== "—" ? s : null;
-  });
-}
-
-// progressivo
 function cumulative(arr) {
   let s = 0;
   let started = false;
@@ -237,15 +313,45 @@ function cumulative(arr) {
   });
 }
 
+function axisTooltipFormatter(params, specs) {
+  if (!Array.isArray(params) || !params.length) return "";
+  const title = params[0]?.axisValueLabel ?? params[0]?.name ?? "—";
+  const lines = [`<b>${title}</b>`];
+
+  for (const spec of specs) {
+    const p = params.find((x) => x.seriesName === spec.name);
+    if (!p) continue;
+    const value = Array.isArray(p.value) ? p.value[1] : p.value;
+    const text = spec.formatter ? spec.formatter(value) : value;
+    lines.push(`${p.marker}${spec.name}: <b>${text}</b>`);
+  }
+
+  return lines.join("<br/>");
+}
+
 // -------------------- page --------------------
 export default function MonthPage(props) {
+  const router = useRouter();
+
   const year = props.year ?? "";
   const month = props.month ?? "";
   const ym = props.ym ?? "";
-  const prevMonth = props.prevMonth ?? null; // "YYYY-MM"
-  const nextMonth = props.nextMonth ?? null; // "YYYY-MM"
+  const prevMonth = props.prevMonth ?? null;
+  const nextMonth = props.nextMonth ?? null;
   const days = Array.isArray(props.days) ? props.days : [];
   const monthsInYear = Array.isArray(props.monthsInYear) ? props.monthsInYear : [];
+  const rainOverride = props.rainOverride ?? null;
+  const compareOptions = Array.isArray(props.compareOptions) ? props.compareOptions : [];
+
+  const [mounted, setMounted] = useState(false);
+  const [q, setQ] = useState("");
+  const [sortKey, setSortKey] = useState("date");
+  const [sortDir, setSortDir] = useState("asc");
+
+  const compareAvailable = compareOptions.filter((x) => x?.ym && x?.year && x.ym !== ym);
+  const [comparePick, setComparePick] = useState(compareAvailable?.[0]?.year ?? "");
+
+  useEffect(() => setMounted(true), []);
 
   function ymToHref(ymStr) {
     if (!ymStr) return "#";
@@ -254,12 +360,16 @@ export default function MonthPage(props) {
     return `/mesi/${yy}/${mm}`;
   }
 
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
+  function yearMonthToHref(targetYear, targetMonth) {
+    if (!targetYear || !targetMonth) return "#";
+    return `/mesi/${targetYear}/${String(targetMonth).padStart(2, "0")}`;
+  }
 
-  const [q, setQ] = useState("");
-  const [sortKey, setSortKey] = useState("date");
-  const [sortDir, setSortDir] = useState("asc");
+  function onCompareChange(e) {
+    const targetYear = String(e.target.value || "");
+    setComparePick(targetYear);
+    if (targetYear) router.push(yearMonthToHref(targetYear, month));
+  }
 
   const filtered = useMemo(() => {
     const qq = q.trim().toLowerCase();
@@ -297,228 +407,504 @@ export default function MonthPage(props) {
   }, [days]);
 
   const summary = useMemo(() => {
-    const minT = minFinite(days.map((d) => d.tmin));
-    const maxT = maxFinite(days.map((d) => d.tmax));
-    const meanT = avgFinite(days.map((d) => d.tmean));
-
-    const rainSum = sumFinite(days.map((d) => d.rain_total));
-    const rainyDays = days.map((d) => n(d.rain_total)).filter((x) => Number.isFinite(x) && x >= 1).length;
-
-    const gustMax = maxFinite(days.map((d) => d.gust_max));
-    const pressMean = avgFinite(days.map((d) => d.press_avg));
-    const rhMean = avgFinite(days.map((d) => getRhMean(d)));
-
-    return { ndays: days.length, minT, maxT, meanT, rainSum, rainyDays, gustMax, pressMean, rhMean };
-  }, [days]);
-
-  // ---- riga riepilogo: (pioggia = TOTALE mensile, non media)
-  const monthAvgRow = useMemo(() => {
-    const tmin = avgFinite(days.map((d) => d.tmin));
-    const tmean = avgFinite(days.map((d) => d.tmean));
-    const tmax = avgFinite(days.map((d) => d.tmax));
-
-    // totale mensile
-    const rain_total = sumFinite(days.map((d) => d.rain_total));
-    // media dei rain-rate max giornalieri
-    const rainrate_max = avgFinite(days.map((d) => d.rainrate_max));
-
-    const rh_min = avgFinite(days.map((d) => getRhMin(d)));
-    const rh_mean = avgFinite(days.map((d) => getRhMean(d)));
-    const rh_max = avgFinite(days.map((d) => getRhMax(d)));
-
-    const wind_avg = avgFinite(days.map((d) => d.wind_avg));
-    const gust_max = avgFinite(days.map((d) => d.gust_max));
-    const wind_dir_mean_deg = circMeanDeg(days.map((d) => d.wind_dir_mean_deg));
-
-    const press_min = avgFinite(days.map((d) => d.press_min));
-    const press_avg = avgFinite(days.map((d) => d.press_avg));
-    const press_max = avgFinite(days.map((d) => d.press_max));
-
-    const uv_mean_pos = avgFinite(days.map((d) => d.uv_mean_pos));
-    const uv_max = avgFinite(days.map((d) => d.uv_max));
-    const solar_mean_pos = avgFinite(days.map((d) => d.solar_mean_pos));
-    const solar_max = avgFinite(days.map((d) => d.solar_max));
+    const rawRainMonthSum = sumFinite(days.map((d) => d.rain_total));
+    const resolvedRainMonth = applyRainMonthOverride(rawRainMonthSum, rainOverride);
 
     return {
-      tmin,
-      tmean,
-      tmax,
-      rain_total,
-      rainrate_max,
-      rh_min,
-      rh_mean,
-      rh_max,
-      wind_avg,
-      gust_max,
-      wind_dir_mean_deg,
-      press_min,
-      press_avg,
-      press_max,
-      uv_mean_pos,
-      uv_max,
-      solar_mean_pos,
-      solar_max,
-    };
-  }, [days]);
+      minT: minFinite(days.map((d) => d.tmin)),
+      maxT: maxFinite(days.map((d) => d.tmax)),
+      meanT: avgFinite(days.map((d) => d.tmean)),
 
-  // -------------------- charts --------------------
-  const xLabels = chrono.map((d) => dayOfMonthLabel(d.date));
+      rainSum: resolvedRainMonth.value,
+      rainIsOverride: resolvedRainMonth.isOverride,
+      rainLabel: resolvedRainMonth.label,
+      rainSource: resolvedRainMonth.source,
+      rainNote: resolvedRainMonth.note,
+      rainyDays: days.map((d) => n(d.rain_total)).filter((x) => Number.isFinite(x) && x >= 1).length,
+      rainrateMax: maxFinite(days.map((d) => d.rainrate_max)),
+
+      rhMean: avgFinite(days.map((d) => getRhMean(d))),
+      rhMinMean: avgFinite(days.map((d) => getRhMin(d))),
+      rhMaxMean: avgFinite(days.map((d) => getRhMax(d))),
+
+      windMean: avgFinite(days.map((d) => d.wind_avg)),
+      gustMean: avgFinite(days.map((d) => d.gust_max)),
+      gustMax: maxFinite(days.map((d) => d.gust_max)),
+      windDirMean: circMeanDeg(days.map((d) => d.wind_dir_mean_deg)),
+
+      pressMean: avgFinite(days.map((d) => d.press_avg)),
+      pressMinMean: avgFinite(days.map((d) => d.press_min)),
+      pressMaxMean: avgFinite(days.map((d) => d.press_max)),
+
+      uvMean: avgFinite(days.map((d) => d.uv_mean_pos)),
+      uvMax: maxFinite(days.map((d) => d.uv_max)),
+      uvMaxMean: avgFinite(days.map((d) => d.uv_max)),
+
+      solarMean: avgFinite(days.map((d) => d.solar_mean_pos)),
+      solarMax: maxFinite(days.map((d) => d.solar_max)),
+      solarMaxMean: avgFinite(days.map((d) => d.solar_max)),
+    };
+  }, [days, rainOverride]);
+
+  const monthAvgRow = useMemo(() => {
+    return {
+      tmin: avgFinite(days.map((d) => d.tmin)),
+      tmean: avgFinite(days.map((d) => d.tmean)),
+      tmax: avgFinite(days.map((d) => d.tmax)),
+      rain_total: summary.rainSum,
+      rain_is_override: summary.rainIsOverride,
+      rain_note: summary.rainNote,
+      rainrate_max: avgFinite(days.map((d) => d.rainrate_max)),
+      rh_min: avgFinite(days.map((d) => getRhMin(d))),
+      rh_mean: avgFinite(days.map((d) => getRhMean(d))),
+      rh_max: avgFinite(days.map((d) => getRhMax(d))),
+      wind_avg: avgFinite(days.map((d) => d.wind_avg)),
+      gust_max: avgFinite(days.map((d) => d.gust_max)),
+      wind_dir_mean_deg: circMeanDeg(days.map((d) => d.wind_dir_mean_deg)),
+      press_min: avgFinite(days.map((d) => d.press_min)),
+      press_avg: avgFinite(days.map((d) => d.press_avg)),
+      press_max: avgFinite(days.map((d) => d.press_max)),
+      uv_mean_pos: avgFinite(days.map((d) => d.uv_mean_pos)),
+      uv_max: avgFinite(days.map((d) => d.uv_max)),
+      solar_mean_pos: avgFinite(days.map((d) => d.solar_mean_pos)),
+      solar_max: avgFinite(days.map((d) => d.solar_max)),
+    };
+  }, [days, summary]);
+
+  const x = chrono.map((d) => dayOfMonthLabel(d.date));
+  const rainDaily = chrono.map((d) => d.rain_total);
+  const rainCum = cumulative(rainDaily);
+  const currentDirTxt = Number.isFinite(n(summary.windDirMean)) ? degToCardinal16(summary.windDirMean) : "—";
+
+  const COLORS = {
+    red: "#ff2d20",
+    orange: "#f28c28",
+    grayDark: "#4b5563",
+    blueLight: "#60a5fa",
+    greenStrong: "#2f9e44",
+    windDir: "#7c3aed",
+  };
 
   const baseChart = {
     animation: false,
-    grid: { left: 52, right: 40, top: 72, bottom: 38 },
-    xAxis: { type: "category", data: xLabels, boundaryGap: true, axisLabel: { hideOverlap: true } },
-    toolbox: { feature: { restore: {} }, right: 10, top: 8 },
-    title: { left: "center", top: 6 },
-    legend: { top: 34, left: "center" },
-    tooltip: { trigger: "axis" },
+    grid: { left: 72, right: 56, top: 58, bottom: 92 },
+    xAxis: {
+      type: "category",
+      data: x,
+      axisLabel: { rotate: 0, margin: 14, hideOverlap: true },
+    },
+    title: { left: "center", top: 10 },
+    legend: {
+      bottom: 8,
+      left: "center",
+      itemGap: 16,
+      padding: [8, 10, 2, 10],
+    },
+    toolbox: { feature: { restore: {} }, right: 10, top: 10 },
+    tooltip: { trigger: "axis", order: "seriesAsc" },
   };
 
   const optTemp = {
     ...baseChart,
     title: { ...baseChart.title, text: "Temperature giornaliere" },
-    tooltip: { trigger: "axis", valueFormatter: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} °C`) },
-    yAxis: { type: "value", name: "°C", scale: true, axisLabel: { formatter: (v) => Number(v).toFixed(1) } },
+    tooltip: {
+      trigger: "axis",
+      order: "seriesAsc",
+      formatter: (params) =>
+        axisTooltipFormatter(params, [
+          { name: "Tmax", formatter: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} °C`) },
+          { name: "Tmedia", formatter: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} °C`) },
+          { name: "Tmin", formatter: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} °C`) },
+        ]),
+    },
+    yAxis: {
+      type: "value",
+      name: "°C",
+      nameLocation: "middle",
+      nameRotate: 90,
+      nameGap: 52,
+      scale: true,
+      axisLabel: { formatter: (v) => Number(v).toFixed(1) },
+    },
     series: [
-      { name: "Tmin", type: "line", data: seriesLine(chrono.map((d) => d.tmin)), showSymbol: false, connectNulls: false, lineStyle: { width: 2 } },
-      { name: "Tmedia", type: "line", data: seriesLine(chrono.map((d) => d.tmean)), showSymbol: false, connectNulls: false, lineStyle: { width: 2 } },
-      { name: "Tmax", type: "line", data: seriesLine(chrono.map((d) => d.tmax)), showSymbol: false, connectNulls: false, lineStyle: { width: 2 } },
+      {
+        name: "Tmax",
+        type: "line",
+        data: seriesLine(chrono.map((d) => d.tmax)),
+        showSymbol: false,
+        connectNulls: false,
+        lineStyle: { width: 2, color: COLORS.orange },
+        itemStyle: { color: COLORS.orange },
+      },
+      {
+        name: "Tmedia",
+        type: "line",
+        data: seriesLine(chrono.map((d) => d.tmean)),
+        showSymbol: false,
+        connectNulls: false,
+        lineStyle: { width: 3, color: COLORS.grayDark },
+        itemStyle: { color: COLORS.grayDark },
+      },
+      {
+        name: "Tmin",
+        type: "line",
+        data: seriesLine(chrono.map((d) => d.tmin)),
+        showSymbol: false,
+        connectNulls: false,
+        lineStyle: { width: 2, color: COLORS.blueLight },
+        itemStyle: { color: COLORS.blueLight },
+      },
     ],
   };
-
-  const rainDaily = chrono.map((d) => d.rain_total);
-  const rainCum = cumulative(rainDaily);
 
   const optRain = {
     ...baseChart,
     title: { ...baseChart.title, text: "Precipitazioni" },
-    yAxis: [
-      { type: "value", name: "mm", scale: true, splitNumber: 5, alignTicks: true, axisLabel: { formatter: (v) => Number(v).toFixed(1) } },
-      { type: "value", name: "mm/h", scale: true, splitNumber: 5, alignTicks: true, axisLabel: { formatter: (v) => Number(v).toFixed(1) } },
-    ],
     tooltip: {
       trigger: "axis",
-      formatter: (params) => {
-        const i = params?.[0]?.dataIndex ?? 0;
-        const day = xLabels[i] ?? "—";
-        const acc = n(chrono[i]?.rain_total);
-        const cum = n(rainCum[i]);
-        const rr = n(chrono[i]?.rainrate_max);
-        return [
-          `<b>Giorno ${day}</b>`,
-          `Accumulo: ${Number.isFinite(acc) ? acc.toFixed(1) + " mm" : "—"}`,
-          `Progressivo: ${Number.isFinite(cum) ? cum.toFixed(1) + " mm" : "—"}`,
-          `Rain rate max: ${Number.isFinite(rr) ? rr.toFixed(1) + " mm/h" : "—"}`,
-        ].join("<br/>");
-      },
+      order: "seriesAsc",
+      formatter: (params) =>
+        axisTooltipFormatter(params, [
+          { name: "Rate max", formatter: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} mm/h`) },
+          { name: "Totale progressivo", formatter: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} mm`) },
+          { name: "Pioggia", formatter: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} mm`) },
+        ]),
     },
+    yAxis: [
+      {
+        type: "value",
+        name: "mm",
+        nameLocation: "middle",
+        nameRotate: 90,
+        nameGap: 52,
+        scale: true,
+        splitNumber: 5,
+        alignTicks: true,
+        axisLabel: { formatter: (v) => Number(v).toFixed(1) },
+      },
+      {
+        type: "value",
+        name: "mm/h",
+        nameLocation: "middle",
+        nameRotate: 270,
+        nameGap: 56,
+        scale: true,
+        splitNumber: 5,
+        alignTicks: true,
+        axisLabel: { formatter: (v) => Number(v).toFixed(1) },
+      },
+    ],
     series: [
-      { name: "Accumulo", type: "bar", data: seriesLine(rainDaily), yAxisIndex: 0 },
-      { name: "Progressivo", type: "line", data: seriesLine(rainCum), yAxisIndex: 0, showSymbol: false, connectNulls: false, lineStyle: { width: 2 } },
-      { name: "Rain rate max", type: "scatter", data: seriesLine(chrono.map((d) => d.rainrate_max)), yAxisIndex: 1, symbolSize: 7 },
+      {
+        name: "Rate max",
+        type: "scatter",
+        data: seriesLine(chrono.map((d) => d.rainrate_max)),
+        yAxisIndex: 1,
+        symbolSize: 7,
+        itemStyle: { color: COLORS.red },
+        z: 5,
+      },
+      {
+        name: "Totale progressivo",
+        type: "line",
+        data: seriesLine(rainCum),
+        yAxisIndex: 0,
+        showSymbol: false,
+        connectNulls: false,
+        lineStyle: { width: 4, color: COLORS.greenStrong },
+        itemStyle: { color: COLORS.greenStrong },
+        z: 6,
+      },
+      {
+        name: "Pioggia",
+        type: "bar",
+        data: seriesLine(rainDaily),
+        yAxisIndex: 0,
+        itemStyle: { color: "#4f6fd5" },
+        z: 2,
+      },
+    ],
+  };
+
+  const optWind = {
+    ...baseChart,
+    title: { ...baseChart.title, text: "Vento" },
+    tooltip: {
+      trigger: "axis",
+      order: "seriesAsc",
+      formatter: (params) =>
+        axisTooltipFormatter(params, [
+          { name: "Raffica max", formatter: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} km/h`) },
+          { name: "Raffica media", formatter: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} km/h`) },
+          { name: "Vento medio", formatter: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} km/h`) },
+          { name: "Dir media", formatter: (v) => (v == null ? "—" : `${degToCardinal16(v)} (${Math.round(Number(v))}°)`) },
+        ]),
+    },
+    yAxis: [
+      {
+        type: "value",
+        name: "km/h",
+        nameLocation: "middle",
+        nameRotate: 90,
+        nameGap: 52,
+        scale: true,
+        splitNumber: 5,
+        alignTicks: true,
+        axisLabel: { formatter: (v) => Number(v).toFixed(0) },
+      },
+      {
+        type: "value",
+        name: "",
+        min: 0,
+        max: 360,
+        interval: 45,
+        axisLabel: {
+          formatter: (v) => degToCardinal16(v),
+        },
+      },
+    ],
+    series: [
+      {
+        name: "Raffica max",
+        type: "scatter",
+        data: seriesLine(chrono.map((d) => d.gust_max)),
+        yAxisIndex: 0,
+        symbolSize: 7,
+        itemStyle: { color: COLORS.red },
+        z: 5,
+      },
+      {
+        name: "Raffica media",
+        type: "line",
+        data: seriesLine(chrono.map((d) => d.gust_max)),
+        yAxisIndex: 0,
+        showSymbol: false,
+        connectNulls: false,
+        lineStyle: { width: 2, color: "#a3c614" },
+        itemStyle: { color: "#a3c614" },
+      },
+      {
+        name: "Vento medio",
+        type: "line",
+        data: seriesLine(chrono.map((d) => d.wind_avg)),
+        yAxisIndex: 0,
+        showSymbol: false,
+        connectNulls: false,
+        lineStyle: { width: 2, color: "#4f6fd5" },
+        itemStyle: { color: "#4f6fd5" },
+      },
+      {
+        name: "Dir media",
+        type: "scatter",
+        data: seriesLine(chrono.map((d) => d.wind_dir_mean_deg)),
+        yAxisIndex: 1,
+        symbol: "diamond",
+        symbolSize: 10,
+        itemStyle: { color: COLORS.windDir },
+      },
     ],
   };
 
   const optRh = {
     ...baseChart,
     title: { ...baseChart.title, text: "Umidità" },
-    tooltip: { trigger: "axis", valueFormatter: (v) => (v == null ? "—" : `${Math.round(Number(v))} %`) },
-    yAxis: { type: "value", name: "%", min: 0, max: 100, splitNumber: 5, axisLabel: { formatter: (v) => `${Math.round(Number(v))}` } },
-    series: [
-      { name: "UR min", type: "line", data: seriesLine(chrono.map((d) => getRhMin(d))), showSymbol: false, connectNulls: false, lineStyle: { width: 2 } },
-      { name: "UR media", type: "line", data: seriesLine(chrono.map((d) => getRhMean(d))), showSymbol: false, connectNulls: false, lineStyle: { width: 2 } },
-      { name: "UR max", type: "line", data: seriesLine(chrono.map((d) => getRhMax(d))), showSymbol: false, connectNulls: false, lineStyle: { width: 2 } },
-    ],
-  };
-
-  // ---- vento: asse destro in LETTERE (categoria), non in gradi
-  const windDirLetters = chrono.map((d) => {
-    const deg = n(d?.wind_dir_mean_deg);
-    return Number.isFinite(deg) ? degToCardinal16(deg) : null;
-  });
-
-  const optWind = {
-    ...baseChart,
-    title: { ...baseChart.title, text: "Vento" },
-    yAxis: [
-      { type: "value", name: "km/h", scale: true, splitNumber: 5, alignTicks: true, axisLabel: { formatter: (v) => Number(v).toFixed(0) } },
-      {
-        type: "category",
-        name: "Dir",
-        data: DIR_CATS_16,
-        axisLabel: { formatter: (v) => String(v) },
-        axisTick: { alignWithLabel: true },
-      },
-    ],
     tooltip: {
       trigger: "axis",
-      formatter: (params) => {
-        const i = params?.[0]?.dataIndex ?? 0;
-        const day = xLabels[i] ?? "—";
-        const wAvg = n(chrono[i]?.wind_avg);
-        const gust = n(chrono[i]?.gust_max);
-        const dir = windDirLetters[i];
-        return [
-          `<b>Giorno ${day}</b>`,
-          `Vento medio: ${Number.isFinite(wAvg) ? wAvg.toFixed(1) + " km/h" : "—"}`,
-          `Raffica: ${Number.isFinite(gust) ? gust.toFixed(1) + " km/h" : "—"}`,
-          `Direzione media: ${dir ? dir : "—"}`,
-        ].join("<br/>");
-      },
+      order: "seriesAsc",
+      formatter: (params) =>
+        axisTooltipFormatter(params, [
+          { name: "Max", formatter: (v) => (v == null ? "—" : `${Math.round(Number(v))} %`) },
+          { name: "Media", formatter: (v) => (v == null ? "—" : `${Math.round(Number(v))} %`) },
+          { name: "Min", formatter: (v) => (v == null ? "—" : `${Math.round(Number(v))} %`) },
+        ]),
+    },
+    yAxis: {
+      type: "value",
+      name: "%",
+      nameLocation: "middle",
+      nameRotate: 90,
+      nameGap: 52,
+      min: 0,
+      max: 100,
+      splitNumber: 5,
+      axisLabel: { formatter: (v) => `${Math.round(Number(v))}` },
     },
     series: [
-      { name: "Vento medio", type: "line", data: seriesLine(chrono.map((d) => d.wind_avg)), yAxisIndex: 0, showSymbol: false, connectNulls: false, lineStyle: { width: 2 } },
-      { name: "Raffica", type: "line", data: seriesLine(chrono.map((d) => d.gust_max)), yAxisIndex: 0, showSymbol: false, connectNulls: false, lineStyle: { width: 2 } },
-      { name: "Direzione media", type: "scatter", data: seriesCat(windDirLetters), yAxisIndex: 1, symbolSize: 7 },
+      {
+        name: "Max",
+        type: "line",
+        data: seriesLine(chrono.map((d) => getRhMax(d))),
+        showSymbol: false,
+        connectNulls: false,
+        lineStyle: { width: 2, color: COLORS.blueLight },
+        itemStyle: { color: COLORS.blueLight },
+      },
+      {
+        name: "Media",
+        type: "line",
+        data: seriesLine(chrono.map((d) => getRhMean(d))),
+        showSymbol: false,
+        connectNulls: false,
+        lineStyle: { width: 3, color: COLORS.grayDark },
+        itemStyle: { color: COLORS.grayDark },
+      },
+      {
+        name: "Min",
+        type: "line",
+        data: seriesLine(chrono.map((d) => getRhMin(d))),
+        showSymbol: false,
+        connectNulls: false,
+        lineStyle: { width: 2, color: COLORS.orange },
+        itemStyle: { color: COLORS.orange },
+      },
     ],
   };
 
   const optPress = {
     ...baseChart,
     title: { ...baseChart.title, text: "Pressione" },
-    tooltip: { trigger: "axis", valueFormatter: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} hPa`) },
-    yAxis: { type: "value", name: "hPa", scale: true, splitNumber: 5, axisLabel: { formatter: (v) => Number(v).toFixed(0) } },
-    series: [
-      { name: "P min", type: "line", data: seriesLine(chrono.map((d) => d.press_min)), showSymbol: false, connectNulls: false, lineStyle: { width: 2 } },
-      { name: "P media", type: "line", data: seriesLine(chrono.map((d) => d.press_avg)), showSymbol: false, connectNulls: false, lineStyle: { width: 2 } },
-      { name: "P max", type: "line", data: seriesLine(chrono.map((d) => d.press_max)), showSymbol: false, connectNulls: false, lineStyle: { width: 2 } },
-    ],
-  };
-
-  const optUvRad = {
-    ...baseChart,
-    title: { ...baseChart.title, text: "UV e Radiazione" },
-    yAxis: [
-      { type: "value", name: "UV", scale: true, splitNumber: 5, alignTicks: true, axisLabel: { formatter: (v) => Number(v).toFixed(1) } },
-      { type: "value", name: "W/m²", scale: true, splitNumber: 5, alignTicks: true, axisLabel: { formatter: (v) => String(Math.round(Number(v))) } },
-    ],
     tooltip: {
       trigger: "axis",
-      formatter: (params) => {
-        const i = params?.[0]?.dataIndex ?? 0;
-        const day = xLabels[i] ?? "—";
-        const uvM = n(chrono[i]?.uv_mean_pos);
-        const uvX = n(chrono[i]?.uv_max);
-        const solM = n(chrono[i]?.solar_mean_pos);
-        const solX = n(chrono[i]?.solar_max);
-        return [
-          `<b>Giorno ${day}</b>`,
-          `UV medio (>0): ${Number.isFinite(uvM) ? uvM.toFixed(1) : "—"}`,
-          `UV max: ${Number.isFinite(uvX) ? uvX.toFixed(1) : "—"}`,
-          `Rad media (>0): ${Number.isFinite(solM) ? Math.round(solM) + " W/m²" : "—"}`,
-          `Rad max: ${Number.isFinite(solX) ? Math.round(solX) + " W/m²" : "—"}`,
-        ].join("<br/>");
-      },
+      order: "seriesAsc",
+      formatter: (params) =>
+        axisTooltipFormatter(params, [
+          { name: "Max", formatter: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} hPa`) },
+          { name: "Media", formatter: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} hPa`) },
+          { name: "Min", formatter: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} hPa`) },
+        ]),
+    },
+    yAxis: {
+      type: "value",
+      name: "hPa",
+      nameLocation: "middle",
+      nameRotate: 90,
+      nameGap: 52,
+      scale: true,
+      splitNumber: 5,
+      axisLabel: { formatter: (v) => Number(v).toFixed(0) },
     },
     series: [
-      { name: "UV medio", type: "line", data: seriesLine(chrono.map((d) => d.uv_mean_pos)), yAxisIndex: 0, showSymbol: false, connectNulls: false, lineStyle: { width: 2 } },
-      { name: "UV max", type: "line", data: seriesLine(chrono.map((d) => d.uv_max)), yAxisIndex: 0, showSymbol: false, connectNulls: false, lineStyle: { width: 2 } },
-      { name: "Rad media", type: "line", data: seriesLine(chrono.map((d) => d.solar_mean_pos)), yAxisIndex: 1, showSymbol: false, connectNulls: false, lineStyle: { width: 2 } },
-      { name: "Rad max", type: "line", data: seriesLine(chrono.map((d) => d.solar_max)), yAxisIndex: 1, showSymbol: false, connectNulls: false, lineStyle: { width: 2 } },
+      {
+        name: "Max",
+        type: "line",
+        data: seriesLine(chrono.map((d) => d.press_max)),
+        showSymbol: false,
+        connectNulls: false,
+        lineStyle: { width: 2, color: COLORS.orange },
+        itemStyle: { color: COLORS.orange },
+      },
+      {
+        name: "Media",
+        type: "line",
+        data: seriesLine(chrono.map((d) => d.press_avg)),
+        showSymbol: false,
+        connectNulls: false,
+        lineStyle: { width: 3, color: COLORS.grayDark },
+        itemStyle: { color: COLORS.grayDark },
+      },
+      {
+        name: "Min",
+        type: "line",
+        data: seriesLine(chrono.map((d) => d.press_min)),
+        showSymbol: false,
+        connectNulls: false,
+        lineStyle: { width: 2, color: COLORS.blueLight },
+        itemStyle: { color: COLORS.blueLight },
+      },
     ],
   };
 
-  // -------------------- download --------------------
+  const optUv = {
+    ...baseChart,
+    title: { ...baseChart.title, text: "UV" },
+    tooltip: {
+      trigger: "axis",
+      order: "seriesAsc",
+      formatter: (params) =>
+        axisTooltipFormatter(params, [
+          { name: "UV max", formatter: (v) => (v == null ? "—" : `${Number(v).toFixed(1)}`) },
+          { name: "UV medio", formatter: (v) => (v == null ? "—" : `${Number(v).toFixed(1)}`) },
+        ]),
+    },
+    yAxis: {
+      type: "value",
+      name: "UV",
+      nameLocation: "middle",
+      nameRotate: 90,
+      nameGap: 52,
+      scale: true,
+      splitNumber: 5,
+      axisLabel: { formatter: (v) => Number(v).toFixed(1) },
+    },
+    series: [
+      {
+        name: "UV max",
+        type: "line",
+        data: seriesLine(chrono.map((d) => d.uv_max)),
+        showSymbol: false,
+        connectNulls: false,
+        lineStyle: { width: 2, color: COLORS.orange },
+        itemStyle: { color: COLORS.orange },
+      },
+      {
+        name: "UV medio",
+        type: "line",
+        data: seriesLine(chrono.map((d) => d.uv_mean_pos)),
+        showSymbol: false,
+        connectNulls: false,
+        lineStyle: { width: 3, color: COLORS.grayDark },
+        itemStyle: { color: COLORS.grayDark },
+      },
+    ],
+  };
+
+  const optSolar = {
+    ...baseChart,
+    title: { ...baseChart.title, text: "Radiazione" },
+    tooltip: {
+      trigger: "axis",
+      order: "seriesAsc",
+      formatter: (params) =>
+        axisTooltipFormatter(params, [
+          { name: "Rad max", formatter: (v) => (v == null ? "—" : `${Math.round(Number(v))} W/m²`) },
+          { name: "Rad media", formatter: (v) => (v == null ? "—" : `${Math.round(Number(v))} W/m²`) },
+        ]),
+    },
+    yAxis: {
+      type: "value",
+      name: "W/m²",
+      nameLocation: "middle",
+      nameRotate: 90,
+      nameGap: 56,
+      scale: true,
+      splitNumber: 5,
+      axisLabel: { formatter: (v) => `${Math.round(Number(v))}` },
+    },
+    series: [
+      {
+        name: "Rad max",
+        type: "line",
+        data: seriesLine(chrono.map((d) => d.solar_max)),
+        showSymbol: false,
+        connectNulls: false,
+        lineStyle: { width: 2, color: COLORS.orange },
+        itemStyle: { color: COLORS.orange },
+      },
+      {
+        name: "Rad media",
+        type: "line",
+        data: seriesLine(chrono.map((d) => d.solar_mean_pos)),
+        showSymbol: false,
+        connectNulls: false,
+        lineStyle: { width: 3, color: COLORS.grayDark },
+        itemStyle: { color: COLORS.grayDark },
+      },
+    ],
+  };
+
+  const LARGE_CHART_HEIGHT = 365;
+  const NORMAL_CHART_HEIGHT = 340;
+
   function downloadCsv() {
     const cols = [
       "date",
@@ -572,867 +958,1418 @@ export default function MonthPage(props) {
     URL.revokeObjectURL(url);
   }
 
-  // ====== NAV MESI: dimensione RIDOTTA come annuale + grassetto + spaziatura ======
-  const monthNav = (
-    <nav className="monthNav" aria-label="Vai al mese">
-      {monthsInYear.map((m) => {
-        const mm = String(m).slice(5, 7);
-        const isActive = String(m) === String(ym);
-        return (
-          <Link
-            key={m}
-            href={`/mesi/${year}/${mm}`}
-            className={isActive ? "monthLink active" : "monthLink"}
-            title={`Apri ${monthFullFromYm(m)}`}
-            aria-label={`Apri ${monthFullFromYm(m)}`}
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 7,
-              fontWeight: 900,
-              fontSize: 15,
-              lineHeight: 1.15,
-              textDecoration: "none",
-              color: "inherit",
-              margin: "0 10px",
-              whiteSpace: "nowrap",
-            }}
-          >
-            <span className="ext" aria-hidden="true" style={{ fontWeight: 900, opacity: 0.85, fontSize: 13 }}>
-              ↗
-            </span>
-            <span className="monthText" style={{ fontWeight: 900 }}>
-              {monthFullFromYm(m)}
-            </span>
-          </Link>
-        );
-      })}
-    </nav>
-  );
-
   return (
-    <div className="wrap">
-      {/* NAVBAR MESE */}
-      <div className="navBar">
-        <div className="navLeft">
-          <Link className="iconBtn" href={`/anni/${year}`} aria-label="Torna all'anno">
-            ←
-          </Link>
+    <SiteLayout headerProps={{}}>
+      <div className="wrap">
+        <header className="hero">
+          <div className="yearTopRow">
+            <div className="yearBlock">
+              <div className="kicker">Mese</div>
 
-          <div className="crumb">
-            <Link className="crumbLink" href={`/anni/${year}`}>
-              {year}
-            </Link>
-            <span className="dot">•</span>
-            <span className="crumbHere">
-              {monthFullFromMm(month)} {year}
-            </span>
-          </div>
-        </div>
+              <div className="titleLine">
+                <div className="titleMain">
+                  <h1 className="year">
+                    {monthFullFromMm(month)} {year}
+                  </h1>
 
-        <div className="navRight">
-          <div className="navActions">
-            <Link className={`navAction ${!prevMonth ? "disabled" : ""}`} href={prevMonth ? ymToHref(prevMonth) : "#"} aria-disabled={!prevMonth}>
-              ← Mese precedente
-            </Link>
+                  <div className="titleActions">
+                    {prevMonth ? (
+                      <Link href={ymToHref(prevMonth)} className="arrowCircle" aria-label="Mese precedente" title="Precedente">
+                        <svg viewBox="0 0 32 32" aria-hidden="true" className="arrowSvg">
+                          <path
+                            d="M19 9.5L12.5 16L19 22.5"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2.4"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                      </Link>
+                    ) : (
+                      <span className="arrowCircle disabled" aria-hidden="true">
+                        <svg viewBox="0 0 32 32" aria-hidden="true" className="arrowSvg">
+                          <path
+                            d="M19 9.5L12.5 16L19 22.5"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2.4"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                      </span>
+                    )}
 
-            <Link className="navAction mid" href={`/anni/${year}`}>
-              Torna all’anno
-            </Link>
+                    {nextMonth ? (
+                      <Link href={ymToHref(nextMonth)} className="arrowCircle" aria-label="Mese successivo" title="Successivo">
+                        <svg viewBox="0 0 32 32" aria-hidden="true" className="arrowSvg">
+                          <path
+                            d="M13 9.5L19.5 16L13 22.5"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2.4"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                      </Link>
+                    ) : (
+                      <span className="arrowCircle disabled" aria-hidden="true">
+                        <svg viewBox="0 0 32 32" aria-hidden="true" className="arrowSvg">
+                          <path
+                            d="M13 9.5L19.5 16L13 22.5"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2.4"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                      </span>
+                    )}
+                  </div>
+                </div>
 
-            <Link className={`navAction ${!nextMonth ? "disabled" : ""}`} href={nextMonth ? ymToHref(nextMonth) : "#"} aria-disabled={!nextMonth}>
-              Mese successivo →
-            </Link>
-          </div>
-        </div>
-      </div>
+                {compareAvailable.length > 0 && (
+                  <div className="inlineCompareWrap">
+                    <span className="inlineCompareLabel">Mese in anni precedenti</span>
+                    <select
+                      id="compare-month-select"
+                      className="compareSelectMini"
+                      value={comparePick}
+                      onChange={onCompareChange}
+                    >
+                      <option value="">Anno</option>
+                      {compareAvailable.map((o) => (
+                        <option key={o.ym} value={o.year}>
+                          {o.year}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+              </div>
 
-      <header className="hero">
-        <div className="heroRow">
-          <div className="heroLeft">
-            <div className="kicker">Mese</div>
-
-            <h1>
-              {monthFullFromMm(month)} {year}
-            </h1>
-
-            <div className="sub">
-              {summary.ndays} giorni • Pioggia: <b>{fmt(summary.rainSum, 1)} mm</b> • Giorni piovosi: <b>{summary.rainyDays}</b>
+              <div className="monthMeta">
+                <Link href={`/anni/${year}`} className="subLink">
+                  {year}
+                </Link>
+              </div>
             </div>
           </div>
 
-          <div className="cards">
-            <div className="card">
-              <div className="label">Tmin mese</div>
-              <div className="value">{fmt(summary.minT, 1)} °C</div>
-            </div>
-            <div className="card">
-              <div className="label">Tmax mese</div>
-              <div className="value">{fmt(summary.maxT, 1)} °C</div>
-            </div>
-            <div className="card">
-              <div className="label">Tmedia mese</div>
-              <div className="value">{fmt(summary.meanT, 1)} °C</div>
-            </div>
-            <div className="card">
-              <div className="label">UR media mese</div>
-              <div className="value">{fmtInt(summary.rhMean)} %</div>
-            </div>
-            <div className="card">
-              <div className="label">Raffica max mese</div>
-              <div className="value">{fmt(summary.gustMax, 1)} km/h</div>
-            </div>
-            <div className="card">
-              <div className="label">Press. media mese</div>
-              <div className="value">{fmt(summary.pressMean, 1)} hPa</div>
-            </div>
-          </div>
-        </div>
+          <section className="monthsBar" aria-label={`Seleziona mese ${year}`}>
+            <div className="monthsBarHead">Seleziona mese {year}</div>
 
-        <div className="monthNavWrap">{monthNav}</div>
-      </header>
+            <nav className="monthNav">
+              {monthsInYear.map((itemYm) => {
+                const mm = monthNum(itemYm);
+                const isActive = String(itemYm) === String(ym);
 
-      {mounted && (
-        <section className="charts">
-          <div className="chartBox">
-            <ReactECharts option={optTemp} style={{ height: 250, width: "100%" }} />
+                return (
+                  <Link
+                    key={itemYm}
+                    href={`/mesi/${year}/${mm}`}
+                    className={`monthLink ${isActive ? "active" : ""}`}
+                    title={`Apri ${monthFullFromYm(itemYm)}`}
+                    aria-label={`Apri ${monthFullFromYm(itemYm)}`}
+                  >
+                    <span className="ext" aria-hidden="true">
+                      ↗
+                    </span>
+                    <span className="monthText">{monthFullFromYm(itemYm)}</span>
+                  </Link>
+                );
+              })}
+            </nav>
+          </section>
+
+          <section className="summaryCompact">
+            <div className="summaryHead centered">
+              <div>
+                <h2>Sintesi mensile</h2>
+                <p>Lettura rapida dei dati principali del mese.</p>
+              </div>
+            </div>
+
+            <div className="summaryRows">
+              <div className="summaryRow">
+                <div className="summaryLabel">Temperature</div>
+                <div className="summaryMetrics three">
+                  <div className="summaryMetric">
+                    <span className="summaryKey">Max mese</span>
+                    <strong>{fmt(summary.maxT, 1)} °C</strong>
+                  </div>
+                  <div className="summaryMetric">
+                    <span className="summaryKey">Media</span>
+                    <strong>{fmt(summary.meanT, 1)} °C</strong>
+                  </div>
+                  <div className="summaryMetric">
+                    <span className="summaryKey">Min mese</span>
+                    <strong>{fmt(summary.minT, 1)} °C</strong>
+                  </div>
+                </div>
+              </div>
+
+              <div className="summaryRow">
+                <div className="summaryLabel">Precipitazioni</div>
+                <div className="summaryMetrics two">
+                  <div className="summaryMetric">
+                    <span className="summaryKey">Totale</span>
+                    <strong
+                      className={summary.rainIsOverride ? "rainOverrideValue" : ""}
+                      title={summary.rainIsOverride ? "Dato rivisto ARPAS" : ""}
+                    >
+                      {fmt(summary.rainSum, 1)} mm
+                    </strong>
+                  </div>
+                  <div className="summaryMetric">
+                    <span className="summaryKey">Giorni &gt; 1 mm</span>
+                    <strong>{fmtInt(summary.rainyDays)}</strong>
+                  </div>
+                </div>
+              </div>
+
+              <div className="summaryRow">
+                <div className="summaryLabel">Umidità</div>
+                <div className="summaryMetrics three">
+                  <div className="summaryMetric">
+                    <span className="summaryKey">Max media</span>
+                    <strong>{fmtInt(summary.rhMaxMean)} %</strong>
+                  </div>
+                  <div className="summaryMetric">
+                    <span className="summaryKey">Media</span>
+                    <strong>{fmtInt(summary.rhMean)} %</strong>
+                  </div>
+                  <div className="summaryMetric">
+                    <span className="summaryKey">Min media</span>
+                    <strong>{fmtInt(summary.rhMinMean)} %</strong>
+                  </div>
+                </div>
+              </div>
+
+              <div className="summaryRow">
+                <div className="summaryLabel">Vento</div>
+                <div className="summaryMetrics three">
+                  <div className="summaryMetric">
+                    <span className="summaryKey">Medio</span>
+                    <strong>{fmt(summary.windMean, 1)} km/h</strong>
+                  </div>
+                  <div className="summaryMetric">
+                    <span className="summaryKey">Raffica media</span>
+                    <strong>{fmt(summary.gustMean, 1)} km/h</strong>
+                  </div>
+                  <div className="summaryMetric">
+                    <span className="summaryKey">Direzione media</span>
+                    <strong>{currentDirTxt}</strong>
+                  </div>
+                </div>
+              </div>
+
+              <div className="summaryRow">
+                <div className="summaryLabel">Pressione</div>
+                <div className="summaryMetrics three">
+                  <div className="summaryMetric">
+                    <span className="summaryKey">Max media</span>
+                    <strong>{fmt(summary.pressMaxMean, 1)} hPa</strong>
+                  </div>
+                  <div className="summaryMetric">
+                    <span className="summaryKey">Media</span>
+                    <strong>{fmt(summary.pressMean, 1)} hPa</strong>
+                  </div>
+                  <div className="summaryMetric">
+                    <span className="summaryKey">Min media</span>
+                    <strong>{fmt(summary.pressMinMean, 1)} hPa</strong>
+                  </div>
+                </div>
+              </div>
+
+              <div className="summaryRow dual">
+                <div className="summaryHalf">
+                  <div className="summaryLabel">UV</div>
+                  <div className="summaryMetrics two">
+                    <div className="summaryMetric">
+                      <span className="summaryKey">UV medio</span>
+                      <strong>{fmt(summary.uvMean, 1)}</strong>
+                    </div>
+                    <div className="summaryMetric">
+                      <span className="summaryKey">UV max medio</span>
+                      <strong>{fmt(summary.uvMaxMean, 1)}</strong>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="summaryHalf">
+                  <div className="summaryLabel">Radiazione</div>
+                  <div className="summaryMetrics two">
+                    <div className="summaryMetric">
+                      <span className="summaryKey">Rad media</span>
+                      <strong>{Number.isFinite(n(summary.solarMean)) ? `${Math.round(n(summary.solarMean))} W/m²` : "—"}</strong>
+                    </div>
+                    <div className="summaryMetric">
+                      <span className="summaryKey">Rad max media</span>
+                      <strong>{Number.isFinite(n(summary.solarMaxMean)) ? `${Math.round(n(summary.solarMaxMean))} W/m²` : "—"}</strong>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {summary.rainIsOverride && summary.rainNote ? <div className="overrideNote">{summary.rainNote}</div> : null}
+          </section>
+        </header>
+
+        {mounted && (
+          <section className="charts2">
+            <div className="chartBox chartBoxWide">
+              <ReactECharts option={optTemp} style={{ height: LARGE_CHART_HEIGHT, width: "100%" }} />
+            </div>
+
+            <div className="chartBox chartBoxWide">
+              <ReactECharts option={optRain} style={{ height: LARGE_CHART_HEIGHT, width: "100%" }} />
+            </div>
+
+            <div className="chartBox chartBoxWide">
+              <ReactECharts option={optWind} style={{ height: LARGE_CHART_HEIGHT, width: "100%" }} />
+            </div>
+
+            <div className="chartBox">
+              <ReactECharts option={optRh} style={{ height: NORMAL_CHART_HEIGHT, width: "100%" }} />
+            </div>
+            <div className="chartBox">
+              <ReactECharts option={optPress} style={{ height: NORMAL_CHART_HEIGHT, width: "100%" }} />
+            </div>
+
+            <div className="chartBox">
+              <ReactECharts option={optUv} style={{ height: NORMAL_CHART_HEIGHT, width: "100%" }} />
+            </div>
+            <div className="chartBox">
+              <ReactECharts option={optSolar} style={{ height: NORMAL_CHART_HEIGHT, width: "100%" }} />
+            </div>
+          </section>
+        )}
+
+        <section className="tableTitleWrap">
+          <div className="tableTitle">Riepilogo giornaliero</div>
+        </section>
+
+        <section className="toolbar">
+          <div className="search">
+            <span className="hint">Filtra per data</span>
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="es. 2026-02-21" />
           </div>
-          <div className="chartBox">
-            <ReactECharts option={optRain} style={{ height: 250, width: "100%" }} />
-          </div>
-          <div className="chartBox">
-            <ReactECharts option={optRh} style={{ height: 250, width: "100%" }} />
-          </div>
-          <div className="chartBox">
-            <ReactECharts option={optWind} style={{ height: 250, width: "100%" }} />
-          </div>
-          <div className="chartBox">
-            <ReactECharts option={optPress} style={{ height: 250, width: "100%" }} />
-          </div>
-          <div className="chartBox">
-            <ReactECharts option={optUvRad} style={{ height: 250, width: "100%" }} />
+
+          <div className="tools">
+            <div className="callout" title="Suggerimento">
+              <span className="dotMini" />
+              <span>
+                <span className="calloutFocus">Clicca sulla riga</span> per il dettaglio giornaliero →
+              </span>
+            </div>
+
+            <button
+              className="btn"
+              onClick={() => {
+                setSortKey("date");
+                setSortDir("asc");
+              }}
+            >
+              Reset ordine (giorni)
+            </button>
+            <button className="btn primary" onClick={downloadCsv}>
+              Scarica CSV (mese)
+            </button>
           </div>
         </section>
-      )}
 
-      <section className="toolbar">
-        <div className="search">
-          <span className="hint">Filtra per data</span>
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="es. 2021-02-21" />
-        </div>
-
-        <div className="tools">
-          <div className="callout" title="Suggerimento">
-            <span className="dot" />
-            Clicca sul <b>giorno</b> per il dettaglio giornaliero →
-          </div>
-
-          <button
-            className="btn"
-            onClick={() => {
-              setSortKey("date");
-              setSortDir("asc");
-            }}
-          >
-            Reset ordine (giorni)
-          </button>
-          <button className="btn primary" onClick={downloadCsv}>
-            Scarica CSV (mese)
-          </button>
-        </div>
-      </section>
-
-      <section className="tableWrap">
-        <table>
-          <thead>
-            <tr className="groupRow">
-              <th className="group stickyHead bR" colSpan={1}>
-                Giorno
-              </th>
-              <th className="group temp bR" colSpan={3}>
-                Temperature
-              </th>
-              <th className="group rain bR" colSpan={2}>
-                Precipitazioni
-              </th>
-              <th className="group hum bR" colSpan={3}>
-                Umidità
-              </th>
-              <th className="group wind bR" colSpan={3}>
-                Vento
-              </th>
-              <th className="group press bR" colSpan={3}>
-                Pressione
-              </th>
-              <th className="group rad" colSpan={4}>
-                Rad/UV
-              </th>
-            </tr>
-
-            <tr className="colRow">
-              <Th onClick={() => toggleSort("date")} active={sortKey === "date"} dir={sortDir} className="bR stickyHead" title="Ordina per giorno">
-                {"\u00A0"}
-              </Th>
-
-              <Th onClick={() => toggleSort("tmin")} active={sortKey === "tmin"} dir={sortDir}>
-                Min
-              </Th>
-              <Th onClick={() => toggleSort("tmean")} active={sortKey === "tmean"} dir={sortDir}>
-                Media
-              </Th>
-              <Th onClick={() => toggleSort("tmax")} active={sortKey === "tmax"} dir={sortDir} className="bR">
-                Max
-              </Th>
-
-              <Th onClick={() => toggleSort("rain_total")} active={sortKey === "rain_total"} dir={sortDir}>
-                Pioggia
-              </Th>
-              <Th onClick={() => toggleSort("rainrate_max")} active={sortKey === "rainrate_max"} dir={sortDir} className="bR">
-                Rate max
-              </Th>
-
-              <Th onClick={() => toggleSort("rh_min")} active={sortKey === "rh_min"} dir={sortDir}>
-                Min
-              </Th>
-              <Th onClick={() => toggleSort("rh_mean")} active={sortKey === "rh_mean"} dir={sortDir}>
-                Media
-              </Th>
-              <Th onClick={() => toggleSort("rh_max")} active={sortKey === "rh_max"} dir={sortDir} className="bR">
-                Max
-              </Th>
-
-              <Th onClick={() => toggleSort("wind_avg")} active={sortKey === "wind_avg"} dir={sortDir}>
-                Medio
-              </Th>
-              <Th onClick={() => toggleSort("gust_max")} active={sortKey === "gust_max"} dir={sortDir}>
-                Raffica
-              </Th>
-              <Th onClick={() => toggleSort("wind_dir_mean_deg")} active={sortKey === "wind_dir_mean_deg"} dir={sortDir} className="bR">
-                Dir media
-              </Th>
-
-              <Th onClick={() => toggleSort("press_min")} active={sortKey === "press_min"} dir={sortDir}>
-                Min
-              </Th>
-              <Th onClick={() => toggleSort("press_avg")} active={sortKey === "press_avg"} dir={sortDir}>
-                Media
-              </Th>
-              <Th onClick={() => toggleSort("press_max")} active={sortKey === "press_max"} dir={sortDir} className="bR">
-                Max
-              </Th>
-
-              <Th onClick={() => toggleSort("uv_mean_pos")} active={sortKey === "uv_mean_pos"} dir={sortDir}>
-                UV medio
-              </Th>
-              <Th onClick={() => toggleSort("uv_max")} active={sortKey === "uv_max"} dir={sortDir}>
-                UV max
-              </Th>
-              <Th onClick={() => toggleSort("solar_mean_pos")} active={sortKey === "solar_mean_pos"} dir={sortDir}>
-                Rad media
-              </Th>
-              <Th onClick={() => toggleSort("solar_max")} active={sortKey === "solar_max"} dir={sortDir}>
-                Rad max
-              </Th>
-            </tr>
-          </thead>
-
-          <tbody>
-            {sorted.map((d) => {
-              const rhMin = getRhMin(d);
-              const rhMean = getRhMean(d);
-              const rhMax = getRhMax(d);
-
-              const hasRain = Number.isFinite(n(d.rain_total)) && n(d.rain_total) > 0;
-              const hasRR = Number.isFinite(n(d.rainrate_max)) && n(d.rainrate_max) > 0;
-
-              const dirDeg = n(d.wind_dir_mean_deg);
-              const dirTxt = Number.isFinite(dirDeg) ? degToCardinal16(dirDeg) : "—";
-
-              return (
-                <tr key={d.date}>
-                  <td className="date sticky bR">
-                    <Link className="dayLink" href={`/giorni/${d.date}`} title={`Apri dettaglio del ${d.date}`}>
-                      <span className="dayNum">{dayOfMonthLabel(d.date)}</span>
-                      <span className="dayIcon">↗</span>
-                    </Link>
-                  </td>
-
-                  <td>{fmt(d.tmin, 1)} °C</td>
-                  <td className="strong">{fmt(d.tmean, 1)} °C</td>
-                  <td className="bR">{fmt(d.tmax, 1)} °C</td>
-
-                  <td className={hasRain ? "rainy" : ""}>{fmt(d.rain_total, 1)} mm</td>
-                  <td className={`bR ${hasRR ? "rainy" : ""}`}>{fmt(d.rainrate_max, 1)} mm/h</td>
-
-                  <td>{Number.isFinite(rhMin) ? `${Math.round(rhMin)} %` : "—"}</td>
-                  <td className="strong">{Number.isFinite(rhMean) ? `${Math.round(rhMean)} %` : "—"}</td>
-                  <td className="bR">{Number.isFinite(rhMax) ? `${Math.round(rhMax)} %` : "—"}</td>
-
-                  <td>{fmt(d.wind_avg, 1)} km/h</td>
-                  <td>{fmt(d.gust_max, 1)} km/h</td>
-                  <td className="bR">
-                    {dirTxt}
-                    {Number.isFinite(dirDeg) ? <span style={{ opacity: 0.65 }}> ({Math.round(dirDeg)}°)</span> : null}
-                  </td>
-
-                  <td>{fmt(d.press_min, 1)} hPa</td>
-                  <td>{fmt(d.press_avg, 1)} hPa</td>
-                  <td className="bR">{fmt(d.press_max, 1)} hPa</td>
-
-                  <td>{fmt(d.uv_mean_pos, 1)}</td>
-                  <td>{fmt(d.uv_max, 1)}</td>
-                  <td>{Number.isFinite(n(d.solar_mean_pos)) ? `${Math.round(n(d.solar_mean_pos))} W/m²` : "—"}</td>
-                  <td>{Number.isFinite(n(d.solar_max)) ? `${Math.round(n(d.solar_max))} W/m²` : "—"}</td>
-                </tr>
-              );
-            })}
-
-            {!sorted.length && (
-              <tr>
-                <td colSpan={18} className="empty">
-                  Nessun dato per il filtro corrente.
-                </td>
+        <section className="tableWrap">
+          <table>
+            <thead>
+              <tr className="groupRow">
+                <th className="group stickyHead bR" colSpan={1}>
+                  Giorno
+                </th>
+                <th className="group bR" colSpan={3}>
+                  Temperature
+                </th>
+                <th className="group bR" colSpan={2}>
+                  Precipitazioni
+                </th>
+                <th className="group bR" colSpan={3}>
+                  Umidità
+                </th>
+                <th className="group bR" colSpan={3}>
+                  Vento
+                </th>
+                <th className="group bR" colSpan={3}>
+                  Pressione
+                </th>
+                <th className="group bR" colSpan={2}>
+                  UV
+                </th>
+                <th className="group" colSpan={2}>
+                  Radiazione
+                </th>
               </tr>
-            )}
-          </tbody>
 
-          <tfoot>
-            <tr className="summaryRow">
-              <td className="sticky bR summaryLabel">
-                <span className="sumTag">RIEPILOGO MESE</span>
-              </td>
+              <tr className="colRow">
+                <Th onClick={() => toggleSort("date")} active={sortKey === "date"} dir={sortDir} className="bR stickyHead" title="Ordina per giorno">
+                  {"\u00A0"}
+                </Th>
 
-              <td>{fmt(monthAvgRow.tmin, 1)} °C</td>
-              <td className="strong">{fmt(monthAvgRow.tmean, 1)} °C</td>
-              <td className="bR">{fmt(monthAvgRow.tmax, 1)} °C</td>
+                <Th onClick={() => toggleSort("tmin")} active={sortKey === "tmin"} dir={sortDir}>
+                  Min
+                </Th>
+                <Th onClick={() => toggleSort("tmean")} active={sortKey === "tmean"} dir={sortDir}>
+                  Media
+                </Th>
+                <Th onClick={() => toggleSort("tmax")} active={sortKey === "tmax"} dir={sortDir} className="bR">
+                  Max
+                </Th>
 
-              <td>{fmt(monthAvgRow.rain_total, 1)} mm</td>
-              <td className="bR">{fmt(monthAvgRow.rainrate_max, 1)} mm/h</td>
+                <Th onClick={() => toggleSort("rain_total")} active={sortKey === "rain_total"} dir={sortDir}>
+                  Pioggia
+                </Th>
+                <Th onClick={() => toggleSort("rainrate_max")} active={sortKey === "rainrate_max"} dir={sortDir} className="bR">
+                  Rate max
+                </Th>
 
-              <td>{Number.isFinite(n(monthAvgRow.rh_min)) ? `${Math.round(n(monthAvgRow.rh_min))} %` : "—"}</td>
-              <td className="strong">{Number.isFinite(n(monthAvgRow.rh_mean)) ? `${Math.round(n(monthAvgRow.rh_mean))} %` : "—"}</td>
-              <td className="bR">{Number.isFinite(n(monthAvgRow.rh_max)) ? `${Math.round(n(monthAvgRow.rh_max))} %` : "—"}</td>
+                <Th onClick={() => toggleSort("rh_min")} active={sortKey === "rh_min"} dir={sortDir}>
+                  Min
+                </Th>
+                <Th onClick={() => toggleSort("rh_mean")} active={sortKey === "rh_mean"} dir={sortDir}>
+                  Media
+                </Th>
+                <Th onClick={() => toggleSort("rh_max")} active={sortKey === "rh_max"} dir={sortDir} className="bR">
+                  Max
+                </Th>
 
-              <td>{fmt(monthAvgRow.wind_avg, 1)} km/h</td>
-              <td>{fmt(monthAvgRow.gust_max, 1)} km/h</td>
-              <td className="bR">
-                {Number.isFinite(n(monthAvgRow.wind_dir_mean_deg)) ? degToCardinal16(monthAvgRow.wind_dir_mean_deg) : "—"}
-                {Number.isFinite(n(monthAvgRow.wind_dir_mean_deg)) ? <span style={{ opacity: 0.65 }}> ({Math.round(n(monthAvgRow.wind_dir_mean_deg))}°)</span> : null}
-              </td>
+                <Th onClick={() => toggleSort("wind_avg")} active={sortKey === "wind_avg"} dir={sortDir}>
+                  Medio
+                </Th>
+                <Th onClick={() => toggleSort("gust_max")} active={sortKey === "gust_max"} dir={sortDir}>
+                  Raffica
+                </Th>
+                <Th onClick={() => toggleSort("wind_dir_mean_deg")} active={sortKey === "wind_dir_mean_deg"} dir={sortDir} className="bR">
+                  Dir media
+                </Th>
 
-              <td>{fmt(monthAvgRow.press_min, 1)} hPa</td>
-              <td>{fmt(monthAvgRow.press_avg, 1)} hPa</td>
-              <td className="bR">{fmt(monthAvgRow.press_max, 1)} hPa</td>
+                <Th onClick={() => toggleSort("press_min")} active={sortKey === "press_min"} dir={sortDir}>
+                  Min
+                </Th>
+                <Th onClick={() => toggleSort("press_avg")} active={sortKey === "press_avg"} dir={sortDir}>
+                  Media
+                </Th>
+                <Th onClick={() => toggleSort("press_max")} active={sortKey === "press_max"} dir={sortDir} className="bR">
+                  Max
+                </Th>
 
-              <td>{fmt(monthAvgRow.uv_mean_pos, 1)}</td>
-              <td>{fmt(monthAvgRow.uv_max, 1)}</td>
-              <td>{Number.isFinite(n(monthAvgRow.solar_mean_pos)) ? `${Math.round(n(monthAvgRow.solar_mean_pos))} W/m²` : "—"}</td>
-              <td>{Number.isFinite(n(monthAvgRow.solar_max)) ? `${Math.round(n(monthAvgRow.solar_max))} W/m²` : "—"}</td>
-            </tr>
-          </tfoot>
-        </table>
-      </section>
-      <style jsx>{`
-        .wrap {
-          max-width: 1280px;
-          margin: 0 auto;
-          padding: 18px 10px 50px;
-          background: #fff;
-        }
+                <Th onClick={() => toggleSort("uv_mean_pos")} active={sortKey === "uv_mean_pos"} dir={sortDir}>
+                  UV medio
+                </Th>
+                <Th onClick={() => toggleSort("uv_max")} active={sortKey === "uv_max"} dir={sortDir} className="bR">
+                  UV max
+                </Th>
 
-        /* ---- NAVBAR MESE (stile simile alla pagina giorno) ---- */
-        .navBar {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 12px;
-          padding: 10px 2px 10px;
-          position: sticky;
-          top: 0;
-          z-index: 5;
-          backdrop-filter: blur(10px);
-          background: rgba(255, 255, 255, 0.85);
-          border-bottom: 1px solid rgba(15, 23, 42, 0.08);
-          margin-bottom: 10px;
-        }
+                <Th onClick={() => toggleSort("solar_mean_pos")} active={sortKey === "solar_mean_pos"} dir={sortDir}>
+                  Rad media
+                </Th>
+                <Th onClick={() => toggleSort("solar_max")} active={sortKey === "solar_max"} dir={sortDir}>
+                  Rad max
+                </Th>
+              </tr>
+            </thead>
 
-        .navLeft {
-          display: flex;
-          align-items: center;
-          gap: 10px;
-          min-width: 0;
-        }
-        .iconBtn {
-          width: 36px;
-          height: 36px;
-          display: grid;
-          place-items: center;
-          text-decoration: none;
-          border: 1px solid #e7e7e7;
-          background: rgba(255, 255, 255, 0.92);
-          color: #0f172a;
-          border-radius: 12px;
-          font-weight: 950;
-          transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
-          flex: 0 0 auto;
-        }
-        .iconBtn:hover {
-          transform: translateY(-1px);
-          border-color: #d6d6d6;
-          background: #fff;
-        }
+            <tbody>
+              {sorted.map((d) => {
+                const rhMin = getRhMin(d);
+                const rhMean = getRhMean(d);
+                const rhMax = getRhMax(d);
 
-        .crumb {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          flex-wrap: wrap;
-          min-width: 0;
-        }
-        .crumbLink {
-          text-decoration: none;
-          color: rgba(15, 23, 42, 0.78);
-          font-weight: 950;
-          border-bottom: 1px dashed rgba(15, 23, 42, 0.18);
-        }
-        .crumbLink:hover {
-          color: #0f172a;
-          border-bottom-color: rgba(15, 23, 42, 0.35);
-        }
-        .dot {
-          opacity: 0.4;
-          font-weight: 900;
-        }
-        .crumbHere {
-          color: #0f172a;
-          font-weight: 950;
-          white-space: nowrap;
-        }
+                const hasRain = Number.isFinite(n(d.rain_total)) && n(d.rain_total) > 0;
+                const hasRR = Number.isFinite(n(d.rainrate_max)) && n(d.rainrate_max) > 0;
 
-        .navRight {
-          display: flex;
-          align-items: center;
-          gap: 10px;
-          flex-wrap: wrap;
-          justify-content: flex-end;
-        }
+                const dirDeg = n(d.wind_dir_mean_deg);
+                const dirTxt = Number.isFinite(dirDeg) ? degToCardinal16(dirDeg) : "—";
+                const href = `/giorni/${d.date}`;
 
-        .navActions {
-          display: flex;
-          align-items: center;
-          gap: 10px;
-          flex-wrap: wrap;
-          justify-content: flex-end;
-        }
+                return (
+                  <tr
+                    key={d.date}
+                    className="dayRowClickable"
+                    onClick={() => router.push(href)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        router.push(href);
+                      }
+                    }}
+                    tabIndex={0}
+                    role="link"
+                    aria-label={`Apri dettaglio del giorno ${d.date}`}
+                  >
+                    <td className="date sticky bR">
+                      <div className="dayCell">
+                        <span className="dayNum">{dayOfMonthLabel(d.date)}</span>
+                        <span className="dayIcon">↗</span>
+                      </div>
+                    </td>
 
-        .navAction {
-          text-decoration: none;
-          border: 1px solid #e7e7e7;
-          background: rgba(255, 255, 255, 0.92);
-          color: #0f172a;
-          padding: 10px 12px;
-          border-radius: 14px;
-          font-weight: 950;
-          white-space: nowrap;
-          transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
-        }
-        .navAction:hover {
-          transform: translateY(-1px);
-          border-color: #d6d6d6;
-          background: #fff;
-        }
-        .navAction.mid {
-          color: rgba(15, 23, 42, 0.78);
-        }
-        .navAction.disabled {
-          pointer-events: none;
-          opacity: 0.45;
-        }
+                    <td>{fmt(d.tmin, 1)} °C</td>
+                    <td className="strong">{fmt(d.tmean, 1)} °C</td>
+                    <td className="bR">{fmt(d.tmax, 1)} °C</td>
 
-        @media (max-width: 760px) {
-          .navBar {
-            flex-direction: column;
-            align-items: stretch;
+                    <td className={hasRain ? "rainy" : ""}>{fmt(d.rain_total, 1)} mm</td>
+                    <td className={`bR ${hasRR ? "rainy" : ""}`}>{fmt(d.rainrate_max, 1)} mm/h</td>
+
+                    <td>{Number.isFinite(rhMin) ? `${Math.round(rhMin)} %` : "—"}</td>
+                    <td className="strong">{Number.isFinite(rhMean) ? `${Math.round(rhMean)} %` : "—"}</td>
+                    <td className="bR">{Number.isFinite(rhMax) ? `${Math.round(rhMax)} %` : "—"}</td>
+
+                    <td>{fmt(d.wind_avg, 1)} km/h</td>
+                    <td>{fmt(d.gust_max, 1)} km/h</td>
+                    <td className="bR">
+                      {dirTxt}
+                      {Number.isFinite(dirDeg) ? <span style={{ opacity: 0.65 }}> ({Math.round(dirDeg)}°)</span> : null}
+                    </td>
+
+                    <td>{fmt(d.press_min, 1)} hPa</td>
+                    <td>{fmt(d.press_avg, 1)} hPa</td>
+                    <td className="bR">{fmt(d.press_max, 1)} hPa</td>
+
+                    <td>{fmt(d.uv_mean_pos, 1)}</td>
+                    <td className="bR">{fmt(d.uv_max, 1)}</td>
+
+                    <td>{Number.isFinite(n(d.solar_mean_pos)) ? `${Math.round(n(d.solar_mean_pos))} W/m²` : "—"}</td>
+                    <td>{Number.isFinite(n(d.solar_max)) ? `${Math.round(n(d.solar_max))} W/m²` : "—"}</td>
+                  </tr>
+                );
+              })}
+
+              {!sorted.length && (
+                <tr>
+                  <td colSpan={20} className="empty">
+                    Nessun dato per il filtro corrente.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+
+            <tfoot>
+              <tr className="summaryRowTable">
+                <td className="sticky bR summaryLabelTable">
+                  <span className="sumTag">RIEPILOGO MESE</span>
+                </td>
+
+                <td>{fmt(monthAvgRow.tmin, 1)} °C</td>
+                <td className="strong">{fmt(monthAvgRow.tmean, 1)} °C</td>
+                <td className="bR">{fmt(monthAvgRow.tmax, 1)} °C</td>
+
+                <td title={monthAvgRow.rain_is_override ? "Dato rivisto ARPAS" : ""} className={monthAvgRow.rain_is_override ? "rainOverrideCell" : ""}>
+                  {fmt(monthAvgRow.rain_total, 1)} mm
+                </td>
+                <td className="bR">{fmt(monthAvgRow.rainrate_max, 1)} mm/h</td>
+
+                <td>{Number.isFinite(n(monthAvgRow.rh_min)) ? `${Math.round(n(monthAvgRow.rh_min))} %` : "—"}</td>
+                <td className="strong">{Number.isFinite(n(monthAvgRow.rh_mean)) ? `${Math.round(n(monthAvgRow.rh_mean))} %` : "—"}</td>
+                <td className="bR">{Number.isFinite(n(monthAvgRow.rh_max)) ? `${Math.round(n(monthAvgRow.rh_max))} %` : "—"}</td>
+
+                <td>{fmt(monthAvgRow.wind_avg, 1)} km/h</td>
+                <td>{fmt(monthAvgRow.gust_max, 1)} km/h</td>
+                <td className="bR">
+                  {Number.isFinite(n(monthAvgRow.wind_dir_mean_deg)) ? degToCardinal16(monthAvgRow.wind_dir_mean_deg) : "—"}
+                  {Number.isFinite(n(monthAvgRow.wind_dir_mean_deg)) ? <span style={{ opacity: 0.65 }}> ({Math.round(n(monthAvgRow.wind_dir_mean_deg))}°)</span> : null}
+                </td>
+
+                <td>{fmt(monthAvgRow.press_min, 1)} hPa</td>
+                <td>{fmt(monthAvgRow.press_avg, 1)} hPa</td>
+                <td className="bR">{fmt(monthAvgRow.press_max, 1)} hPa</td>
+
+                <td>{fmt(monthAvgRow.uv_mean_pos, 1)}</td>
+                <td className="bR">{fmt(monthAvgRow.uv_max, 1)}</td>
+
+                <td>{Number.isFinite(n(monthAvgRow.solar_mean_pos)) ? `${Math.round(n(monthAvgRow.solar_mean_pos))} W/m²` : "—"}</td>
+                <td>{Number.isFinite(n(monthAvgRow.solar_max)) ? `${Math.round(n(monthAvgRow.solar_max))} W/m²` : "—"}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </section>
+
+        <style jsx>{`
+          .wrap {
+            background: transparent;
+          }
+
+          .hero {
+            border: 1px solid #ececec;
+            border-radius: 18px;
+            background: rgba(255, 255, 255, 0.9);
+            box-shadow: 0 1px 0 rgba(0, 0, 0, 0.02), 0 12px 34px rgba(0, 0, 0, 0.04);
+            padding: 22px;
+          }
+
+          .yearTopRow {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 18px;
+          }
+
+          .yearBlock {
+            width: 100%;
+          }
+
+          .kicker {
+            font-size: 12px;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            opacity: 0.6;
+            margin-bottom: 8px;
+          }
+
+          .titleLine {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 22px;
+            flex-wrap: wrap;
+          }
+
+          .titleMain {
+            display: inline-flex;
+            align-items: center;
+            gap: 16px;
+            flex-wrap: wrap;
+          }
+
+          .year {
+            margin: 0;
+            font-size: 68px;
+            line-height: 1;
+            letter-spacing: -0.04em;
+            flex: 0 0 auto;
+          }
+
+          .titleActions {
+            display: inline-flex !important;
+            align-items: center !important;
+            gap: 12px !important;
+            flex: 0 0 auto;
+            margin-left: 6px;
+          }
+
+          .arrowCircle {
+            display: inline-flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            width: 62px !important;
+            height: 62px !important;
+            min-width: 62px !important;
+            min-height: 62px !important;
+            border-radius: 999px !important;
+            border: 2.2px solid #1f1f1f !important;
+            background: #ffffff !important;
+            color: #1f1f1f !important;
+            text-decoration: none !important;
+            box-sizing: border-box !important;
+            transition: transform 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+          }
+
+          .arrowCircle:hover {
+            background: #fafafa !important;
+            transform: translateY(-1px);
+            box-shadow: 0 10px 18px rgba(0, 0, 0, 0.06);
+          }
+
+          .arrowCircle:active {
+            transform: scale(0.98);
+          }
+
+          .arrowCircle.disabled {
+            opacity: 0.3;
+            pointer-events: none;
+          }
+
+          .arrowSvg {
+            width: 26px !important;
+            height: 26px !important;
+            display: block !important;
+            color: #1f1f1f !important;
+            flex: 0 0 auto;
+          }
+
+          .inlineCompareWrap {
+            display: inline-flex;
+            align-items: center;
+            justify-content: flex-end;
             gap: 10px;
+            flex-wrap: nowrap;
+            min-width: 0;
           }
-          .navRight {
-            justify-content: stretch;
-            width: 100%;
+
+          .inlineCompareLabel {
+            font-size: 14px;
+            font-weight: 900;
+            color: #475569;
+            white-space: nowrap;
           }
-          .navActions {
-            width: 100%;
-          }
-          .navAction {
-            flex: 1;
+
+          .compareSelectMini {
+            appearance: none;
+            -webkit-appearance: none;
+            -moz-appearance: none;
+            width: 104px;
+            min-width: 104px;
+            max-width: 104px;
+            height: 54px;
+            padding: 0 14px;
+            border-radius: 999px;
+            background: linear-gradient(180deg, #ffffff, #f8fafc);
+            border: 1px solid #d8dee7;
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 4px 14px rgba(15, 23, 42, 0.04);
+            font-weight: 900;
+            font-size: 16px;
+            color: #0f172a;
+            cursor: pointer;
+            color-scheme: light;
             text-align: center;
           }
-        }
 
-        .topbar {
-          display: flex;
-          align-items: center;
-          gap: 14px;
-          margin-bottom: 14px;
-        }
-        .back {
-          text-decoration: none;
-          color: #111;
-          opacity: 0.75;
-          white-space: nowrap;
-        }
-        .back:hover {
-          opacity: 1;
-        }
-        .brandTitle {
-          font-weight: 800;
-          letter-spacing: 0.02em;
-        }
-        .brandSub {
-          font-size: 12px;
-          opacity: 0.7;
-          margin-top: 2px;
-        }
-
-        .hero {
-          border: 1px solid #ececec;
-          border-radius: 18px;
-          background: #fff;
-          box-shadow: 0 1px 0 rgba(0, 0, 0, 0.02), 0 12px 34px rgba(0, 0, 0, 0.04);
-          padding: 18px;
-        }
-
-        .heroRow {
-          display: grid;
-          grid-template-columns: 1.1fr 1fr;
-          gap: 14px;
-        }
-
-        .kicker {
-          font-size: 12px;
-          letter-spacing: 0.14em;
-          text-transform: uppercase;
-          opacity: 0.6;
-          margin-bottom: 8px;
-        }
-        h1 {
-          margin: 0;
-          font-size: 40px;
-          line-height: 1.05;
-          letter-spacing: -0.02em;
-        }
-        .sub {
-          margin-top: 8px;
-          opacity: 0.75;
-        }
-
-        /* ====== MESI: centro + distanza; (grassetto forzato inline) ====== */
-        .monthNavWrap {
-          margin-top: 14px;
-          padding-top: 16px;
-          border-top: 1px solid #efefef;
-          display: flex;
-          justify-content: center;
-        }
-        .monthNav {
-          width: 100%;
-          display: flex;
-          flex-wrap: wrap;
-          justify-content: center;
-          align-items: center;
-          column-gap: 22px;
-          row-gap: 14px;
-          text-align: center;
-        }
-        .monthLink,
-        .monthText {
-          font-weight: 900 !important;
-        }
-
-        .cards {
-          display: grid;
-          grid-template-columns: repeat(3, 1fr);
-          gap: 10px;
-        }
-        .card {
-          border: 1px solid #ededed;
-          border-radius: 14px;
-          padding: 12px;
-          background: #fff;
-          box-shadow: 0 1px 0 rgba(0, 0, 0, 0.02);
-        }
-        .label {
-          font-size: 12px;
-          opacity: 0.7;
-        }
-        .value {
-          font-size: 22px;
-          margin-top: 6px;
-          font-weight: 800;
-        }
-
-        .charts {
-          margin-top: 12px;
-          display: grid;
-          gap: 12px;
-        }
-        .chartBox {
-          border: 1px solid #e7e7e7;
-          border-radius: 16px;
-          padding: 8px;
-          background: #fff;
-        }
-
-        .toolbar {
-          margin-top: 14px;
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 12px;
-          padding: 12px 12px;
-          border: 1px solid #e7e7e7;
-          border-radius: 14px;
-          background: #fff;
-        }
-        .search {
-          display: flex;
-          flex-direction: column;
-          gap: 6px;
-          min-width: 240px;
-        }
-        .hint {
-          font-size: 12px;
-          opacity: 0.7;
-        }
-        input {
-          border: 1px solid #e2e2e2;
-          border-radius: 10px;
-          padding: 10px 12px;
-          outline: none;
-        }
-        input:focus {
-          border-color: #111;
-        }
-        .tools {
-          display: flex;
-          gap: 10px;
-          flex-wrap: wrap;
-          justify-content: flex-end;
-          align-items: center;
-        }
-
-        .callout {
-          display: inline-flex;
-          align-items: center;
-          gap: 8px;
-          padding: 10px 12px;
-          border-radius: 12px;
-          border: 1px solid #e7e7e7;
-          background: linear-gradient(180deg, #fff, #fbfbfb);
-          font-size: 13px;
-          white-space: nowrap;
-          box-shadow: 0 1px 0 rgba(0, 0, 0, 0.02);
-        }
-        .dot {
-          width: 10px;
-          height: 10px;
-          border-radius: 999px;
-          background: #111;
-          display: inline-block;
-        }
-
-        .btn {
-          border: 1px solid #e2e2e2;
-          background: #fff;
-          padding: 10px 12px;
-          border-radius: 10px;
-          cursor: pointer;
-          white-space: nowrap;
-        }
-        .btn:hover {
-          border-color: #bdbdbd;
-        }
-        .btn.primary {
-          border-color: #111;
-          background: #111;
-          color: #fff;
-        }
-        .btn.primary:hover {
-          opacity: 0.9;
-        }
-
-        .tableWrap {
-          margin-top: 12px;
-          border: 1px solid #e7e7e7;
-          border-radius: 16px;
-          overflow: auto;
-          background: #fff;
-        }
-        table {
-          width: 100%;
-          border-collapse: collapse;
-          min-width: 1620px;
-        }
-
-        thead th {
-          position: sticky;
-          top: 0;
-          background: #fff;
-          border-bottom: 1px solid #e7e7e7;
-          font-size: 11px;
-          text-transform: uppercase;
-          letter-spacing: 0.08em;
-          opacity: 0.85;
-          padding: 10px 10px;
-          text-align: center;
-          white-space: nowrap;
-          user-select: none;
-        }
-
-        .groupRow th {
-          font-size: 11px;
-          letter-spacing: 0.12em;
-          opacity: 0.9;
-          border-bottom: 0;
-          padding: 12px 10px 12px;
-          background: #fbfbfb;
-        }
-        .colRow th {
-          top: 44px;
-          background: #fff;
-          border-top: 1px solid #efefef;
-          padding-top: 12px;
-        }
-
-        .group {
-          font-weight: 950;
-        }
-
-        tbody td,
-        tfoot td {
-          border-bottom: 1px solid #f1f1f1;
-          padding: 9px 10px;
-          white-space: nowrap;
-          text-align: center;
-          font-size: 13px;
-        }
-
-        .bR {
-          border-right: 1px solid #e9e9e9;
-        }
-
-        tbody tr:hover td {
-          background: #fafafa;
-        }
-        tbody tr:nth-child(even) td {
-          background: #fcfcfc;
-        }
-
-        .sticky {
-          position: sticky;
-          left: 0;
-          z-index: 10;
-          background: #fff;
-          box-shadow: 2px 0 0 #e9e9e9;
-        }
-        tbody tr:nth-child(even) td.sticky {
-          background: #fcfcfc;
-        }
-        tbody tr:hover td.sticky {
-          background: #fafafa;
-        }
-
-        .stickyHead {
-          position: sticky;
-          left: 0;
-          z-index: 20;
-          background: #fbfbfb;
-          box-shadow: 2px 0 0 #e9e9e9;
-        }
-        .colRow .stickyHead {
-          background: #fff;
-        }
-
-        .dayLink {
-          color: #111;
-          text-decoration: none;
-          font-weight: 900;
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          gap: 8px;
-          width: 100%;
-          text-align: center;
-          border: 1px solid #e7e7e7;
-          border-radius: 10px;
-          padding: 8px 10px;
-          background: #fff;
-          transition: transform 0.08s ease, box-shadow 0.12s ease, border-color 0.12s ease;
-        }
-        .dayLink:hover {
-          border-color: #111;
-          box-shadow: 0 0 0 3px rgba(17, 17, 17, 0.06);
-          transform: translateY(-1px);
-        }
-        .dayNum {
-          font-weight: 950;
-        }
-        .dayIcon {
-          opacity: 0.7;
-          font-size: 12px;
-        }
-
-        .strong {
-          font-weight: 900;
-        }
-        .rainy {
-          font-weight: 900;
-        }
-        .empty {
-          padding: 18px 10px;
-          opacity: 0.7;
-          text-align: center;
-          font-size: 13px;
-        }
-
-        tfoot td {
-          border-top: 2px solid #e7e7e7;
-          border-bottom: 0;
-          background: #fbfbfb;
-          font-weight: 900;
-        }
-        .summaryRow td {
-          padding-top: 12px;
-          padding-bottom: 12px;
-        }
-        .summaryLabel {
-          text-align: left;
-          padding-left: 12px;
-        }
-        .sumTag {
-          display: inline-block;
-          font-weight: 950;
-          letter-spacing: 0.08em;
-          font-size: 11px;
-          text-transform: uppercase;
-        }
-
-        @media (max-width: 980px) {
-          .heroRow {
-            grid-template-columns: 1fr;
+          .compareSelectMini:focus {
+            outline: none;
+            box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 4px 14px rgba(15, 23, 42, 0.05);
+            border-color: #b9c5d6;
           }
-          .callout {
-            display: none;
-          }
-        }
 
-        @media (max-width: 520px) {
+          .compareSelectMini option,
+          .compareSelectMini optgroup {
+            color: #111111;
+            background: #ffffff;
+          }
+
+          .monthMeta {
+            margin-top: 16px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+            font-size: 16px;
+            font-weight: 900;
+            color: #5f7897;
+          }
+
+          .subLink {
+            text-decoration: none;
+            color: #5f7897;
+            font-size: 16px;
+            font-weight: 900;
+            letter-spacing: -0.01em;
+          }
+
+          .subLink:hover {
+            text-decoration: underline;
+            color: #0f172a;
+          }
+
+          .monthsBar {
+            margin-top: 18px;
+            border: 1px solid #ececec;
+            border-radius: 16px;
+            background: #fcfcfc;
+            padding: 16px 16px 14px;
+          }
+
+          .monthsBarHead {
+            font-size: 13px;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: #374151;
+            font-weight: 900;
+            margin-bottom: 14px;
+            text-align: center;
+          }
+
           .monthNav {
-            column-gap: 16px;
-            row-gap: 12px;
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            text-align: center;
           }
-        }
-      `}</style>
-    </div>
+
+          .monthLink {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 12px;
+            border-radius: 11px;
+            text-decoration: none;
+            color: #111;
+            font-weight: 900;
+            font-size: 15px;
+            line-height: 1.1;
+            background: #fff;
+            border: 1px solid #ececec;
+            transition: background 120ms ease, transform 120ms ease, box-shadow 120ms ease;
+          }
+
+          .monthText {
+            font-weight: 900;
+          }
+
+          .monthLink:hover {
+            background: #f6f6f6;
+            transform: translateY(-1px);
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.06);
+          }
+
+          .monthLink.active {
+            background: #f5f8ff;
+            border-color: #d8dbe2;
+            box-shadow: 0 8px 20px rgba(12, 25, 56, 0.06);
+          }
+
+          .monthLink:focus-visible {
+            outline: 2px solid #111;
+            outline-offset: 2px;
+          }
+
+          .ext {
+            font-size: 14px;
+            opacity: 0.65;
+            transform: translateY(-1px);
+          }
+
+          .summaryCompact {
+            margin-top: 18px;
+            border-top: 1px solid #efefef;
+            padding-top: 18px;
+          }
+
+          .summaryHead {
+            margin-bottom: 16px;
+          }
+
+          .summaryHead.centered {
+            text-align: center;
+          }
+
+          .summaryHead h2 {
+            margin: 0;
+            font-size: 24px;
+            line-height: 1.1;
+            font-weight: 950;
+            letter-spacing: -0.03em;
+          }
+
+          .summaryHead p {
+            margin: 6px 0 0;
+            font-size: 13px;
+            line-height: 1.4;
+            color: #666;
+            font-weight: 700;
+          }
+
+          .summaryRows {
+            display: grid;
+            gap: 10px;
+          }
+
+          .summaryRow {
+            display: grid;
+            grid-template-columns: 190px 1fr;
+            gap: 14px;
+            align-items: stretch;
+            border: 1px solid #ececec;
+            border-radius: 16px;
+            background: #fcfcfc;
+            padding: 14px 16px;
+          }
+
+          .summaryRow.dual {
+            grid-template-columns: 1fr 1fr;
+            padding: 0;
+            border: 0;
+            background: transparent;
+          }
+
+          .summaryHalf {
+            display: grid;
+            grid-template-columns: 190px 1fr;
+            gap: 14px;
+            align-items: stretch;
+            border: 1px solid #ececec;
+            border-radius: 16px;
+            background: #fcfcfc;
+            padding: 14px 16px;
+          }
+
+          .summaryLabel {
+            display: flex;
+            align-items: center;
+            font-size: 15px;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: #4b5563;
+            font-weight: 900;
+            padding-right: 8px;
+            border-right: 1px solid #ececec;
+          }
+
+          .summaryMetrics {
+            display: grid;
+            gap: 10px;
+            align-items: center;
+          }
+
+          .summaryMetrics.three {
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+          }
+
+          .summaryMetrics.two {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+          }
+
+          .summaryMetric {
+            min-width: 0;
+          }
+
+          .summaryKey {
+            display: block;
+            font-size: 10px;
+            color: #6b7280;
+            font-weight: 800;
+            margin-bottom: 5px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+          }
+
+          .summaryMetric strong {
+            display: block;
+            font-size: 19px;
+            line-height: 1.05;
+            font-weight: 900;
+            letter-spacing: -0.02em;
+            color: #0f172a;
+          }
+
+          .rainOverrideValue {
+            position: relative;
+            color: #111827;
+            text-decoration: underline;
+            text-decoration-color: #dc2626;
+            text-decoration-thickness: 2px;
+            text-underline-offset: 3px;
+            cursor: help;
+            padding-left: 16px;
+          }
+
+          .rainOverrideValue::before {
+            content: "";
+            position: absolute;
+            left: 0;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 8px;
+            height: 8px;
+            border-radius: 999px;
+            background: #dc2626;
+            box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.16);
+          }
+
+          .overrideNote {
+            margin-top: 10px;
+            font-size: 12px;
+            line-height: 1.45;
+            color: #64748b;
+            font-weight: 700;
+          }
+
+          .charts2 {
+            margin-top: 12px;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+          }
+
+          .chartBox {
+            border: 1px solid #e7e7e7;
+            border-radius: 16px;
+            padding: 10px;
+            background: rgba(255, 255, 255, 0.94);
+          }
+
+          .chartBoxWide {
+            grid-column: 1 / -1;
+          }
+
+          .tableTitleWrap {
+            margin-top: 16px;
+            display: flex;
+            justify-content: center;
+          }
+
+          .tableTitle {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 11px 22px;
+            min-width: 220px;
+            border-radius: 999px;
+            background: linear-gradient(180deg, #ffffff, #f8fafc);
+            border: 1px solid #e5e7eb;
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+            font-weight: 900;
+            font-size: 15px;
+            color: #0f172a;
+          }
+
+          .toolbar {
+            margin-top: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 12px;
+            border: 1px solid #e7e7e7;
+            border-radius: 14px;
+            background: rgba(255, 255, 255, 0.94);
+          }
+
+          .search {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            min-width: 240px;
+          }
+
+          .hint {
+            font-size: 12px;
+            opacity: 0.7;
+          }
+
+          input {
+            border: 1px solid #e2e2e2;
+            border-radius: 10px;
+            padding: 10px 12px;
+            outline: none;
+            background: #fff;
+          }
+
+          input:focus {
+            border-color: #111;
+          }
+
+          .tools {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+            align-items: center;
+          }
+
+          .callout {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 12px;
+            border-radius: 12px;
+            border: 1px solid #e7e7e7;
+            background: linear-gradient(180deg, #fff, #fbfbfb);
+            font-size: 13px;
+            white-space: nowrap;
+            box-shadow: 0 1px 0 rgba(0, 0, 0, 0.02);
+          }
+
+          .calloutFocus {
+            color: #0f172a;
+            font-weight: 900;
+            text-decoration: underline;
+            text-decoration-color: #2563eb;
+            text-decoration-thickness: 2px;
+            text-underline-offset: 2px;
+          }
+
+          .dotMini {
+            width: 10px;
+            height: 10px;
+            border-radius: 999px;
+            background: #111;
+            display: inline-block;
+          }
+
+          .btn {
+            border: 1px solid #e2e2e2;
+            background: #fff;
+            padding: 10px 12px;
+            border-radius: 10px;
+            cursor: pointer;
+            white-space: nowrap;
+          }
+
+          .btn:hover {
+            border-color: #bdbdbd;
+          }
+
+          .btn.primary {
+            border-color: #111;
+            background: #111;
+            color: #fff;
+          }
+
+          .btn.primary:hover {
+            opacity: 0.9;
+          }
+
+          .tableWrap {
+            margin-top: 10px;
+            border: 1px solid #e7e7e7;
+            border-radius: 16px;
+            overflow: auto;
+            background: rgba(255, 255, 255, 0.94);
+          }
+
+          table {
+            width: 100%;
+            border-collapse: collapse;
+            min-width: 1700px;
+          }
+
+          thead th {
+            position: sticky;
+            top: 0;
+            background: #fff;
+            border-bottom: 1px solid #e7e7e7;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            opacity: 0.85;
+            padding: 10px 10px;
+            text-align: center;
+            white-space: nowrap;
+            user-select: none;
+          }
+
+          .groupRow th {
+            font-size: 11px;
+            letter-spacing: 0.12em;
+            opacity: 0.9;
+            border-bottom: 0;
+            padding: 12px 10px 12px;
+            background: #fbfbfb;
+          }
+
+          .colRow th {
+            top: 44px;
+            background: #fff;
+            border-top: 1px solid #efefef;
+            padding-top: 12px;
+          }
+
+          .group {
+            font-weight: 950;
+          }
+
+          tbody td,
+          tfoot td {
+            border-bottom: 1px solid #f1f1f1;
+            padding: 9px 10px;
+            white-space: nowrap;
+            text-align: center;
+            font-size: 13px;
+          }
+
+          .bR {
+            border-right: 1px solid #e9e9e9;
+          }
+
+          .dayRowClickable {
+            cursor: pointer;
+          }
+
+          .dayRowClickable:hover td {
+            background: #fafafa;
+          }
+
+          .dayRowClickable:nth-child(even) td {
+            background: #fcfcfc;
+          }
+
+          .dayRowClickable:focus {
+            outline: none;
+          }
+
+          .dayRowClickable:focus td {
+            background: #f6f9ff !important;
+          }
+
+          .sticky {
+            position: sticky;
+            left: 0;
+            z-index: 10;
+            background: #fff;
+            box-shadow: 2px 0 0 #e9e9e9;
+          }
+
+          tbody tr:nth-child(even) td.sticky {
+            background: #fcfcfc;
+          }
+
+          tbody tr:hover td.sticky {
+            background: #fafafa;
+          }
+
+          .stickyHead {
+            position: sticky;
+            left: 0;
+            z-index: 20;
+            background: #fbfbfb;
+            box-shadow: 2px 0 0 #e9e9e9;
+          }
+
+          .colRow .stickyHead {
+            background: #fff;
+          }
+
+          td.date {
+            padding: 9px 10px;
+          }
+
+          .dayCell {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            width: 100%;
+          }
+
+          .dayNum {
+            font-weight: 950;
+            font-size: 16px;
+            line-height: 1;
+          }
+
+          .dayIcon {
+            opacity: 0.65;
+            font-size: 12px;
+            transform: translateY(-1px);
+          }
+
+          .strong {
+            font-weight: 900;
+          }
+
+          .rainy {
+            font-weight: 900;
+          }
+
+          .empty {
+            padding: 18px 10px;
+            opacity: 0.7;
+            text-align: center;
+            font-size: 13px;
+          }
+
+          tfoot td {
+            border-top: 2px solid #e7e7e7;
+            border-bottom: 0;
+            background: #fbfbfb;
+            font-weight: 900;
+          }
+
+          .summaryRowTable td {
+            padding-top: 11px;
+            padding-bottom: 11px;
+          }
+
+          .summaryLabelTable {
+            text-align: left;
+            padding-left: 12px;
+          }
+
+          .sumTag {
+            display: inline-block;
+            font-weight: 950;
+            letter-spacing: 0.08em;
+            font-size: 11px;
+            text-transform: uppercase;
+          }
+
+          .rainOverrideCell {
+            position: relative;
+            color: #111827;
+            text-decoration: underline;
+            text-decoration-color: #dc2626;
+            text-decoration-thickness: 2px;
+            text-underline-offset: 3px;
+            cursor: help;
+            padding-left: 22px !important;
+          }
+
+          .rainOverrideCell::before {
+            content: "";
+            position: absolute;
+            left: 10px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 8px;
+            height: 8px;
+            border-radius: 999px;
+            background: #dc2626;
+            box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.16);
+          }
+
+          @media (max-width: 1220px) {
+            .titleLine {
+              align-items: flex-start;
+            }
+
+            .inlineCompareWrap {
+              justify-content: flex-start;
+            }
+          }
+
+          @media (max-width: 1100px) {
+            .summaryRow {
+              grid-template-columns: 1fr;
+            }
+
+            .summaryHalf {
+              grid-template-columns: 1fr;
+            }
+
+            .summaryLabel {
+              border-right: 0;
+              border-bottom: 1px solid #ececec;
+              padding-right: 0;
+              padding-bottom: 10px;
+            }
+
+            .summaryRow.dual {
+              grid-template-columns: 1fr;
+            }
+
+            .charts2 {
+              grid-template-columns: 1fr;
+            }
+
+            .chartBoxWide {
+              grid-column: auto;
+            }
+          }
+
+          @media (max-width: 980px) {
+            .callout {
+              display: none;
+            }
+
+            .year {
+              font-size: 58px;
+            }
+
+            .arrowCircle {
+              width: 56px !important;
+              height: 56px !important;
+              min-width: 56px !important;
+              min-height: 56px !important;
+            }
+          }
+
+          @media (max-width: 820px) {
+            .titleLine {
+              flex-direction: column;
+              align-items: flex-start;
+            }
+
+            .inlineCompareWrap {
+              width: 100%;
+            }
+          }
+
+          @media (max-width: 720px) {
+            .summaryMetrics.three,
+            .summaryMetrics.two {
+              grid-template-columns: 1fr;
+            }
+
+            .monthNav {
+              gap: 8px;
+            }
+
+            .titleMain {
+              align-items: flex-start;
+            }
+
+            .inlineCompareWrap {
+              flex-direction: column;
+              align-items: stretch;
+              gap: 6px;
+            }
+
+            .compareSelectMini {
+              width: 100%;
+              min-width: 100%;
+              max-width: 100%;
+            }
+
+            .toolbar {
+              flex-direction: column;
+              align-items: stretch;
+            }
+
+            .search {
+              min-width: 100%;
+            }
+
+            .tools {
+              justify-content: stretch;
+            }
+          }
+
+          @media (max-width: 520px) {
+            .year {
+              font-size: 46px;
+            }
+
+            .titleMain {
+              gap: 12px;
+            }
+
+            .monthLink {
+              font-size: 14px;
+              padding: 7px 10px;
+            }
+
+            .summaryMetric strong {
+              font-size: 20px;
+            }
+
+            .dayNum {
+              font-size: 15px;
+            }
+
+            .monthMeta,
+            .subLink {
+              font-size: 17px;
+            }
+
+            .arrowCircle {
+              width: 50px !important;
+              height: 50px !important;
+              min-width: 50px !important;
+              min-height: 50px !important;
+            }
+
+            .arrowSvg {
+              width: 22px !important;
+              height: 22px !important;
+            }
+          }
+        `}</style>
+      </div>
+    </SiteLayout>
   );
 }
 

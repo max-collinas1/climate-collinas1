@@ -309,6 +309,7 @@ export default function YearOverviewPage(props) {
 
   const [mounted, setMounted] = useState(false);
   const [showRecords, setShowRecords] = useState(false);
+  const [pickYear, setPickYear] = useState("");
 
   useEffect(() => setMounted(true), []);
 
@@ -554,6 +555,8 @@ export default function YearOverviewPage(props) {
   const x = monthly.map((m) => monthShort(m.ym));
   const dirTxt = Number.isFinite(n(annual.wind_dir_mean_deg)) ? degToCardinal16(annual.wind_dir_mean_deg) : "—";
 
+  const yearCompareAvailable = allYears.filter((y) => y !== year);
+
   const COLORS = {
     red: "#ff2d20",
     orange: "#f28c28",
@@ -563,7 +566,7 @@ export default function YearOverviewPage(props) {
     blue: "#2563eb",
     indigo: "#312e81",
     greenStrong: "#2f9e44",
-    windDir: "#f4a261",
+    windDir: "#7c3aed",
   };
 
   const baseChart = {
@@ -630,7 +633,7 @@ export default function YearOverviewPage(props) {
       formatter: (params) =>
         axisTooltipFormatter(params, [
           { name: "Rate max", formatter: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} mm/h`) },
-          { name: "Progressivo", formatter: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} mm`) },
+          { name: "Totale progressivo", formatter: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} mm`) },
           { name: "Pioggia", formatter: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} mm`) },
         ]),
     },
@@ -660,7 +663,7 @@ export default function YearOverviewPage(props) {
     ],
     series: [
       { name: "Rate max", type: "scatter", data: seriesLine(monthly.map((m) => m.rainrate_max)), yAxisIndex: 1, symbolSize: 7, itemStyle: { color: COLORS.red }, z: 5 },
-      { name: "Progressivo", type: "line", data: seriesLine(rainCum), yAxisIndex: 0, showSymbol: false, connectNulls: false, lineStyle: { width: 4, color: COLORS.greenStrong }, itemStyle: { color: COLORS.greenStrong }, z: 6 },
+      { name: "Totale progressivo", type: "line", data: seriesLine(rainCum), yAxisIndex: 0, showSymbol: false, connectNulls: false, lineStyle: { width: 4, color: COLORS.greenStrong }, itemStyle: { color: COLORS.greenStrong }, z: 6 },
       { name: "Pioggia", type: "bar", data: seriesLine(rainMonthly), yAxisIndex: 0, itemStyle: { color: "#4f6fd5" }, z: 2 },
     ],
   };
@@ -741,7 +744,15 @@ export default function YearOverviewPage(props) {
       { name: "Raffica max", type: "scatter", data: seriesLine(monthly.map((m) => m.gust_max)), yAxisIndex: 0, symbolSize: 7, itemStyle: { color: COLORS.red }, z: 5 },
       { name: "Raffica media", type: "line", data: seriesLine(monthly.map((m) => m.gust_mean)), yAxisIndex: 0, showSymbol: false, connectNulls: false, lineStyle: { width: 2, color: "#a3c614" }, itemStyle: { color: "#a3c614" } },
       { name: "Vento medio", type: "line", data: seriesLine(monthly.map((m) => m.wind_mean)), yAxisIndex: 0, showSymbol: false, connectNulls: false, lineStyle: { width: 2, color: "#4f6fd5" }, itemStyle: { color: "#4f6fd5" } },
-      { name: "Dir media", type: "scatter", data: seriesLine(monthly.map((m) => m.wind_dir_mean_deg)), yAxisIndex: 1, symbolSize: 7, itemStyle: { color: COLORS.windDir } },
+      {
+        name: "Dir media",
+        type: "scatter",
+        data: seriesLine(monthly.map((m) => m.wind_dir_mean_deg)),
+        yAxisIndex: 1,
+        symbol: "diamond",
+        symbolSize: 10,
+        itemStyle: { color: COLORS.windDir },
+      },
     ],
   };
 
@@ -839,6 +850,9 @@ export default function YearOverviewPage(props) {
     ],
   };
 
+  const LARGE_CHART_HEIGHT = 365;
+  const NORMAL_CHART_HEIGHT = 340;
+
   return (
     <SiteLayout headerProps={{}}>
       <div className="wrap">
@@ -847,59 +861,90 @@ export default function YearOverviewPage(props) {
             <div className="yearBlock">
               <div className="kicker">Anno</div>
               <div className="yearAndNav">
-                <h1 className="year">{year}</h1>
+                <div className="titleMain">
+                  <h1 className="year">{year}</h1>
 
-                <div className="yearNav">
-                  {prevYear ? (
-                    <Link href={`/anni/${prevYear}`} className="yearNavLink">
-                      <span className="navArrow">←</span>
-                      <span>Precedente</span>
-                    </Link>
-                  ) : (
-                    <span className="yearNavLink disabled">
-                      <span className="navArrow">←</span>
-                      <span>Precedente</span>
-                    </span>
-                  )}
+                  <div className="titleActions">
+                    {prevYear ? (
+                      <Link href={`/anni/${prevYear}`} className="arrowCircle" aria-label="Anno precedente" title="Precedente">
+                        <svg viewBox="0 0 32 32" aria-hidden="true" className="arrowSvg">
+                          <path
+                            d="M19 9.5L12.5 16L19 22.5"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2.4"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                      </Link>
+                    ) : (
+                      <span className="arrowCircle disabled" aria-hidden="true">
+                        <svg viewBox="0 0 32 32" aria-hidden="true" className="arrowSvg">
+                          <path
+                            d="M19 9.5L12.5 16L19 22.5"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2.4"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                      </span>
+                    )}
 
-                  <div className="yearSelectWrap">
-                    <label htmlFor="year-select" className="srOnly">
-                      Seleziona anno
-                    </label>
-                    <select
-                      id="year-select"
-                      className="yearSelect"
-                      value={year}
-                      onChange={(e) => {
-                        const nextValue = e.target.value;
-                        if (nextValue && nextValue !== year) {
-                          router.push(`/anni/${nextValue}`);
-                        }
-                      }}
-                    >
-                      {allYears.map((y) => (
-                        <option key={y} value={y}>
-                          {y}
-                        </option>
-                      ))}
-                    </select>
-                    <span className="yearSelectLabel">Seleziona anno</span>
-                    <span className="yearSelectArrow" aria-hidden="true">
-                      ▾
-                    </span>
+                    {nextYear ? (
+                      <Link href={`/anni/${nextYear}`} className="arrowCircle" aria-label="Anno successivo" title="Successivo">
+                        <svg viewBox="0 0 32 32" aria-hidden="true" className="arrowSvg">
+                          <path
+                            d="M13 9.5L19.5 16L13 22.5"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2.4"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                      </Link>
+                    ) : (
+                      <span className="arrowCircle disabled" aria-hidden="true">
+                        <svg viewBox="0 0 32 32" aria-hidden="true" className="arrowSvg">
+                          <path
+                            d="M13 9.5L19.5 16L13 22.5"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2.4"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                      </span>
+                    )}
                   </div>
+                </div>
 
-                  {nextYear ? (
-                    <Link href={`/anni/${nextYear}`} className="yearNavLink">
-                      <span>Successivo</span>
-                      <span className="navArrow">→</span>
-                    </Link>
-                  ) : (
-                    <span className="yearNavLink disabled">
-                      <span>Successivo</span>
-                      <span className="navArrow">→</span>
-                    </span>
-                  )}
+                <div className="inlineCompareWrap">
+                  <span className="inlineCompareLabel">Seleziona anno</span>
+
+                  <select
+                    id="year-select"
+                    className="compareSelectMini"
+                    value={pickYear}
+                    onChange={(e) => {
+                      const nextValue = e.target.value;
+                      setPickYear(nextValue);
+                      if (nextValue && nextValue !== year) {
+                        router.push(`/anni/${nextValue}`);
+                      }
+                    }}
+                  >
+                    <option value="">Anno</option>
+                    {yearCompareAvailable.map((y) => (
+                      <option key={y} value={y}>
+                        {y}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               </div>
             </div>
@@ -1130,28 +1175,29 @@ export default function YearOverviewPage(props) {
         {mounted && (
           <section className="charts2">
             <div className="chartBox chartBoxWide">
-              <ReactECharts option={optTemp} style={{ height: 340, width: "100%" }} />
+              <ReactECharts option={optTemp} style={{ height: LARGE_CHART_HEIGHT, width: "100%" }} />
+            </div>
+
+            <div className="chartBox chartBoxWide">
+              <ReactECharts option={optRain} style={{ height: LARGE_CHART_HEIGHT, width: "100%" }} />
+            </div>
+
+            <div className="chartBox chartBoxWide">
+              <ReactECharts option={optWind} style={{ height: LARGE_CHART_HEIGHT, width: "100%" }} />
             </div>
 
             <div className="chartBox">
-              <ReactECharts option={optRain} style={{ height: 340, width: "100%" }} />
+              <ReactECharts option={optRh} style={{ height: NORMAL_CHART_HEIGHT, width: "100%" }} />
             </div>
             <div className="chartBox">
-              <ReactECharts option={optRh} style={{ height: 340, width: "100%" }} />
-            </div>
-
-            <div className="chartBox">
-              <ReactECharts option={optWind} style={{ height: 340, width: "100%" }} />
-            </div>
-            <div className="chartBox">
-              <ReactECharts option={optPress} style={{ height: 340, width: "100%" }} />
+              <ReactECharts option={optPress} style={{ height: NORMAL_CHART_HEIGHT, width: "100%" }} />
             </div>
 
             <div className="chartBox">
-              <ReactECharts option={optUv} style={{ height: 340, width: "100%" }} />
+              <ReactECharts option={optUv} style={{ height: NORMAL_CHART_HEIGHT, width: "100%" }} />
             </div>
             <div className="chartBox">
-              <ReactECharts option={optSolar} style={{ height: 340, width: "100%" }} />
+              <ReactECharts option={optSolar} style={{ height: NORMAL_CHART_HEIGHT, width: "100%" }} />
             </div>
           </section>
         )}
@@ -1164,7 +1210,7 @@ export default function YearOverviewPage(props) {
           <table>
             <thead>
               <tr className="groupRow">
-                <th className="group stickyHead bR" colSpan={1}>
+                <th className="group groupMonth stickyHead bR" colSpan={1}>
                   Mese
                 </th>
                 <th className="group bR" colSpan={3}>
@@ -1191,7 +1237,7 @@ export default function YearOverviewPage(props) {
               </tr>
 
               <tr className="colRow">
-                <th className="bR stickyHead"> </th>
+                <th className="bR stickyHead stickyHeadMonth"> </th>
 
                 <th>Min media</th>
                 <th>Media</th>
@@ -1227,11 +1273,25 @@ export default function YearOverviewPage(props) {
               {monthly.map((m) => {
                 const mm = String(m.ym).slice(5, 7);
                 const dir = n(m.wind_dir_mean_deg);
+                const monthUrl = `/mesi/${year}/${mm}`;
 
                 return (
-                  <tr key={m.ym}>
+                  <tr
+                    key={m.ym}
+                    className="monthRowClickable"
+                    onClick={() => router.push(monthUrl)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        router.push(monthUrl);
+                      }
+                    }}
+                    tabIndex={0}
+                    role="link"
+                    aria-label={`Apri ${monthFull(m.ym)}`}
+                  >
                     <td className="date sticky bR">
-                      <Link href={`/mesi/${year}/${mm}`} className="cellLink">
+                      <Link href={monthUrl} className="cellLink">
                         <span className="extCell" aria-hidden="true">
                           ↗
                         </span>
@@ -1353,6 +1413,13 @@ export default function YearOverviewPage(props) {
             flex-wrap: wrap;
           }
 
+          .titleMain {
+            display: inline-flex;
+            align-items: center;
+            gap: 16px;
+            flex-wrap: wrap;
+          }
+
           .year {
             margin: 0;
             font-size: 68px;
@@ -1360,124 +1427,101 @@ export default function YearOverviewPage(props) {
             letter-spacing: -0.04em;
           }
 
-          .yearNav {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            flex-wrap: wrap;
+          .titleActions {
+            display: inline-flex !important;
+            align-items: center !important;
+            gap: 12px !important;
+            flex: 0 0 auto;
+            margin-left: 6px;
           }
 
-          .yearNavLink {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            text-decoration: none;
-            color: #111827;
-            font-weight: 700;
-            padding: 10px 12px;
-            border-radius: 999px;
-            background: #fff;
-            border: 1px solid #e5e7eb;
-            transition: background 120ms ease, transform 120ms ease, box-shadow 120ms ease;
+          .arrowCircle {
+            display: inline-flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            width: 62px !important;
+            height: 62px !important;
+            min-width: 62px !important;
+            min-height: 62px !important;
+            border-radius: 999px !important;
+            border: 2.2px solid #1f1f1f !important;
+            background: #ffffff !important;
+            color: #1f1f1f !important;
+            text-decoration: none !important;
+            box-sizing: border-box !important;
+            transition: transform 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
           }
 
-          .yearNavLink:hover {
-            background: #f8fafc;
+          .arrowCircle:hover {
+            background: #fafafa !important;
             transform: translateY(-1px);
-            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.06);
+            box-shadow: 0 10px 18px rgba(0, 0, 0, 0.06);
           }
 
-          .yearNavLink.disabled {
-            opacity: 0.45;
+          .arrowCircle:active {
+            transform: scale(0.98);
+          }
+
+          .arrowCircle.disabled {
+            opacity: 0.3;
             pointer-events: none;
           }
 
-          .navArrow {
-            font-size: 14px;
-            line-height: 1;
+          .arrowSvg {
+            width: 26px !important;
+            height: 26px !important;
+            display: block !important;
+            color: #1f1f1f !important;
+            flex: 0 0 auto;
           }
 
-          .yearSelectWrap {
-            position: relative;
+          .inlineCompareWrap {
             display: inline-flex;
             align-items: center;
-            min-width: 190px;
+            justify-content: flex-end;
+            gap: 10px;
+            flex-wrap: nowrap;
+            min-width: 0;
+          }
+
+          .inlineCompareLabel {
+            font-size: 14px;
+            font-weight: 900;
+            color: #475569;
+            white-space: nowrap;
+          }
+
+          .compareSelectMini {
+            appearance: none;
+            -webkit-appearance: none;
+            -moz-appearance: none;
+            width: 104px;
+            min-width: 104px;
+            max-width: 104px;
+            height: 54px;
+            padding: 0 14px;
             border-radius: 999px;
             background: linear-gradient(180deg, #ffffff, #f8fafc);
-            border: 1px solid #e5e7eb;
-            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9);
-            overflow: hidden;
+            border: 1px solid #d8dee7;
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 4px 14px rgba(15, 23, 42, 0.04);
+            font-weight: 900;
+            font-size: 16px;
+            color: #0f172a;
+            cursor: pointer;
+            color-scheme: light;
+            text-align: center;
           }
 
-	  .yearSelect {
-	    appearance: none;
-	    -webkit-appearance: none;
-	    -moz-appearance: none;
-	    width: 100%;
-	    min-width: 190px;
-	    height: 46px;
-	    padding: 0 40px 0 18px;
-	    border: 0;
-	    background: transparent;
-	    color: transparent;
-	    cursor: pointer;
-	    position: relative;
-	    z-index: 3;
-
-	    /* forza il menu nativo in stile chiaro */
-	    color-scheme: light;
-	  }
-
-	  .yearSelect:focus {
-	    outline: none;
-	  }
-
-	  /* testo del menu a tendina */
-	  .yearSelect option,
-	  .yearSelect optgroup {
-	    color: #111111;
-	    background: #ffffff;
-	  }
-
-	  .yearSelectWrap:focus-within {
-	    box-shadow: 0 0 0 2px rgba(15, 23, 42, 0.08),
-	      inset 0 1px 0 rgba(255, 255, 255, 0.9);
-	  }
-
-	  .yearSelectLabel {
-	    position: absolute;
-	    inset: 0;
-	    display: inline-flex;
-	    align-items: center;
-	    justify-content: center;
-	    padding: 0 42px 0 18px;
-	    pointer-events: none;
-	    font-weight: 900;
-	    font-size: 15px;
-	    color: #0f172a;
-	    z-index: 1;
-	  }
-          .yearSelectArrow {
-            position: absolute;
-            right: 16px;
-            top: 50%;
-            transform: translateY(-50%);
-            pointer-events: none;
-            font-size: 13px;
-            color: #475569;
-            z-index: 2;
+          .compareSelectMini:focus {
+            outline: none;
+            box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 4px 14px rgba(15, 23, 42, 0.05);
+            border-color: #b9c5d6;
           }
 
-          .srOnly {
-            position: absolute;
-            width: 1px;
-            height: 1px;
-            padding: 0;
-            margin: -1px;
-            overflow: hidden;
-            clip: rect(0, 0, 0, 0);
-            white-space: nowrap;
-            border: 0;
+          .compareSelectMini option,
+          .compareSelectMini optgroup {
+            color: #111111;
+            background: #ffffff;
           }
 
           .monthsBar {
@@ -1852,6 +1896,11 @@ export default function YearOverviewPage(props) {
             background: #fbfbfb;
           }
 
+          .groupRow th.groupMonth {
+            font-size: 15px;
+            letter-spacing: 0.14em;
+          }
+
           .colRow th {
             top: 44px;
             background: #fff;
@@ -1883,6 +1932,18 @@ export default function YearOverviewPage(props) {
             background: #fcfcfc;
           }
 
+          .monthRowClickable {
+            cursor: pointer;
+          }
+
+          .monthRowClickable:focus {
+            outline: none;
+          }
+
+          .monthRowClickable:focus td {
+            background: #f6f9ff !important;
+          }
+
           .sticky {
             position: sticky;
             left: 0;
@@ -1911,6 +1972,10 @@ export default function YearOverviewPage(props) {
             background: #fff;
           }
 
+          .stickyHeadMonth {
+            min-width: 150px;
+          }
+
           .cellLink {
             color: #111;
             text-decoration: none;
@@ -1924,6 +1989,8 @@ export default function YearOverviewPage(props) {
 
           .cellText {
             font-weight: 900;
+            font-size: 16px;
+            line-height: 1.15;
           }
 
           .cellLink:hover {
@@ -1992,6 +2059,15 @@ export default function YearOverviewPage(props) {
             }
           }
 
+          @media (max-width: 980px) {
+            .arrowCircle {
+              width: 56px !important;
+              height: 56px !important;
+              min-width: 56px !important;
+              min-height: 56px !important;
+            }
+          }
+
           @media (max-width: 720px) {
             .summaryMetrics.three,
             .summaryMetrics.two {
@@ -2002,16 +2078,15 @@ export default function YearOverviewPage(props) {
               gap: 8px;
             }
 
-            .yearNav {
+            .inlineCompareWrap {
               width: 100%;
+              justify-content: flex-start;
             }
 
-            .yearSelectWrap {
+            .compareSelectMini {
               width: 100%;
-            }
-
-            .yearSelect {
               min-width: 100%;
+              max-width: 100%;
             }
           }
 
@@ -2027,6 +2102,22 @@ export default function YearOverviewPage(props) {
 
             .summaryMetric strong {
               font-size: 20px;
+            }
+
+            .cellText {
+              font-size: 16px;
+            }
+
+            .arrowCircle {
+              width: 50px !important;
+              height: 50px !important;
+              min-width: 50px !important;
+              min-height: 50px !important;
+            }
+
+            .arrowSvg {
+              width: 22px !important;
+              height: 22px !important;
             }
           }
         `}</style>
