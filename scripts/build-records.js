@@ -1,10 +1,10 @@
-// scripts/build-records.js
 const fs = require("fs");
 const path = require("path");
 
 const ROOT = process.cwd();
 
 const IN_DAILY = path.join(ROOT, "data", "daily.json");
+const IN_MONTHLY_OVERRIDES = path.join(ROOT, "data", "monthly_overrides.json");
 const IN_INTRADAY_DIR = path.join(ROOT, "public", "data", "intraday");
 const OUT_RECORDS = path.join(ROOT, "data", "record.json");
 
@@ -168,6 +168,49 @@ function firstNum(...vals) {
     if (isNum(v)) return v;
   }
   return null;
+}
+
+// -------------------- overrides --------------------
+function readMonthlyOverrides() {
+  if (!fs.existsSync(IN_MONTHLY_OVERRIDES)) return [];
+  try {
+    const raw = readJSON(IN_MONTHLY_OVERRIDES);
+    return Array.isArray(raw) ? raw : [];
+  } catch {
+    return [];
+  }
+}
+
+function findMonthlyOverride(overrides, ym, field) {
+  return (
+    (overrides || []).find(
+      (o) =>
+        String(o?.scope ?? "") === "month" &&
+        String(o?.ym ?? "") === String(ym) &&
+        String(o?.field ?? "") === String(field)
+    ) || null
+  );
+}
+
+function applyRainMonthOverride(rawValue, override) {
+  const ov = Number(override?.value);
+  if (Number.isFinite(ov)) {
+    return {
+      value: ov,
+      is_override: true,
+      source: String(override?.source ?? ""),
+      label: String(override?.label ?? "Dato ARPAS"),
+      note: String(override?.note ?? ""),
+    };
+  }
+
+  return {
+    value: rawValue,
+    is_override: false,
+    source: "",
+    label: "",
+    note: "",
+  };
 }
 
 // -------------------- derived getters --------------------
@@ -681,17 +724,30 @@ function buildDailyRanks(rowsSortedByDate) {
 }
 
 // -------------------- monthly / yearly aggregations --------------------
-function monthlyAggFromRows(year, month, rs) {
+function monthlyAggFromRows(year, month, rs, overrides) {
   const expectedDays = daysInMonth(year, month);
   const coverage_by_param = buildCoverageByParam(rs, expectedDays);
+  const ym = `${year}-${pad2(month)}`;
+
+  const rain_total_raw = sum(rs.map((r) => r.rain_total));
+  const rainOverride = findMonthlyOverride(overrides, ym, "rainSum");
+  const rainResolved = applyRainMonthOverride(rain_total_raw, rainOverride);
 
   return {
+    ym,
+
     tmax_mean: mean(rs.map((r) => r.tmax)),
     tmin_mean: mean(rs.map((r) => r.tmin)),
     tmean_mean: mean(rs.map((r) => r.tmean)),
     trange_mean: mean(rs.map((r) => getTempRangeDaily(r))),
 
-    rain_total: sum(rs.map((r) => r.rain_total)),
+    rain_total_raw,
+    rain_total: rainResolved.value,
+    rain_is_override: rainResolved.is_override,
+    rain_override_source: rainResolved.source,
+    rain_override_label: rainResolved.label,
+    rain_override_note: rainResolved.note,
+
     rainrate_max: max(rs.map((r) => r.rainrate_max)),
     rain_15m_high: max(rs.map((r) => r.rain_15m)),
     rain_30m_high: max(rs.map((r) => r.rain_30m)),
@@ -739,9 +795,18 @@ function longestDrySpellDays(rs) {
   return best;
 }
 
-function yearlyAggFromRows(year, rs) {
+function yearlyAggFromRows(year, rs, monthlyListForYear) {
   const expectedDays = daysInYear(year);
   const coverage_by_param = buildCoverageByParam(rs, expectedDays);
+
+  const monthlyRainFinals = (monthlyListForYear || [])
+    .map((m) => m.rain_total)
+    .filter((v) => isNum(v));
+
+  const hasRainOverride = (monthlyListForYear || []).some((m) => m.rain_is_override);
+  const rainOverrideMonths = (monthlyListForYear || [])
+    .filter((m) => m.rain_is_override)
+    .map((m) => m.month);
 
   return {
     tmax_mean: mean(rs.map((r) => r.tmax)),
@@ -749,7 +814,11 @@ function yearlyAggFromRows(year, rs) {
     tmin_mean: mean(rs.map((r) => r.tmin)),
     trange_mean: mean(rs.map((r) => getTempRangeDaily(r))),
 
-    rain_total: sum(rs.map((r) => r.rain_total)),
+    rain_total: monthlyRainFinals.length ? monthlyRainFinals.reduce((a, b) => a + b, 0) : null,
+    rain_total_raw: sum(rs.map((r) => r.rain_total)),
+    rain_has_override: hasRainOverride,
+    rain_override_months: rainOverrideMonths,
+
     rain_days_gt_1mm: countWhere(rs, (r) => isNum(r.rain_total) && r.rain_total > 1),
     longest_dry_spell: longestDrySpellDays(rs),
     rainrate_max: max(rs.map((r) => r.rainrate_max)),
@@ -776,6 +845,10 @@ function rankMonthly(list, field, dir) {
         year: x.year,
         month: x.month,
         coverage_by_param: x.coverage_by_param,
+        rain_is_override: !!x.rain_is_override,
+        rain_override_source: x.rain_override_source || "",
+        rain_override_label: x.rain_override_label || "",
+        rain_override_note: x.rain_override_note || "",
       })),
     dir
   );
@@ -789,20 +862,22 @@ function rankYearly(list, field, dir) {
         value: x[field],
         year: x.year,
         coverage_by_param: x.coverage_by_param,
+        rain_has_override: !!x.rain_has_override,
+        rain_override_months: Array.isArray(x.rain_override_months) ? x.rain_override_months : [],
       })),
     dir
   );
 }
 
 // ====== ranking per "mese dell'anno" ======
-function buildMonthlyByMonthOfYear(rows) {
+function buildMonthlyByMonthOfYear(rows, overrides) {
   const byYM = groupByYM(rows);
 
   const monthlyList = [];
   for (const [ym, rs] of byYM.entries()) {
     const year = Number(ym.slice(0, 4));
     const month = Number(ym.slice(5, 7));
-    const agg = monthlyAggFromRows(year, month, rs);
+    const agg = monthlyAggFromRows(year, month, rs, overrides);
     monthlyList.push({ year, month, ym, ...agg });
   }
 
@@ -825,6 +900,7 @@ function buildMonthlyByMonthOfYear(rows) {
       trange_low: rankMonthly(list, "trange_mean", "asc"),
 
       rain_total_high: rankMonthly(list, "rain_total", "desc"),
+      rain_total_low: rankMonthly(list, "rain_total", "asc"),
       rainrate_max_high: rankMonthly(list, "rainrate_max", "desc"),
       rain_15m_high: rankMonthly(list, "rain_15m_high", "desc"),
       rain_30m_high: rankMonthly(list, "rain_30m_high", "desc"),
@@ -851,6 +927,12 @@ function buildMonthlyByMonthOfYear(rows) {
         year: x.year,
         month: x.month,
         coverage_by_param: x.coverage_by_param,
+        rain_total: x.rain_total,
+        rain_total_raw: x.rain_total_raw,
+        rain_is_override: x.rain_is_override,
+        rain_override_source: x.rain_override_source,
+        rain_override_label: x.rain_override_label,
+        rain_override_note: x.rain_override_note,
       })),
     };
   }
@@ -859,14 +941,14 @@ function buildMonthlyByMonthOfYear(rows) {
 }
 
 // ====== ranking mensile dentro un anno ======
-function buildMonthlyByYear(rows) {
+function buildMonthlyByYear(rows, overrides) {
   const byYM = groupByYM(rows);
 
   const monthlyList = [];
   for (const [ym, rs] of byYM.entries()) {
     const year = Number(ym.slice(0, 4));
     const month = Number(ym.slice(5, 7));
-    const agg = monthlyAggFromRows(year, month, rs);
+    const agg = monthlyAggFromRows(year, month, rs, overrides);
     monthlyList.push({ year, month, ym, ...agg });
   }
 
@@ -890,6 +972,7 @@ function buildMonthlyByYear(rows) {
       trange_low: rankMonthly(list, "trange_mean", "asc"),
 
       rain_total_high: rankMonthly(list, "rain_total", "desc"),
+      rain_total_low: rankMonthly(list, "rain_total", "asc"),
       rainrate_max_high: rankMonthly(list, "rainrate_max", "desc"),
       rain_15m_high: rankMonthly(list, "rain_15m_high", "desc"),
       rain_30m_high: rankMonthly(list, "rain_30m_high", "desc"),
@@ -916,6 +999,12 @@ function buildMonthlyByYear(rows) {
         year: x.year,
         month: x.month,
         coverage_by_param: x.coverage_by_param,
+        rain_total: x.rain_total,
+        rain_total_raw: x.rain_total_raw,
+        rain_is_override: x.rain_is_override,
+        rain_override_source: x.rain_override_source,
+        rain_override_label: x.rain_override_label,
+        rain_override_note: x.rain_override_note,
       })),
     };
   }
@@ -923,13 +1012,26 @@ function buildMonthlyByYear(rows) {
   return out;
 }
 
-function buildYearly(rows) {
+function buildYearly(rows, overrides) {
   const byY = groupByYear(rows);
+  const byYM = groupByYM(rows);
+
+  const monthlyList = [];
+  for (const [ym, rs] of byYM.entries()) {
+    const year = Number(ym.slice(0, 4));
+    const month = Number(ym.slice(5, 7));
+    const agg = monthlyAggFromRows(year, month, rs, overrides);
+    monthlyList.push({ year, month, ym, ...agg });
+  }
 
   const yearlyList = [];
   for (const [yy, rs] of byY.entries()) {
     const year = Number(yy);
-    const agg = yearlyAggFromRows(year, rs);
+    const monthlyListForYear = monthlyList
+      .filter((m) => Number(m.year) === year)
+      .sort((a, b) => a.month - b.month);
+
+    const agg = yearlyAggFromRows(year, rs, monthlyListForYear);
     yearlyList.push({ year, ...agg });
   }
 
@@ -975,6 +1077,9 @@ function buildYearly(rows) {
       tmin_mean: x.tmin_mean,
       trange_mean: x.trange_mean,
       rain_total: x.rain_total,
+      rain_total_raw: x.rain_total_raw,
+      rain_has_override: x.rain_has_override,
+      rain_override_months: x.rain_override_months,
       rain_days_gt_1mm: x.rain_days_gt_1mm,
       longest_dry_spell: x.longest_dry_spell,
       rainrate_max: x.rainrate_max,
@@ -994,6 +1099,8 @@ function main() {
     console.error("daily.json non trovato:", IN_DAILY);
     process.exit(1);
   }
+
+  const overrides = readMonthlyOverrides();
 
   const rows = readJSON(IN_DAILY)
     .filter((r) => r && typeof r.date === "string" && r.date.length >= 10)
@@ -1028,11 +1135,11 @@ function main() {
   }
 
   const monthly = {
-    by_month: buildMonthlyByMonthOfYear(rows),
-    by_year: buildMonthlyByYear(rows),
+    by_month: buildMonthlyByMonthOfYear(rows, overrides),
+    by_year: buildMonthlyByYear(rows, overrides),
   };
 
-  const yearly = buildYearly(rows);
+  const yearly = buildYearly(rows, overrides);
 
   const out = {
     generated_at: new Date().toISOString(),

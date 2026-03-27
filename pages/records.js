@@ -1,4 +1,3 @@
-// pages/records.js
 import fs from "fs";
 import path from "path";
 import Link from "next/link";
@@ -80,6 +79,32 @@ function takeTop(arr, topN = 20) {
   return arr.slice(0, topN);
 }
 
+function hasArpasPriority(row, kind, arpasMode = "") {
+  if (!row || typeof row !== "object") return false;
+  if (arpasMode !== "rain_total") return false;
+
+  if (kind === "monthly") return !!row.rain_is_override;
+  if (kind === "yearly") return !!row.rain_has_override;
+
+  return false;
+}
+
+function getArpasNote(row, kind, arpasMode = "") {
+  if (!row || typeof row !== "object") return "";
+  if (arpasMode !== "rain_total") return "";
+
+  if (kind === "monthly" && row.rain_is_override) {
+    return row.rain_override_label || "Dato ARPAS";
+  }
+
+  if (kind === "yearly" && row.rain_has_override) {
+    const months = Array.isArray(row.rain_override_months) ? row.rain_override_months : [];
+    return months.length ? `Anno con mesi ARPAS: ${months.join(", ")}` : "Anno con mesi ARPAS";
+  }
+
+  return "";
+}
+
 // -------------------- coverage helpers --------------------
 function getCoverageValue(row, paramKey) {
   if (!row || typeof row !== "object") return NaN;
@@ -110,9 +135,22 @@ function getCoverageValue(row, paramKey) {
   return NaN;
 }
 
-function filterRowsByCoverage(arr, paramKey, minCoverage = 0.95) {
+function shouldBypassCoverage(row, paramKey, arpasMode = "") {
+  if (!row || typeof row !== "object") return false;
+  if (paramKey !== "rain") return false;
+  if (arpasMode !== "rain_total") return false;
+
+  if (row.rain_is_override) return true;
+  if (row.rain_has_override) return true;
+
+  return false;
+}
+
+function filterRowsByCoverage(arr, paramKey, minCoverage = 0.95, arpasMode = "") {
   if (!Array.isArray(arr)) return [];
   return arr.filter((row) => {
+    if (shouldBypassCoverage(row, paramKey, arpasMode)) return true;
+
     const cov = getCoverageValue(row, paramKey);
     if (!Number.isFinite(cov)) return true;
     return cov >= minCoverage;
@@ -129,13 +167,14 @@ function pickFirstArray(scope, keys) {
   return [];
 }
 
-function makeCard(title, rows, unit, digits, paramKey) {
+function makeCard(title, rows, unit, digits, paramKey, arpasMode = "") {
   return {
     title,
     rows: Array.isArray(rows) ? rows : [],
     unit,
     digits,
     paramKey,
+    arpasMode,
   };
 }
 
@@ -223,7 +262,8 @@ function getMonthlyCards(cat, scope, mmMonthly) {
       makeCard(`Escursione termica più bassa${tag}`, scope?.trange_low, "°C", 1, "temperature"),
     ],
     precip: [
-      makeCard(`Precipitazioni massime${tag}`, scope?.rain_total_high, "mm", 1, "rain"),
+      makeCard(`Precipitazioni massime${tag}`, scope?.rain_total_high, "mm", 1, "rain", "rain_total"),
+      makeCard(`Precipitazioni minime${tag}`, scope?.rain_total_low, "mm", 1, "rain", "rain_total"),
       makeCard(`Rain rate massimo${tag}`, scope?.rainrate_max_high, "mm/h", 1, "rain"),
       makeCard(`Pioggia massima 15 min${tag}`, scope?.rain_15m_high, "mm", 1, "rain"),
       makeCard(`Pioggia massima 30 min${tag}`, scope?.rain_30m_high, "mm", 1, "rain"),
@@ -255,7 +295,10 @@ function getMonthlyCards(cat, scope, mmMonthly) {
   };
 
   return (cards[cat] || [])
-    .map((c) => ({ ...c, rows: filterRowsByCoverage(c.rows, c.paramKey, 0.95) }))
+    .map((c) => ({
+      ...c,
+      rows: filterRowsByCoverage(c.rows, c.paramKey, 0.95, c.arpasMode),
+    }))
     .filter((c) => c.rows.length > 0);
 }
 
@@ -372,7 +415,8 @@ function getYearlyCards(cat, scope) {
         ]),
         "mm",
         1,
-        "rain"
+        "rain",
+        "rain_total"
       ),
       makeCard(
         "Precipitazioni totali annue più basse",
@@ -383,7 +427,8 @@ function getYearlyCards(cat, scope) {
         ]),
         "mm",
         1,
-        "rain"
+        "rain",
+        "rain_total"
       ),
       makeCard(
         "Anni con giorni più piovosi (>1 mm)",
@@ -591,12 +636,12 @@ function getYearlyCards(cat, scope) {
 
   return (cards[cat] || []).map((c) => ({
     ...c,
-    rows: filterRowsByCoverage(c.rows, c.paramKey, 0.95),
+    rows: filterRowsByCoverage(c.rows, c.paramKey, 0.95, c.arpasMode),
   }));
 }
 
 // -------------------- components --------------------
-function MiniRankTable({ rows, unit, digits = 1, kind, topN = 20 }) {
+function MiniRankTable({ rows, unit, digits = 1, kind, topN = 20, arpasMode = "" }) {
   const list = takeTop(rows, topN);
   const has = list.length > 0;
 
@@ -612,6 +657,8 @@ function MiniRankTable({ rows, unit, digits = 1, kind, topN = 20 }) {
         {has ? (
           list.map((r, idx) => {
             const vStr = `${fmt(r.value, digits)}${unit ? ` ${unit}` : ""}`;
+            const isArpas = hasArpasPriority(r, kind, arpasMode);
+            const arpasNote = getArpasNote(r, kind, arpasMode);
 
             if (kind === "daily") {
               return (
@@ -632,7 +679,12 @@ function MiniRankTable({ rows, unit, digits = 1, kind, topN = 20 }) {
               const mm = String(r.month).padStart(2, "0");
               return (
                 <tr key={`${yy}-${mm}-${idx}`}>
-                  <td className="tdVal">{vStr}</td>
+                  <td className="tdVal">
+                    <span className={isArpas ? "arpasValue" : ""} title={isArpas ? arpasNote : ""}>
+                      {vStr}
+                    </span>
+                    {isArpas ? <span className="arpasMiniNote">{arpasNote}</span> : null}
+                  </td>
                   <td className="tdWhen">
                     <Link href={`/mesi/${yy}/${mm}`} className="rowLink" title="Apri dettaglio mensile">
                       <span className="extCell" aria-hidden="true">↗</span>
@@ -645,7 +697,12 @@ function MiniRankTable({ rows, unit, digits = 1, kind, topN = 20 }) {
 
             return (
               <tr key={`${r.year}-${idx}`}>
-                <td className="tdVal">{vStr}</td>
+                <td className="tdVal">
+                  <span className={isArpas ? "arpasValue" : ""} title={isArpas ? arpasNote : ""}>
+                    {vStr}
+                  </span>
+                  {isArpas ? <span className="arpasMiniNote">{arpasNote}</span> : null}
+                </td>
                 <td className="tdWhen">
                   <Link href={`/anni/${r.year}`} className="rowLink" title="Apri dettaglio annuale">
                     <span className="extCell" aria-hidden="true">↗</span>
@@ -900,7 +957,7 @@ export default function RecordsPage({ records }) {
             <section className="grid">
               {dailyCards.map((c, i) => (
                 <Card key={`${c.title}-${i}`} title={c.title}>
-                  <MiniRankTable rows={c.rows} unit={c.unit} digits={c.digits} kind="daily" topN={topN} />
+                  <MiniRankTable rows={c.rows} unit={c.unit} digits={c.digits} kind="daily" topN={topN} arpasMode={c.arpasMode} />
                 </Card>
               ))}
             </section>
@@ -914,7 +971,7 @@ export default function RecordsPage({ records }) {
             <section className="grid">
               {monthlyCards.map((c, i) => (
                 <Card key={`${c.title}-${i}`} title={c.title}>
-                  <MiniRankTable rows={c.rows} unit={c.unit} digits={c.digits} kind="monthly" topN={topN} />
+                  <MiniRankTable rows={c.rows} unit={c.unit} digits={c.digits} kind="monthly" topN={topN} arpasMode={c.arpasMode} />
                 </Card>
               ))}
             </section>
@@ -927,7 +984,7 @@ export default function RecordsPage({ records }) {
           <section className="grid">
             {yearlyCards.map((c, i) => (
               <Card key={`${c.title}-${i}`} title={c.title}>
-                <MiniRankTable rows={c.rows} unit={c.unit} digits={c.digits} kind="yearly" topN={topN} />
+                <MiniRankTable rows={c.rows} unit={c.unit} digits={c.digits} kind="yearly" topN={topN} arpasMode={c.arpasMode} />
               </Card>
             ))}
           </section>
@@ -1256,6 +1313,7 @@ const baseCss = `
     border-bottom: 1px solid #f1f1f1;
     font-size: 13px;
     white-space: nowrap;
+    vertical-align: top;
   }
 
   .miniTable tbody tr:nth-child(even) td {
@@ -1280,6 +1338,39 @@ const baseCss = `
     padding: 10px 6px;
     font-size: 13px;
     opacity: 0.7;
+  }
+
+  .arpasValue {
+    position: relative;
+    display: inline-block;
+    color: #111827;
+    text-decoration: underline;
+    text-decoration-color: #dc2626;
+    text-decoration-thickness: 2px;
+    text-underline-offset: 3px;
+    padding-left: 16px;
+  }
+
+  .arpasValue::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 8px;
+    height: 8px;
+    border-radius: 999px;
+    background: #dc2626;
+    box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.16);
+  }
+
+  .arpasMiniNote {
+    display: block;
+    margin-top: 4px;
+    font-size: 11px;
+    line-height: 1.2;
+    color: #64748b;
+    font-weight: 700;
   }
 
   .rowLink {

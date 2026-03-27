@@ -8,11 +8,30 @@ import SiteLayout from "../../components/SiteLayout";
 
 const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
 
+// -------------------- data load --------------------
 function readDaily() {
   const filePath = path.join(process.cwd(), "data", "daily.json");
   if (!fs.existsSync(filePath)) return [];
   const raw = JSON.parse(fs.readFileSync(filePath, "utf8"));
   return Array.isArray(raw) ? raw : [];
+}
+
+function readMonthlyOverrides() {
+  const filePath = path.join(process.cwd(), "data", "monthly_overrides.json");
+  if (!fs.existsSync(filePath)) return [];
+  const raw = JSON.parse(fs.readFileSync(filePath, "utf8"));
+  return Array.isArray(raw) ? raw : [];
+}
+
+function findMonthlyOverride(overrides, ym, field) {
+  return (
+    (overrides || []).find(
+      (o) =>
+        String(o?.scope ?? "") === "month" &&
+        String(o?.ym ?? "") === String(ym) &&
+        String(o?.field ?? "") === String(field)
+    ) || null
+  );
 }
 
 export async function getStaticPaths() {
@@ -35,6 +54,7 @@ export async function getStaticPaths() {
 
 export async function getStaticProps({ params }) {
   const rows = readDaily();
+  const overrides = readMonthlyOverrides();
   const year = String(params?.year ?? "");
 
   const allYears = Array.from(
@@ -63,6 +83,23 @@ export async function getStaticProps({ params }) {
     )
   ).sort();
 
+  const rainOverrides = (overrides || [])
+    .filter(
+      (o) =>
+        String(o?.scope ?? "") === "month" &&
+        String(o?.field ?? "") === "rainSum" &&
+        String(o?.ym ?? "").startsWith(`${year}-`)
+    )
+    .map((o) => ({
+      scope: String(o?.scope ?? ""),
+      ym: String(o?.ym ?? ""),
+      field: String(o?.field ?? ""),
+      value: o?.value ?? null,
+      source: String(o?.source ?? ""),
+      label: String(o?.label ?? ""),
+      note: String(o?.note ?? ""),
+    }));
+
   return {
     props: {
       year,
@@ -71,6 +108,7 @@ export async function getStaticProps({ params }) {
       allYears,
       prevYear,
       nextYear,
+      rainOverrides,
     },
   };
 }
@@ -170,7 +208,30 @@ function getMinRecord(rows, keyOrGetter) {
   return best;
 }
 
-// umidità compat
+function getMaxMonthRecord(rows, keyOrGetter) {
+  let best = null;
+  for (const row of rows || []) {
+    const value = typeof keyOrGetter === "function" ? n(keyOrGetter(row)) : n(row?.[keyOrGetter]);
+    if (!Number.isFinite(value)) continue;
+    if (!best || value > best.value) {
+      best = { value, ym: String(row?.ym ?? "") };
+    }
+  }
+  return best;
+}
+
+function getMinMonthRecord(rows, keyOrGetter) {
+  let best = null;
+  for (const row of rows || []) {
+    const value = typeof keyOrGetter === "function" ? n(keyOrGetter(row)) : n(row?.[keyOrGetter]);
+    if (!Number.isFinite(value)) continue;
+    if (!best || value < best.value) {
+      best = { value, ym: String(row?.ym ?? "") };
+    }
+  }
+  return best;
+}
+
 function getRhMin(d) {
   const a = n(d?.rh_min);
   if (Number.isFinite(a)) return a;
@@ -221,6 +282,27 @@ function circularMeanDeg(values) {
   return meanDeg;
 }
 
+function applyRainMonthOverride(rawValue, override) {
+  const ov = n(override?.value);
+  if (Number.isFinite(ov)) {
+    return {
+      value: ov,
+      isOverride: true,
+      source: String(override?.source ?? ""),
+      label: String(override?.label ?? "Dato ARPAS"),
+      note: String(override?.note ?? ""),
+    };
+  }
+
+  return {
+    value: rawValue,
+    isOverride: false,
+    source: "",
+    label: "",
+    note: "",
+  };
+}
+
 const MONTHS_IT_SHORT = ["Gen", "Feb", "Mar", "Apr", "Mag", "Giu", "Lug", "Ago", "Set", "Ott", "Nov", "Dic"];
 const MONTHS_IT_FULL = [
   "Gennaio",
@@ -259,8 +341,20 @@ function formatDateIt(dateStr) {
   return `${Number(d)} ${mName} ${y}`;
 }
 
+function formatMonthIt(ym) {
+  const s = String(ym ?? "");
+  if (!/^\d{4}-\d{2}$/.test(s)) return "—";
+  return `${monthFull(s)} ${String(s).slice(0, 4)}`;
+}
+
 function dayHref(dateStr) {
   return `/giorni/${String(dateStr ?? "")}`;
+}
+
+function monthHref(ym) {
+  const y = String(ym ?? "").slice(0, 4);
+  const m = String(ym ?? "").slice(5, 7);
+  return `/mesi/${y}/${m}`;
 }
 
 function seriesLine(arr) {
@@ -306,6 +400,7 @@ export default function YearOverviewPage(props) {
   const allYears = Array.isArray(props.allYears) ? props.allYears : [];
   const prevYear = props.prevYear ?? null;
   const nextYear = props.nextYear ?? null;
+  const rainOverrides = Array.isArray(props.rainOverrides) ? props.rainOverrides : [];
 
   const [mounted, setMounted] = useState(false);
   const [showRecords, setShowRecords] = useState(false);
@@ -335,7 +430,10 @@ export default function YearOverviewPage(props) {
       const tmean = avgFinite(arr.map((d) => d.tmean));
       const tmax_mean = avgFinite(arr.map((d) => d.tmax));
 
-      const rainSum = sumFinite(arr.map((d) => d.rain_total));
+      const rawRainSum = sumFinite(arr.map((d) => d.rain_total));
+      const rainOverride = findMonthlyOverride(rainOverrides, ym, "rainSum");
+      const resolvedRain = applyRainMonthOverride(rawRainSum, rainOverride);
+
       const rainDailyMax = maxFinite(arr.map((d) => d.rain_total));
       const rainyDays = arr.map((d) => n(d.rain_total)).filter((x) => Number.isFinite(x) && x > 1).length;
       const rainrate_max = maxFinite(arr.map((d) => d.rainrate_max));
@@ -375,7 +473,13 @@ export default function YearOverviewPage(props) {
         tmean,
         tmax_mean,
 
-        rainSum,
+        rainSumRaw: rawRainSum,
+        rainSum: resolvedRain.value,
+        rainIsOverride: resolvedRain.isOverride,
+        rainLabel: resolvedRain.label,
+        rainSource: resolvedRain.source,
+        rainNote: resolvedRain.note,
+
         rainDailyMax,
         rainrate_max,
         rainyDays,
@@ -405,14 +509,14 @@ export default function YearOverviewPage(props) {
         solar_max_mean,
       };
     });
-  }, [months, byMonth]);
+  }, [months, byMonth, rainOverrides]);
 
   const annual = useMemo(() => {
     const tmin_mean = avgFinite(days.map((d) => d.tmin));
     const tmean = avgFinite(days.map((d) => d.tmean));
     const tmax_mean = avgFinite(days.map((d) => d.tmax));
 
-    const rainSum = sumFinite(days.map((d) => d.rain_total));
+    const rainSum = sumFinite(monthly.map((m) => m.rainSum));
     const rainDailyMax = maxFinite(days.map((d) => d.rain_total));
     const rainyDays = days.map((d) => n(d.rain_total)).filter((x) => Number.isFinite(x) && x > 1).length;
     const rainrate_max = maxFinite(days.map((d) => d.rainrate_max));
@@ -438,6 +542,16 @@ export default function YearOverviewPage(props) {
     const solar_max = maxFinite(days.map((d) => d.solar_max));
     const solar_max_mean = avgFinite(days.map((d) => d.solar_max));
 
+    const overrideMonths = monthly.filter((m) => m.rainIsOverride);
+    const hasRainOverride = overrideMonths.length > 0;
+    const overrideMonthsText = overrideMonths.map((m) => monthFull(m.ym)).join(", ");
+    const overrideNotes = overrideMonths
+      .map((m) => {
+        const note = String(m.rainNote ?? "").trim();
+        return note ? `${monthFull(m.ym)}: ${note}` : `${monthFull(m.ym)}: dato mensile ARPAS`;
+      })
+      .join(" • ");
+
     return {
       tmin_mean,
       tmean,
@@ -447,6 +561,9 @@ export default function YearOverviewPage(props) {
       rainDailyMax,
       rainyDays,
       rainrate_max,
+      rainHasOverride: hasRainOverride,
+      rainOverrideMonthsText: overrideMonthsText,
+      rainOverrideNote: overrideNotes,
 
       rh_min_mean,
       rh_mean,
@@ -469,7 +586,7 @@ export default function YearOverviewPage(props) {
       solar_max,
       solar_max_mean,
     };
-  }, [days]);
+  }, [days, monthly]);
 
   const annualRecords = useMemo(() => {
     return [
@@ -478,60 +595,79 @@ export default function YearOverviewPage(props) {
         min: getMinRecord(days, "tmax"),
         max: getMaxRecord(days, "tmax"),
         unit: "°C",
+        linkType: "day",
       },
       {
         label: "Temperatura minima giornaliera",
         min: getMinRecord(days, "tmin"),
         max: getMaxRecord(days, "tmin"),
         unit: "°C",
+        linkType: "day",
+      },
+      {
+        label: "Totale mensile precipitazioni",
+        min: getMinMonthRecord(monthly, "rainSum"),
+        max: getMaxMonthRecord(monthly, "rainSum"),
+        unit: "mm",
+        linkType: "month",
+        minLabel: "Mese meno piovoso",
+        maxLabel: "Mese più piovoso",
       },
       {
         label: "Pioggia giornaliera",
         min: null,
         max: getMaxRecord(days, "rain_total"),
         unit: "mm",
+        linkType: "day",
       },
       {
         label: "Rain rate",
         min: null,
         max: getMaxRecord(days, "rainrate_max"),
         unit: "mm/h",
+        linkType: "day",
       },
       {
         label: "Umidità minima giornaliera",
         min: getMinRecord(days, (d) => getRhMin(d)),
         max: getMaxRecord(days, (d) => getRhMin(d)),
         unit: "%",
+        linkType: "day",
       },
       {
         label: "Umidità massima giornaliera",
         min: getMinRecord(days, (d) => getRhMax(d)),
         max: getMaxRecord(days, (d) => getRhMax(d)),
         unit: "%",
+        linkType: "day",
       },
       {
         label: "Vento medio",
         min: getMinRecord(days, "wind_avg"),
         max: getMaxRecord(days, "wind_avg"),
         unit: "km/h",
+        linkType: "day",
       },
       {
         label: "Raffica massima",
         min: getMinRecord(days, "gust_max"),
         max: getMaxRecord(days, "gust_max"),
         unit: "km/h",
+        linkType: "day",
       },
       {
         label: "Pressione minima giornaliera",
         min: getMinRecord(days, "press_min"),
         max: getMaxRecord(days, "press_min"),
         unit: "hPa",
+        linkType: "day",
       },
       {
         label: "Pressione massima giornaliera",
         min: getMinRecord(days, "press_max"),
         max: getMaxRecord(days, "press_max"),
         unit: "hPa",
+        linkType: "day",
       },
       {
         label: "UV",
@@ -540,6 +676,7 @@ export default function YearOverviewPage(props) {
         unit: "",
         minLabel: "Media giornaliera più alta",
         maxLabel: "Massimo assoluto",
+        linkType: "day",
       },
       {
         label: "Radiazione",
@@ -548,9 +685,10 @@ export default function YearOverviewPage(props) {
         unit: "W/m²",
         minLabel: "Media giornaliera più alta",
         maxLabel: "Massimo assoluto",
+        linkType: "day",
       },
     ];
-  }, [days]);
+  }, [days, monthly]);
 
   const x = monthly.map((m) => monthShort(m.ym));
   const dirTxt = Number.isFinite(n(annual.wind_dir_mean_deg)) ? degToCardinal16(annual.wind_dir_mean_deg) : "—";
@@ -567,6 +705,8 @@ export default function YearOverviewPage(props) {
     indigo: "#312e81",
     greenStrong: "#2f9e44",
     windDir: "#7c3aed",
+    rainBar: "#4f6fd5",
+    rainBarOverride: "#dc2626",
   };
 
   const baseChart = {
@@ -630,12 +770,37 @@ export default function YearOverviewPage(props) {
     tooltip: {
       trigger: "axis",
       order: "seriesAsc",
-      formatter: (params) =>
-        axisTooltipFormatter(params, [
-          { name: "Rate max", formatter: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} mm/h`) },
-          { name: "Totale progressivo", formatter: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} mm`) },
-          { name: "Pioggia", formatter: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} mm`) },
-        ]),
+      formatter: (params) => {
+        const title = params?.[0]?.axisValueLabel ?? params?.[0]?.name ?? "—";
+        const monthIx = x.findIndex((v) => v === title);
+        const monthObj = monthIx >= 0 ? monthly[monthIx] : null;
+        const lines = [`<b>${title}</b>`];
+
+        const pRate = params.find((p) => p.seriesName === "Rate max");
+        const pCum = params.find((p) => p.seriesName === "Totale progressivo");
+        const pRain = params.find((p) => p.seriesName === "Pioggia");
+
+        if (pRate) {
+          const v = Array.isArray(pRate.value) ? pRate.value[1] : pRate.value;
+          lines.push(`${pRate.marker}Rate max: <b>${v == null ? "—" : `${Number(v).toFixed(1)} mm/h`}</b>`);
+        }
+
+        if (pCum) {
+          const v = Array.isArray(pCum.value) ? pCum.value[1] : pCum.value;
+          lines.push(`${pCum.marker}Totale progressivo: <b>${v == null ? "—" : `${Number(v).toFixed(1)} mm`}</b>`);
+        }
+
+        if (pRain) {
+          const v = Array.isArray(pRain.value) ? pRain.value[1] : pRain.value;
+          lines.push(`${pRain.marker}Pioggia: <b>${v == null ? "—" : `${Number(v).toFixed(1)} mm`}</b>`);
+        }
+
+        if (monthObj?.rainIsOverride) {
+          lines.push(`<span style="color:#dc2626;font-weight:700;">● ${monthObj.rainLabel || "Dato ARPAS"}</span>`);
+        }
+
+        return lines.join("<br/>");
+      },
     },
     yAxis: [
       {
@@ -664,7 +829,16 @@ export default function YearOverviewPage(props) {
     series: [
       { name: "Rate max", type: "scatter", data: seriesLine(monthly.map((m) => m.rainrate_max)), yAxisIndex: 1, symbolSize: 7, itemStyle: { color: COLORS.red }, z: 5 },
       { name: "Totale progressivo", type: "line", data: seriesLine(rainCum), yAxisIndex: 0, showSymbol: false, connectNulls: false, lineStyle: { width: 4, color: COLORS.greenStrong }, itemStyle: { color: COLORS.greenStrong }, z: 6 },
-      { name: "Pioggia", type: "bar", data: seriesLine(rainMonthly), yAxisIndex: 0, itemStyle: { color: "#4f6fd5" }, z: 2 },
+      {
+        name: "Pioggia",
+        type: "bar",
+        data: monthly.map((m) => ({
+          value: Number.isFinite(n(m.rainSum)) ? n(m.rainSum) : null,
+          itemStyle: { color: m.rainIsOverride ? COLORS.rainBarOverride : COLORS.rainBar },
+        })),
+        yAxisIndex: 0,
+        z: 2,
+      },
     ],
   };
 
@@ -853,6 +1027,28 @@ export default function YearOverviewPage(props) {
   const LARGE_CHART_HEIGHT = 365;
   const NORMAL_CHART_HEIGHT = 340;
 
+  function renderRecordLink(entry, type) {
+    if (!entry) return "—";
+
+    if (type === "month" && entry.ym) {
+      return (
+        <Link href={monthHref(entry.ym)} className="dateLink">
+          {formatMonthIt(entry.ym)}
+        </Link>
+      );
+    }
+
+    if (type === "day" && entry.date) {
+      return (
+        <Link href={dayHref(entry.date)} className="dateLink">
+          {formatDateIt(entry.date)}
+        </Link>
+      );
+    }
+
+    return "—";
+  }
+
   return (
     <SiteLayout headerProps={{}}>
       <div className="wrap">
@@ -1006,7 +1202,12 @@ export default function YearOverviewPage(props) {
                 <div className="summaryMetrics two">
                   <div className="summaryMetric">
                     <span className="summaryKey">Totale</span>
-                    <strong>{fmt(annual.rainSum, 1)} mm</strong>
+                    <strong
+                      className={annual.rainHasOverride ? "rainOverrideValue" : ""}
+                      title={annual.rainHasOverride ? `Totale annuale con priorità ARPAS nei mesi: ${annual.rainOverrideMonthsText}` : ""}
+                    >
+                      {fmt(annual.rainSum, 1)} mm
+                    </strong>
                   </div>
                   <div className="summaryMetric">
                     <span className="summaryKey">Giorni &gt; 1 mm</span>
@@ -1100,6 +1301,13 @@ export default function YearOverviewPage(props) {
               </div>
             </div>
 
+            {annual.rainHasOverride ? (
+              <div className="overrideNote">
+                Totale annuale calcolato sommando i totali mensili finali. Nei mesi <strong>{annual.rainOverrideMonthsText}</strong> è stato usato il dato ARPAS al posto del totale grezzo della stazione.
+                {annual.rainOverrideNote ? <span className="overrideNoteExtra"> {annual.rainOverrideNote}</span> : null}
+              </div>
+            ) : null}
+
             <div className="recordsAction">
               <button
                 type="button"
@@ -1116,7 +1324,7 @@ export default function YearOverviewPage(props) {
               <div id="records-year-table" className="recordsWrap">
                 <div className="recordsTop">
                   <div className="recordsHead">Record anno {year}</div>
-                  <div className="recordsSub">Estremi e picchi principali dell&apos;anno con collegamento diretto al giorno.</div>
+                  <div className="recordsSub">Estremi e picchi principali dell&apos;anno con collegamento diretto al giorno o al mese.</div>
                 </div>
 
                 <div className="recordsTableWrap">
@@ -1125,9 +1333,9 @@ export default function YearOverviewPage(props) {
                       <tr>
                         <th>Parametro</th>
                         <th>Minimo</th>
-                        <th>Data</th>
+                        <th>Riferimento</th>
                         <th>Massimo</th>
-                        <th>Data</th>
+                        <th>Riferimento</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1135,33 +1343,17 @@ export default function YearOverviewPage(props) {
                         <tr key={r.label}>
                           <td className="recordName">{r.label}</td>
 
-                          <td>
+                          <td className={r.label === "Totale mensile precipitazioni" ? "recordRainCell" : ""}>
                             {r.min ? `${fmt(r.min.value, 1)}${r.unit ? ` ${r.unit}` : ""}` : "—"}
                             {r.minLabel ? <span className="recordNote">{r.minLabel}</span> : null}
                           </td>
-                          <td>
-                            {r.min?.date ? (
-                              <Link href={dayHref(r.min.date)} className="dateLink">
-                                {formatDateIt(r.min.date)}
-                              </Link>
-                            ) : (
-                              "—"
-                            )}
-                          </td>
+                          <td>{renderRecordLink(r.min, r.linkType)}</td>
 
-                          <td>
+                          <td className={r.label === "Totale mensile precipitazioni" ? "recordRainCell" : ""}>
                             {r.max ? `${fmt(r.max.value, 1)}${r.unit ? ` ${r.unit}` : ""}` : "—"}
                             {r.maxLabel ? <span className="recordNote">{r.maxLabel}</span> : null}
                           </td>
-                          <td>
-                            {r.max?.date ? (
-                              <Link href={dayHref(r.max.date)} className="dateLink">
-                                {formatDateIt(r.max.date)}
-                              </Link>
-                            ) : (
-                              "—"
-                            )}
-                          </td>
+                          <td>{renderRecordLink(r.max, r.linkType)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -1303,7 +1495,12 @@ export default function YearOverviewPage(props) {
                     <td className="strong">{fmt(m.tmean, 1)} °C</td>
                     <td className="bR">{fmt(m.tmax_mean, 1)} °C</td>
 
-                    <td className={Number.isFinite(n(m.rainSum)) && n(m.rainSum) > 0 ? "rainy" : ""}>{fmt(m.rainSum, 1)} mm</td>
+                    <td
+                      className={`${Number.isFinite(n(m.rainSum)) && n(m.rainSum) > 0 ? "rainy" : ""} ${m.rainIsOverride ? "rainOverrideCell" : ""}`}
+                      title={m.rainIsOverride ? "Dato mensile ARPAS prioritario" : ""}
+                    >
+                      {fmt(m.rainSum, 1)} mm
+                    </td>
                     <td className={Number.isFinite(n(m.rainDailyMax)) && n(m.rainDailyMax) > 0 ? "rainy" : ""}>{fmt(m.rainDailyMax, 1)} mm</td>
                     <td className={Number.isFinite(n(m.rainrate_max)) && n(m.rainrate_max) > 0 ? "rainy" : ""}>{fmt(m.rainrate_max, 1)} mm/h</td>
                     <td className="bR">{fmtInt(m.rainyDays)}</td>
@@ -1342,7 +1539,12 @@ export default function YearOverviewPage(props) {
                 <td className="strong">{fmt(annual.tmean, 1)} °C</td>
                 <td className="bR">{fmt(annual.tmax_mean, 1)} °C</td>
 
-                <td className={Number.isFinite(n(annual.rainSum)) && n(annual.rainSum) > 0 ? "rainy" : ""}>{fmt(annual.rainSum, 1)} mm</td>
+                <td
+                  className={`${Number.isFinite(n(annual.rainSum)) && n(annual.rainSum) > 0 ? "rainy" : ""} ${annual.rainHasOverride ? "rainOverrideCell" : ""}`}
+                  title={annual.rainHasOverride ? `Totale annuale con priorità ARPAS nei mesi: ${annual.rainOverrideMonthsText}` : ""}
+                >
+                  {fmt(annual.rainSum, 1)} mm
+                </td>
                 <td className={Number.isFinite(n(annual.rainDailyMax)) && n(annual.rainDailyMax) > 0 ? "rainy" : ""}>{fmt(annual.rainDailyMax, 1)} mm</td>
                 <td className={Number.isFinite(n(annual.rainrate_max)) && n(annual.rainrate_max) > 0 ? "rainy" : ""}>{fmt(annual.rainrate_max, 1)} mm/h</td>
                 <td className="bR">{fmtInt(annual.rainyDays)}</td>
@@ -1701,6 +1903,47 @@ export default function YearOverviewPage(props) {
             color: #0f172a;
           }
 
+          .rainOverrideValue {
+            position: relative;
+            color: #111827;
+            text-decoration: underline;
+            text-decoration-color: #dc2626;
+            text-decoration-thickness: 2px;
+            text-underline-offset: 3px;
+            cursor: help;
+            padding-left: 16px;
+          }
+
+          .rainOverrideValue::before {
+            content: "";
+            position: absolute;
+            left: 0;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 8px;
+            height: 8px;
+            border-radius: 999px;
+            background: #dc2626;
+            box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.16);
+          }
+
+          .overrideNote {
+            margin-top: 10px;
+            font-size: 12px;
+            line-height: 1.55;
+            color: #64748b;
+            font-weight: 700;
+          }
+
+          .overrideNote strong {
+            color: #0f172a;
+          }
+
+          .overrideNoteExtra {
+            display: block;
+            margin-top: 6px;
+          }
+
           .recordsAction {
             margin-top: 14px;
           }
@@ -1807,6 +2050,23 @@ export default function YearOverviewPage(props) {
             line-height: 1.2;
             color: #64748b;
             font-weight: 700;
+          }
+
+          .recordRainCell {
+            position: relative;
+            padding-left: 28px !important;
+          }
+
+          .recordRainCell::before {
+            content: "";
+            position: absolute;
+            left: 14px;
+            top: 18px;
+            width: 8px;
+            height: 8px;
+            border-radius: 999px;
+            background: #dc2626;
+            box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.16);
           }
 
           .dateLink {
@@ -2009,6 +2269,30 @@ export default function YearOverviewPage(props) {
 
           .rainy {
             font-weight: 900;
+          }
+
+          .rainOverrideCell {
+            position: relative;
+            color: #111827;
+            text-decoration: underline;
+            text-decoration-color: #dc2626;
+            text-decoration-thickness: 2px;
+            text-underline-offset: 3px;
+            cursor: help;
+            padding-left: 22px !important;
+          }
+
+          .rainOverrideCell::before {
+            content: "";
+            position: absolute;
+            left: 10px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 8px;
+            height: 8px;
+            border-radius: 999px;
+            background: #dc2626;
+            box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.16);
           }
 
           .yearRow td {

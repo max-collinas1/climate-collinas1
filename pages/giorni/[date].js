@@ -36,6 +36,8 @@ export async function getStaticProps({ params }) {
   const intraday = readIntraday(params.date);
 
   const mmdd = String(params?.date || "").slice(5, 10);
+  const ym = String(params?.date || "").slice(0, 7);
+
   const sameDay = rows
     .filter((r) => String(r?.date || "").slice(5, 10) === mmdd)
     .map((r) => String(r.date))
@@ -43,7 +45,16 @@ export async function getStaticProps({ params }) {
 
   const compareOptions = sameDay.map((d) => ({ year: d.slice(0, 4), date: d }));
 
-  return { props: { day, intraday, prev, next, compareOptions } };
+  const monthDays = rows
+    .filter((r) => String(r?.date || "").startsWith(`${ym}-`))
+    .map((r) => String(r.date))
+    .sort()
+    .map((date) => ({
+      date,
+      dayNum: String(Number(date.slice(8, 10))),
+    }));
+
+  return { props: { day, intraday, prev, next, compareOptions, monthDays } };
 }
 
 // -------------------- helpers --------------------
@@ -263,7 +274,7 @@ function makeDataZoom(nPoints, windowPoints = 144) {
 }
 
 // -------------------- page --------------------
-export default function DayPage({ day, intraday, prev, next, compareOptions = [] }) {
+export default function DayPage({ day, intraday, prev, next, compareOptions = [], monthDays = [] }) {
   const router = useRouter();
 
   if (!day) {
@@ -306,8 +317,8 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
     return acc;
   });
 
-  const CHART_H = 340;
-  const chartStyle = { height: CHART_H, width: "100%" };
+  const LARGE_CHART_H = 365;
+  const NORMAL_CHART_H = 340;
 
   const N = labels.length;
   const DZ = makeDataZoom(N, 144);
@@ -319,8 +330,8 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
     6
   );
 
-  const gridNoLegend = { left: 72, right: 56, top: 58, bottom: 92 };
-  const gridWithLegend = { left: 72, right: 56, top: 58, bottom: 92 };
+  const gridNoLegend = { left: 72, right: 56, top: 58, bottom: 118 };
+  const gridWithLegend = { left: 72, right: 56, top: 58, bottom: 118 };
 
   const COLORS = {
     red: "#ff2d20",
@@ -328,7 +339,6 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
     grayDark: "#4b5563",
     blueLight: "#60a5fa",
     blue: "#2563eb",
-    indigo: "#312e81",
     greenStrong: "#2f9e44",
     windDir: "#f4a261",
   };
@@ -344,7 +354,7 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
     },
     title: { left: "center", top: 10 },
     legend: {
-      bottom: 8,
+      bottom: 36,
       left: "center",
       itemGap: 16,
       padding: [8, 10, 2, 10],
@@ -673,13 +683,18 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
   const rain1h = toNull(day?.rain_1h_max);
 
   const compareAvailable = compareOptions.filter((x) => x?.date && x.year && x.date !== day.date);
-  const [comparePick, setComparePick] = useState(compareAvailable?.[0]?.date ?? "");
+  const [comparePick, setComparePick] = useState(compareAvailable?.[0]?.year ?? "");
   const [showTable, setShowTable] = useState(false);
 
+  function yearToDayHref(targetYear) {
+    const found = compareAvailable.find((o) => String(o.year) === String(targetYear));
+    return found?.date ? `/giorni/${found.date}` : "#";
+  }
+
   function onCompareChange(e) {
-    const targetDate = String(e.target.value || "");
-    setComparePick(targetDate);
-    if (targetDate) router.push(`/giorni/${targetDate}`);
+    const targetYear = String(e.target.value || "");
+    setComparePick(targetYear);
+    if (targetYear) router.push(yearToDayHref(targetYear));
   }
 
   const tableRows = useMemo(() => {
@@ -711,86 +726,131 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
     <SiteLayout headerProps={{}}>
       <div className="wrap">
         <header className="hero">
-          <div className="dayTopRow">
-            <div className="dayBlock">
+          <div className="yearTopRow">
+            <div className="yearBlock">
               <div className="kicker">Giorno</div>
 
-              <div className="dayAndNav">
-                <div>
-                  <h1 className="dayTitle">{formatDateIT(day.date)}</h1>
-                  <div className="daySubline">
-                    <Link href={`/anni/${year}`} className="subLink">
-                      {year}
-                    </Link>
-                    <span className="subSep">•</span>
-                    <Link href={`/mesi/${year}/${month}`} className="subLink">
-                      {formatMonthIT(ym)}
-                    </Link>
+              <div className="titleLine">
+                <div className="titleMain">
+                  <h1 className="year">{formatDateIT(day.date)}</h1>
+
+                  <div className="titleActions">
+                    {prev ? (
+                      <Link href={`/giorni/${prev}`} className="arrowCircle" aria-label="Giorno precedente" title="Precedente">
+                        <svg viewBox="0 0 32 32" aria-hidden="true" className="arrowSvg">
+                          <path
+                            d="M19 9.5L12.5 16L19 22.5"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2.4"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                      </Link>
+                    ) : (
+                      <span className="arrowCircle disabled" aria-hidden="true">
+                        <svg viewBox="0 0 32 32" aria-hidden="true" className="arrowSvg">
+                          <path
+                            d="M19 9.5L12.5 16L19 22.5"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2.4"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                      </span>
+                    )}
+
+                    {next ? (
+                      <Link href={`/giorni/${next}`} className="arrowCircle" aria-label="Giorno successivo" title="Successivo">
+                        <svg viewBox="0 0 32 32" aria-hidden="true" className="arrowSvg">
+                          <path
+                            d="M13 9.5L19.5 16L13 22.5"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2.4"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                      </Link>
+                    ) : (
+                      <span className="arrowCircle disabled" aria-hidden="true">
+                        <svg viewBox="0 0 32 32" aria-hidden="true" className="arrowSvg">
+                          <path
+                            d="M13 9.5L19.5 16L13 22.5"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2.4"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                      </span>
+                    )}
                   </div>
                 </div>
 
-                <div className="dayNav">
-                  {prev ? (
-                    <Link href={`/giorni/${prev}`} className="dayNavLink">
-                      <span className="navArrow">←</span>
-                      <span>Precedente</span>
-                    </Link>
-                  ) : (
-                    <span className="dayNavLink disabled">
-                      <span className="navArrow">←</span>
-                      <span>Precedente</span>
-                    </span>
-                  )}
-
-                  <div className="daySelectWrap" aria-hidden="true">
-                    <span className="daySelectLabel">Seleziona giorno</span>
+                {compareAvailable.length > 0 && (
+                  <div className="inlineCompareWrap">
+                    <span className="inlineCompareLabel">Giorno negli altri anni</span>
+                    <select
+                      id="compare-day-select"
+                      className="compareSelectMini"
+                      value={comparePick}
+                      onChange={onCompareChange}
+                    >
+                      <option value="">Anno</option>
+                      {compareAvailable.map((o) => (
+                        <option key={o.date} value={o.year}>
+                          {o.year}
+                        </option>
+                      ))}
+                    </select>
                   </div>
+                )}
+              </div>
 
-                  {next ? (
-                    <Link href={`/giorni/${next}`} className="dayNavLink">
-                      <span>Successivo</span>
-                      <span className="navArrow">→</span>
-                    </Link>
-                  ) : (
-                    <span className="dayNavLink disabled">
-                      <span>Successivo</span>
-                      <span className="navArrow">→</span>
-                    </span>
-                  )}
-                </div>
+              <div className="dayMeta">
+                <Link href={`/anni/${year}`} className="subLink">
+                  {year}
+                </Link>
+                <span className="subSep">•</span>
+                <Link href={`/mesi/${year}/${month}`} className="subLink">
+                  {formatMonthIT(ym)}
+                </Link>
               </div>
             </div>
           </div>
 
-          {compareAvailable.length > 0 && (
-            <section className="compareBar" aria-label={`Confronto ${mmdd}`}>
-              <div className="compareBarHead">Confronto {mmdd}</div>
+          <section className="daysBar" aria-label={`Seleziona giorno ${formatMonthIT(ym)}`}>
+            <div className="daysBarHead">Seleziona giorno {formatMonthIT(ym)}</div>
 
-              <div className="compareBarInner">
-                <label htmlFor="compare-day-select" className="srOnly">
-                  Confronta lo stesso giorno in un altro anno
-                </label>
-                <select
-                  id="compare-day-select"
-                  className="compareSelect"
-                  value={comparePick}
-                  onChange={onCompareChange}
-                >
-                  <option value="">Stesso giorno in…</option>
-                  {compareAvailable.map((o) => (
-                    <option key={o.date} value={o.date}>
-                      {o.year} → {o.date}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </section>
-          )}
+            <nav className="dayNavGrid">
+              {monthDays.map((item) => {
+                const isActive = String(item.date) === String(day.date);
+
+                return (
+                  <Link
+                    key={item.date}
+                    href={`/giorni/${item.date}`}
+                    className={`dayLink ${isActive ? "active" : ""}`}
+                    title={`Apri ${formatDateIT(item.date)}`}
+                    aria-label={`Apri ${formatDateIT(item.date)}`}
+                  >
+                    <span className="dayLinkNum">{item.dayNum}</span>
+                  </Link>
+                );
+              })}
+            </nav>
+          </section>
 
           <section className="summaryCompact">
-            <div className="summaryHead">
+            <div className="summaryHead centered">
               <div>
-                <h2>Riepilogo giornaliero</h2>
+                <h2>Sintesi giornaliera</h2>
                 <p>Lettura rapida dei dati principali del giorno.</p>
               </div>
             </div>
@@ -931,28 +991,31 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
         {intraday.length ? (
           <section className="charts2">
             <div className="chartBox chartBoxWide">
-              <ReactECharts option={tempDewOption} style={chartStyle} />
+              <ReactECharts option={tempDewOption} style={{ height: LARGE_CHART_H, width: "100%" }} />
+            </div>
+
+            <div className="chartBox chartBoxWide">
+              <ReactECharts option={rainOption} style={{ height: LARGE_CHART_H, width: "100%" }} />
+            </div>
+
+            <div className="chartBox chartBoxWide">
+              <ReactECharts option={windOption} style={{ height: LARGE_CHART_H, width: "100%" }} />
             </div>
 
             <div className="chartBox">
-              <ReactECharts option={rainOption} style={chartStyle} />
-            </div>
-            <div className="chartBox">
-              <ReactECharts option={rhOption} style={chartStyle} />
+              <ReactECharts option={rhOption} style={{ height: NORMAL_CHART_H, width: "100%" }} />
             </div>
 
             <div className="chartBox">
-              <ReactECharts option={windOption} style={chartStyle} />
-            </div>
-            <div className="chartBox">
-              <ReactECharts option={pressOption} style={chartStyle} />
+              <ReactECharts option={pressOption} style={{ height: NORMAL_CHART_H, width: "100%" }} />
             </div>
 
             <div className="chartBox">
-              <ReactECharts option={uvOption} style={chartStyle} />
+              <ReactECharts option={uvOption} style={{ height: NORMAL_CHART_H, width: "100%" }} />
             </div>
+
             <div className="chartBox">
-              <ReactECharts option={solarOption} style={chartStyle} />
+              <ReactECharts option={solarOption} style={{ height: NORMAL_CHART_H, width: "100%" }} />
             </div>
           </section>
         ) : (
@@ -1077,14 +1140,14 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
             padding: 22px;
           }
 
-          .dayTopRow {
+          .yearTopRow {
             display: flex;
             justify-content: space-between;
             align-items: flex-start;
             gap: 18px;
           }
 
-          .dayBlock {
+          .yearBlock {
             width: 100%;
           }
 
@@ -1096,36 +1159,144 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
             margin-bottom: 8px;
           }
 
-          .dayAndNav {
+          .titleLine {
             display: flex;
             align-items: center;
             justify-content: space-between;
-            gap: 24px;
+            gap: 22px;
             flex-wrap: wrap;
           }
 
-          .dayTitle {
+          .titleMain {
+            display: inline-flex;
+            align-items: center;
+            gap: 16px;
+            flex-wrap: wrap;
+          }
+
+          .year {
             margin: 0;
             font-size: 68px;
             line-height: 1;
             letter-spacing: -0.04em;
             color: #0f172a;
+            flex: 0 0 auto;
           }
 
-          .daySubline {
-            margin-top: 10px;
+          .titleActions {
+            display: inline-flex !important;
+            align-items: center !important;
+            gap: 12px !important;
+            flex: 0 0 auto;
+            margin-left: 6px;
+          }
+
+          .arrowCircle {
+            display: inline-flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            width: 62px !important;
+            height: 62px !important;
+            min-width: 62px !important;
+            min-height: 62px !important;
+            border-radius: 999px !important;
+            border: 2.2px solid #1f1f1f !important;
+            background: #ffffff !important;
+            color: #1f1f1f !important;
+            text-decoration: none !important;
+            box-sizing: border-box !important;
+            transition: transform 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+          }
+
+          .arrowCircle:hover {
+            background: #fafafa !important;
+            transform: translateY(-1px);
+            box-shadow: 0 10px 18px rgba(0, 0, 0, 0.06);
+          }
+
+          .arrowCircle:active {
+            transform: scale(0.98);
+          }
+
+          .arrowCircle.disabled {
+            opacity: 0.3;
+            pointer-events: none;
+          }
+
+          .arrowSvg {
+            width: 26px !important;
+            height: 26px !important;
+            display: block !important;
+            color: #1f1f1f !important;
+            flex: 0 0 auto;
+          }
+
+          .inlineCompareWrap {
+            display: inline-flex;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 10px;
+            flex-wrap: nowrap;
+            min-width: 0;
+          }
+
+          .inlineCompareLabel {
+            font-size: 14px;
+            font-weight: 900;
+            color: #475569;
+            white-space: nowrap;
+          }
+
+          .compareSelectMini {
+            appearance: none;
+            -webkit-appearance: none;
+            -moz-appearance: none;
+            width: 104px;
+            min-width: 104px;
+            max-width: 104px;
+            height: 54px;
+            padding: 0 14px;
+            border-radius: 999px;
+            background: linear-gradient(180deg, #ffffff, #f8fafc);
+            border: 1px solid #d8dee7;
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 4px 14px rgba(15, 23, 42, 0.04);
+            font-weight: 900;
+            font-size: 16px;
+            color: #0f172a;
+            cursor: pointer;
+            color-scheme: light;
+            text-align: center;
+          }
+
+          .compareSelectMini:focus {
+            outline: none;
+            box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 4px 14px rgba(15, 23, 42, 0.05);
+            border-color: #b9c5d6;
+          }
+
+          .compareSelectMini option,
+          .compareSelectMini optgroup {
+            color: #111111;
+            background: #ffffff;
+          }
+
+          .dayMeta {
+            margin-top: 16px;
             display: flex;
             align-items: center;
             gap: 10px;
             flex-wrap: wrap;
-            font-size: 14px;
-            font-weight: 800;
-            color: #64748b;
+            font-size: 16px;
+            font-weight: 900;
+            color: #5f7897;
           }
 
           .subLink {
             text-decoration: none;
-            color: #64748b;
+            color: #5f7897;
+            font-size: 16px;
+            font-weight: 900;
+            letter-spacing: -0.01em;
           }
 
           .subLink:hover {
@@ -1137,64 +1308,7 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
             opacity: 0.5;
           }
 
-          .dayNav {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            flex-wrap: wrap;
-          }
-
-          .dayNavLink {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            text-decoration: none;
-            color: #111827;
-            font-weight: 700;
-            padding: 10px 12px;
-            border-radius: 999px;
-            background: #fff;
-            border: 1px solid #e5e7eb;
-            transition: background 120ms ease, transform 120ms ease, box-shadow 120ms ease;
-          }
-
-          .dayNavLink:hover {
-            background: #f8fafc;
-            transform: translateY(-1px);
-            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.06);
-          }
-
-          .dayNavLink.disabled {
-            opacity: 0.45;
-            pointer-events: none;
-          }
-
-          .navArrow {
-            font-size: 14px;
-            line-height: 1;
-          }
-
-          .daySelectWrap {
-            position: relative;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            min-width: 190px;
-            height: 46px;
-            padding: 0 18px;
-            border-radius: 999px;
-            background: linear-gradient(180deg, #ffffff, #f8fafc);
-            border: 1px solid #e5e7eb;
-            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9);
-          }
-
-          .daySelectLabel {
-            font-weight: 900;
-            font-size: 15px;
-            color: #0f172a;
-          }
-
-          .compareBar {
+          .daysBar {
             margin-top: 18px;
             border: 1px solid #ececec;
             border-radius: 16px;
@@ -1202,7 +1316,7 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
             padding: 16px 16px 14px;
           }
 
-          .compareBarHead {
+          .daysBarHead {
             font-size: 13px;
             letter-spacing: 0.12em;
             text-transform: uppercase;
@@ -1212,39 +1326,51 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
             text-align: center;
           }
 
-          .compareBarInner {
+          .dayNavGrid {
             display: flex;
+            flex-wrap: wrap;
             align-items: center;
             justify-content: center;
+            gap: 10px;
           }
 
-          .compareSelect {
-            appearance: none;
-            -webkit-appearance: none;
-            -moz-appearance: none;
-            min-width: 260px;
-            height: 46px;
-            padding: 0 16px;
-            border-radius: 999px;
-            background: linear-gradient(180deg, #ffffff, #f8fafc);
-            border: 1px solid #e5e7eb;
-            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+          .dayLink {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 50px;
+            height: 42px;
+            padding: 0 12px;
+            border-radius: 12px;
+            text-decoration: none;
+            color: #111;
             font-weight: 900;
             font-size: 15px;
-            color: #0f172a;
-            cursor: pointer;
-            color-scheme: light;
+            line-height: 1;
+            background: #fff;
+            border: 1px solid #ececec;
+            transition: background 120ms ease, transform 120ms ease, box-shadow 120ms ease;
           }
 
-          .compareSelect:focus {
-            outline: none;
-            box-shadow: 0 0 0 2px rgba(15, 23, 42, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+          .dayLinkNum {
+            font-weight: 900;
           }
 
-          .compareSelect option,
-          .compareSelect optgroup {
-            color: #111111;
-            background: #ffffff;
+          .dayLink:hover {
+            background: #f6f6f6;
+            transform: translateY(-1px);
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.06);
+          }
+
+          .dayLink.active {
+            background: #f5f8ff;
+            border-color: #d8dbe2;
+            box-shadow: 0 8px 20px rgba(12, 25, 56, 0.06);
+          }
+
+          .dayLink:focus-visible {
+            outline: 2px solid #111;
+            outline-offset: 2px;
           }
 
           .summaryCompact {
@@ -1254,23 +1380,23 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
           }
 
           .summaryHead {
-            display: flex;
-            align-items: flex-end;
-            justify-content: space-between;
-            gap: 14px;
             margin-bottom: 16px;
+          }
+
+          .summaryHead.centered {
+            text-align: center;
           }
 
           .summaryHead h2 {
             margin: 0;
-            font-size: 18px;
-            line-height: 1.15;
+            font-size: 24px;
+            line-height: 1.1;
             font-weight: 950;
-            letter-spacing: -0.02em;
+            letter-spacing: -0.03em;
           }
 
           .summaryHead p {
-            margin: 5px 0 0;
+            margin: 6px 0 0;
             font-size: 13px;
             line-height: 1.4;
             color: #666;
@@ -1578,16 +1704,14 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
             color: rgba(15, 23, 42, 0.55);
           }
 
-          .srOnly {
-            position: absolute;
-            width: 1px;
-            height: 1px;
-            padding: 0;
-            margin: -1px;
-            overflow: hidden;
-            clip: rect(0, 0, 0, 0);
-            white-space: nowrap;
-            border: 0;
+          @media (max-width: 1220px) {
+            .titleLine {
+              align-items: flex-start;
+            }
+
+            .inlineCompareWrap {
+              justify-content: flex-start;
+            }
           }
 
           @media (max-width: 1100px) {
@@ -1617,9 +1741,29 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
             .chartBoxWide {
               grid-column: auto;
             }
+          }
 
-            .dayAndNav {
+          @media (max-width: 980px) {
+            .year {
+              font-size: 58px;
+            }
+
+            .arrowCircle {
+              width: 56px !important;
+              height: 56px !important;
+              min-width: 56px !important;
+              min-height: 56px !important;
+            }
+          }
+
+          @media (max-width: 820px) {
+            .titleLine {
+              flex-direction: column;
               align-items: flex-start;
+            }
+
+            .inlineCompareWrap {
+              width: 100%;
             }
           }
 
@@ -1629,24 +1773,68 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
               grid-template-columns: 1fr;
             }
 
-            .dayNav {
-              width: 100%;
+            .titleMain {
+              align-items: flex-start;
             }
 
-            .daySelectWrap,
-            .compareSelect {
+            .inlineCompareWrap {
+              flex-direction: column;
+              align-items: stretch;
+              gap: 6px;
+            }
+
+            .compareSelectMini {
               width: 100%;
               min-width: 100%;
+              max-width: 100%;
+            }
+
+            .dayNavGrid {
+              gap: 8px;
+            }
+
+            .dayLink {
+              min-width: 44px;
+              height: 40px;
+              padding: 0 10px;
             }
           }
 
           @media (max-width: 520px) {
-            .dayTitle {
-              font-size: 52px;
+            .year {
+              font-size: 46px;
+            }
+
+            .titleMain {
+              gap: 12px;
             }
 
             .summaryMetric strong {
               font-size: 20px;
+            }
+
+            .dayMeta,
+            .subLink {
+              font-size: 17px;
+            }
+
+            .arrowCircle {
+              width: 50px !important;
+              height: 50px !important;
+              min-width: 50px !important;
+              min-height: 50px !important;
+            }
+
+            .arrowSvg {
+              width: 22px !important;
+              height: 22px !important;
+            }
+
+            .dayLink {
+              min-width: 40px;
+              height: 38px;
+              border-radius: 10px;
+              font-size: 14px;
             }
           }
         `}</style>
