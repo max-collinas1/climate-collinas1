@@ -1827,13 +1827,13 @@ export default function YearOverviewPage(props) {
 
           .summaryRow {
             display: grid;
-            grid-template-columns: 190px 1fr;
-            gap: 14px;
+            grid-template-columns: 160px 1fr;
+            gap: 10px;
             align-items: stretch;
             border: 1px solid #ececec;
             border-radius: 16px;
             background: #fcfcfc;
-            padding: 14px 16px;
+            padding: 12px 14px;
           }
 
           .summaryRow.dual {
@@ -1845,13 +1845,13 @@ export default function YearOverviewPage(props) {
 
           .summaryHalf {
             display: grid;
-            grid-template-columns: 190px 1fr;
-            gap: 14px;
+            grid-template-columns: 160px 1fr;
+            gap: 10px;
             align-items: stretch;
             border: 1px solid #ececec;
             border-radius: 16px;
             background: #fcfcfc;
-            padding: 14px 16px;
+            padding: 12px 14px;
           }
 
           .summaryLabel {
@@ -1868,7 +1868,7 @@ export default function YearOverviewPage(props) {
 
           .summaryMetrics {
             display: grid;
-            gap: 10px;
+            gap: 8px;
             align-items: center;
           }
 
@@ -1896,7 +1896,7 @@ export default function YearOverviewPage(props) {
 
           .summaryMetric strong {
             display: block;
-            font-size: 19px;
+            font-size: 17px;
             line-height: 1.05;
             font-weight: 900;
             letter-spacing: -0.02em;
@@ -2312,22 +2312,28 @@ export default function YearOverviewPage(props) {
 
           @media (max-width: 1100px) {
             .summaryRow {
-              grid-template-columns: 1fr;
+              grid-template-columns: 150px 1fr;
+              gap: 10px;
+              padding: 12px 14px;
             }
 
             .summaryHalf {
-              grid-template-columns: 1fr;
+              grid-template-columns: 150px 1fr;
+              gap: 10px;
+              padding: 12px 14px;
             }
 
             .summaryLabel {
-              border-right: 0;
-              border-bottom: 1px solid #ececec;
-              padding-right: 0;
-              padding-bottom: 10px;
+              border-right: 1px solid #ececec;
+              border-bottom: 0;
+              padding-right: 8px;
+              padding-bottom: 0;
+              font-size: 13px;
             }
 
             .summaryRow.dual {
-              grid-template-columns: 1fr;
+              grid-template-columns: 1fr 1fr;
+              gap: 10px;
             }
 
             .charts2 {
@@ -2353,9 +2359,23 @@ export default function YearOverviewPage(props) {
           }
 
           @media (max-width: 720px) {
-            .summaryMetrics.three,
+            .summaryMetrics.three {
+              grid-template-columns: repeat(3, minmax(0, 1fr));
+              gap: 8px;
+            }
+
             .summaryMetrics.two {
-              grid-template-columns: 1fr;
+              grid-template-columns: repeat(2, minmax(0, 1fr));
+              gap: 8px;
+            }
+
+            .summaryMetric strong {
+              font-size: 16px;
+            }
+
+            .summaryKey {
+              font-size: 9px;
+              margin-bottom: 4px;
             }
 
             .monthNav {
@@ -2363,14 +2383,22 @@ export default function YearOverviewPage(props) {
             }
 
             .inlineCompareWrap {
-              width: 100%;
-              justify-content: flex-start;
+              width: auto;
+              justify-content: flex-end;
             }
 
             .compareSelectMini {
-              width: 100%;
-              min-width: 100%;
-              max-width: 100%;
+              width: 88px;
+              min-width: 88px;
+              max-width: 88px;
+              height: 42px;
+              padding: 0 10px;
+              font-size: 13px;
+              border-radius: 999px;
+            }
+
+            .inlineCompareLabel {
+              font-size: 12px;
             }
           }
 
@@ -2385,7 +2413,7 @@ export default function YearOverviewPage(props) {
             }
 
             .summaryMetric strong {
-              font-size: 20px;
+              font-size: 16px;
             }
 
             .cellText {

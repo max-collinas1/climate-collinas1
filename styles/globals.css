@@ -3,13 +3,7 @@
   --foreground: #171717;
 }
 
-html,
-body {
-  max-width: 100vw;
-  overflow-x: hidden;
-}
-
-/* Base desktop */
+/* Base generale */
 html {
   font-size: 16px;
   -webkit-text-size-adjust: 100%;
@@ -23,8 +17,19 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 
-  font-size: 14px; /* base desktop */
+  font-size: 14px;
   line-height: 1.45;
+
+  margin: 0;
+  padding: 0;
+  overflow-x: auto;
+  min-width: 0;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
 }
 
 * {
@@ -38,19 +43,26 @@ a {
   text-decoration: none;
 }
 
+img,
+video {
+  max-width: 100%;
+  height: auto;
+}
+
 /* ============================================================
-   MOBILE / TABLET
-   (1) max-width => affidabile
-   (2) pointer/hover => fallback per touch device
+   MODALITÀ "DESKTOP SU MOBILE"
+   Invece di comprimere il layout, manteniamo una larghezza
+   minima desktop e aumentiamo il testo.
    ============================================================ */
 
-/* Mobile classico */
-@media (max-width: 768px) {
+@media (max-width: 900px) {
   html {
-    font-size: 18px; /* alza la base */
+    font-size: 18px;
   }
 
   body {
+    min-width: 1180px;
+    overflow-x: auto;
     font-size: 18px;
     line-height: 1.6;
   }
@@ -74,17 +86,27 @@ a {
   .subline,
   .hint,
   .note,
-  .msg {
+  .msg,
+  li,
+  td,
+  th,
+  label,
+  span,
+  small {
     font-size: 16px !important;
   }
 
-  .chip {
+  .chip,
+  .quickPill,
+  .tag,
+  .badge {
     font-size: 15px !important;
   }
 
   button,
   select,
   input,
+  textarea,
   .btn,
   .quickPill {
     font-size: 16px !important;
@@ -92,14 +114,62 @@ a {
   }
 }
 
-/* Touch device fallback (tablet/phone anche con viewport “strana”) */
+/* Fallback per touch device */
 @media (hover: none) and (pointer: coarse) {
   html {
     font-size: 18px;
   }
 
   body {
+    min-width: 1180px;
+    overflow-x: auto;
     font-size: 18px;
     line-height: 1.6;
+  }
+
+  h1 {
+    font-size: 40px !important;
+    line-height: 1.15;
+  }
+
+  h2 {
+    font-size: 28px !important;
+    line-height: 1.2;
+  }
+
+  h3 {
+    font-size: 22px !important;
+    line-height: 1.25;
+  }
+
+  p,
+  .subline,
+  .hint,
+  .note,
+  .msg,
+  li,
+  td,
+  th,
+  label,
+  span,
+  small {
+    font-size: 16px !important;
+  }
+
+  .chip,
+  .quickPill,
+  .tag,
+  .badge {
+    font-size: 15px !important;
+  }
+
+  button,
+  select,
+  input,
+  textarea,
+  .btn,
+  .quickPill {
+    font-size: 16px !important;
+    padding: 14px 16px;
   }
 }
