@@ -16,6 +16,14 @@ export default function SiteHeader({
 }) {
   const isActive = (href) => currentPath === href;
 
+  const navItems = [
+    { href: "/", label: "Home" },
+    { href: "/records", label: "Record" },
+    { href: "/radar", label: "Condizioni attuali" },
+    { href: "/grafici-previsione", label: "Grafici di previsione" },
+    { href: "/confronto-climatico", label: "Confronto climatico" },
+  ];
+
   return (
     <header className="siteHero">
       <div className="heroTop">
@@ -31,50 +39,40 @@ export default function SiteHeader({
           ) : null}
         </div>
 
-        <div className="heroRight" />
+        <details className="mobileMenu">
+          <summary className="mobileMenuButton" aria-label="Apri menu">
+            <span />
+            <span />
+            <span />
+          </summary>
+
+          <nav className="mobileMenuPanel" aria-label="Menu mobile">
+            {navItems.map((item) => (
+              <Link
+                key={item.href}
+                href={item.href}
+                className={`mobileMenuLink ${
+                  isActive(item.href) ? "active" : ""
+                }`}
+              >
+                {item.label}
+              </Link>
+            ))}
+          </nav>
+        </details>
       </div>
 
       <div className="navStripWrap">
         <nav className="navStrip" aria-label="Sezioni principali">
-          <Link
-            href="/"
-            className={`navStripLink ${isActive("/") ? "active" : ""}`}
-          >
-            <span className="navStripText">Home</span>
-          </Link>
-
-          <Link
-            href="/records"
-            className={`navStripLink ${isActive("/records") ? "active" : ""}`}
-          >
-            <span className="navStripText">Record</span>
-          </Link>
-
-          <Link
-            href="/radar"
-            className={`navStripLink ${isActive("/radar") ? "active" : ""}`}
-          >
-            <span className="navStripText">Condizioni attuali</span>
-          </Link>
-
-          <Link
-            href="/grafici-previsione"
-            className={`navStripLink ${
-              isActive("/grafici-previsione") ? "active" : ""
-            }`}
-          >
-            <span className="navStripText">Grafici di previsione</span>
-          </Link>
-
-          {/* NUOVO LINK */}
-          <Link
-            href="/confronto-climatico"
-            className={`navStripLink ${
-              isActive("/confronto-climatico") ? "active" : ""
-            }`}
-          >
-            <span className="navStripText">Confronto climatico</span>
-          </Link>
+          {navItems.map((item) => (
+            <Link
+              key={item.href}
+              href={item.href}
+              className={`navStripLink ${isActive(item.href) ? "active" : ""}`}
+            >
+              <span className="navStripText">{item.label}</span>
+            </Link>
+          ))}
         </nav>
       </div>
 
@@ -105,14 +103,16 @@ export default function SiteHeader({
           background: rgba(255, 255, 255, 0.86);
           backdrop-filter: blur(8px);
           box-shadow: 0 10px 30px rgba(15, 23, 42, 0.06);
-          overflow: hidden;
+          overflow: visible;
+          position: relative;
         }
 
         .heroTop {
           display: grid;
-          grid-template-columns: 1.15fr 1fr;
+          grid-template-columns: 1fr auto;
           gap: 16px;
           padding: 22px 22px 18px;
+          position: relative;
         }
 
         .kicker {
@@ -147,11 +147,71 @@ export default function SiteHeader({
           font-weight: 700;
         }
 
-        .heroRight {
+        .mobileMenu {
+          display: none;
+          position: relative;
+          z-index: 20;
+        }
+
+        .mobileMenu summary {
+          list-style: none;
+        }
+
+        .mobileMenu summary::-webkit-details-marker {
+          display: none;
+        }
+
+        .mobileMenuButton {
+          width: 46px;
+          height: 46px;
+          border: 1px solid #d7dce2;
+          border-radius: 14px;
+          background: linear-gradient(180deg, #ffffff, #f3f6f9);
           display: flex;
-          justify-content: flex-end;
-          align-items: flex-start;
-          min-height: 1px;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          gap: 5px;
+          cursor: pointer;
+          box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
+        }
+
+        .mobileMenuButton span {
+          width: 21px;
+          height: 3px;
+          border-radius: 999px;
+          background: #0f172a;
+          display: block;
+        }
+
+        .mobileMenuPanel {
+          position: absolute;
+          top: 56px;
+          right: 0;
+          width: 250px;
+          border: 1px solid #d7dce2;
+          border-radius: 18px;
+          background: rgba(255, 255, 255, 0.98);
+          box-shadow: 0 18px 40px rgba(15, 23, 42, 0.16);
+          padding: 10px;
+          display: grid;
+          gap: 6px;
+        }
+
+        .mobileMenuLink {
+          display: block;
+          padding: 13px 14px;
+          border-radius: 13px;
+          font-size: 15px;
+          font-weight: 900;
+          color: #111827;
+          text-decoration: none;
+        }
+
+        .mobileMenuLink.active,
+        .mobileMenuLink:hover {
+          background: #f1f5f9;
+          color: #0f172a;
         }
 
         .navStripWrap {
@@ -188,7 +248,7 @@ export default function SiteHeader({
           display: inline-block;
           font-size: 14px;
           font-weight: 1000;
-          line-height: 0;
+          line-height: 1;
           white-space: nowrap;
         }
 
@@ -276,10 +336,6 @@ export default function SiteHeader({
         }
 
         @media (max-width: 1080px) {
-          .heroTop {
-            grid-template-columns: 1fr;
-          }
-
           .title {
             font-size: 44px;
           }
@@ -292,7 +348,7 @@ export default function SiteHeader({
           }
 
           .navStripText {
-            font-size: 22px;
+            font-size: 16px;
           }
 
           .embedFrame iframe {
@@ -306,18 +362,36 @@ export default function SiteHeader({
         }
 
         @media (max-width: 640px) {
-          .navStrip {
-            justify-content: center;
-            gap: 14px 20px;
-            padding: 14px 16px;
+          .siteHero {
+            border-radius: 20px;
           }
 
-          .navStripText {
-            font-size: 18px;
+          .heroTop {
+            padding: 20px 18px 18px;
           }
 
           .title {
             font-size: 36px;
+            padding-right: 54px;
+          }
+
+          .subline {
+            padding-right: 18px;
+          }
+
+          .navStripWrap {
+            display: none;
+          }
+
+          .mobileMenu {
+            display: block;
+            position: absolute;
+            top: 18px;
+            right: 18px;
+          }
+
+          .liveBoxWrap {
+            padding: 0 14px 18px;
           }
         }
       `}</style>

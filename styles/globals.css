@@ -22,7 +22,7 @@ body {
 
   margin: 0;
   padding: 0;
-  overflow-x: auto;
+  overflow-x: hidden;
   min-width: 0;
 }
 
@@ -30,6 +30,7 @@ html,
 body {
   margin: 0;
   padding: 0;
+  width: 100%;
 }
 
 * {
@@ -50,126 +51,28 @@ video {
 }
 
 /* ============================================================
-   MODALITÀ "DESKTOP SU MOBILE"
-   Invece di comprimere il layout, manteniamo una larghezza
-   minima desktop e aumentiamo il testo.
+   BASE MOBILE REALE
+   Niente larghezza desktop forzata.
+   Il layout deve adattarsi alla larghezza dello schermo.
    ============================================================ */
 
 @media (max-width: 900px) {
   html {
-    font-size: 18px;
+    font-size: 16px;
   }
 
   body {
-    min-width: 1180px;
-    overflow-x: auto;
-    font-size: 18px;
-    line-height: 1.6;
-  }
-
-  h1 {
-    font-size: 40px !important;
-    line-height: 1.15;
-  }
-
-  h2 {
-    font-size: 28px !important;
-    line-height: 1.2;
-  }
-
-  h3 {
-    font-size: 22px !important;
-    line-height: 1.25;
-  }
-
-  p,
-  .subline,
-  .hint,
-  .note,
-  .msg,
-  li,
-  td,
-  th,
-  label,
-  span,
-  small {
-    font-size: 16px !important;
-  }
-
-  .chip,
-  .quickPill,
-  .tag,
-  .badge {
-    font-size: 15px !important;
+    width: 100%;
+    min-width: 0;
+    overflow-x: hidden;
+    font-size: 14px;
+    line-height: 1.45;
   }
 
   button,
   select,
   input,
-  textarea,
-  .btn,
-  .quickPill {
-    font-size: 16px !important;
-    padding: 14px 16px;
-  }
-}
-
-/* Fallback per touch device */
-@media (hover: none) and (pointer: coarse) {
-  html {
-    font-size: 18px;
-  }
-
-  body {
-    min-width: 1180px;
-    overflow-x: auto;
-    font-size: 18px;
-    line-height: 1.6;
-  }
-
-  h1 {
-    font-size: 40px !important;
-    line-height: 1.15;
-  }
-
-  h2 {
-    font-size: 28px !important;
-    line-height: 1.2;
-  }
-
-  h3 {
-    font-size: 22px !important;
-    line-height: 1.25;
-  }
-
-  p,
-  .subline,
-  .hint,
-  .note,
-  .msg,
-  li,
-  td,
-  th,
-  label,
-  span,
-  small {
-    font-size: 16px !important;
-  }
-
-  .chip,
-  .quickPill,
-  .tag,
-  .badge {
-    font-size: 15px !important;
-  }
-
-  button,
-  select,
-  input,
-  textarea,
-  .btn,
-  .quickPill {
-    font-size: 16px !important;
-    padding: 14px 16px;
+  textarea {
+    max-width: 100%;
   }
 }
