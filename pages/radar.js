@@ -105,7 +105,7 @@ export default function RadarPage() {
               <iframe
                 title="Satellite Italia"
                 sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"
-                src="https://widgets.meteox.com/it-IT/widgets/radar/country/it/satellite?z=5"
+                src="https://widgets.meteox.com/it-IT/widgets/radar/country/it/satellite?z=4.8"
                 className="subFrame"
                 scrolling="no"
                 frameBorder="0"

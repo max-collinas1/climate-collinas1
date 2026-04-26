@@ -12,7 +12,26 @@ const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
 function readDaily() {
   const filePath = path.join(process.cwd(), "data", "daily.json");
   if (!fs.existsSync(filePath)) return [];
-  return JSON.parse(fs.readFileSync(filePath, "utf8"));
+  const raw = JSON.parse(fs.readFileSync(filePath, "utf8"));
+  return Array.isArray(raw) ? raw : [];
+}
+
+function readMonthlyOverrides() {
+  const filePath = path.join(process.cwd(), "data", "monthly_overrides.json");
+  if (!fs.existsSync(filePath)) return [];
+  const raw = JSON.parse(fs.readFileSync(filePath, "utf8"));
+  return Array.isArray(raw) ? raw : [];
+}
+
+function findMonthlyOverride(overrides, ym, field) {
+  return (
+    (overrides || []).find(
+      (o) =>
+        String(o?.scope ?? "") === "month" &&
+        String(o?.ym ?? "") === String(ym) &&
+        String(o?.field ?? "") === String(field)
+    ) || null
+  );
 }
 
 function n(x) {
@@ -44,6 +63,100 @@ function round1(x) {
 function fmt1(x, fallback = "—") {
   const r = round1(x);
   return r === null ? fallback : r.toFixed(1);
+}
+
+function sumFinite(arr) {
+  let s = 0;
+  let ok = false;
+  for (const x of arr) {
+    const v = n(x);
+    if (Number.isFinite(v)) {
+      s += v;
+      ok = true;
+    }
+  }
+  return ok ? s : NaN;
+}
+
+function avgFinite(arr) {
+  let s = 0;
+  let c = 0;
+  for (const x of arr) {
+    const v = n(x);
+    if (Number.isFinite(v)) {
+      s += v;
+      c++;
+    }
+  }
+  return c ? s / c : NaN;
+}
+
+function minFinite(arr) {
+  let m = Infinity;
+  let ok = false;
+  for (const x of arr) {
+    const v = n(x);
+    if (Number.isFinite(v)) {
+      m = Math.min(m, v);
+      ok = true;
+    }
+  }
+  return ok ? m : NaN;
+}
+
+function maxFinite(arr) {
+  let m = -Infinity;
+  let ok = false;
+  for (const x of arr) {
+    const v = n(x);
+    if (Number.isFinite(v)) {
+      m = Math.max(m, v);
+      ok = true;
+    }
+  }
+  return ok ? m : NaN;
+}
+
+function applyRainMonthOverride(rawValue, override) {
+  const ov = n(override?.value);
+
+  if (Number.isFinite(ov)) {
+    return {
+      value: ov,
+      isOverride: true,
+      source: String(override?.source ?? ""),
+      label: String(override?.label ?? "Dato ARPAS"),
+      note: String(override?.note ?? ""),
+    };
+  }
+
+  return {
+    value: rawValue,
+    isOverride: false,
+    source: "",
+    label: "",
+    note: "",
+  };
+}
+
+const MONTHS_IT_FULL = [
+  "Gennaio",
+  "Febbraio",
+  "Marzo",
+  "Aprile",
+  "Maggio",
+  "Giugno",
+  "Luglio",
+  "Agosto",
+  "Settembre",
+  "Ottobre",
+  "Novembre",
+  "Dicembre",
+];
+
+function monthFull(ym) {
+  const mm = Number(String(ym).slice(5, 7));
+  return MONTHS_IT_FULL[mm - 1] || String(ym);
 }
 
 function clamp01(x) {
@@ -207,9 +320,11 @@ function dailyGust(row) {
 
 // -------------------- getStaticProps --------------------
 export async function getStaticProps() {
-  const rows = readDaily().sort((a, b) =>
-    String(a?.date || "").localeCompare(String(b?.date || ""))
-  );
+  const rows = readDaily()
+    .filter((r) => /^\d{4}-\d{2}-\d{2}$/.test(String(r?.date || "")))
+    .sort((a, b) => String(a?.date || "").localeCompare(String(b?.date || "")));
+
+  const overrides = readMonthlyOverrides();
 
   const years = Array.from(
     new Set(rows.map((r) => String(r?.date || "").slice(0, 4)).filter(Boolean))
@@ -228,21 +343,54 @@ export async function getStaticProps() {
 
   const yearStats = years.map((y) => {
     const d = byYear.get(y) || [];
-    const tmins = d.map((x) => dailyTmin(x)).filter(Number.isFinite);
-    const tmaxs = d.map((x) => dailyTmax(x)).filter(Number.isFinite);
-    const tmeans = d.map((x) => dailyTmean(x)).filter(Number.isFinite);
-    const rains = d.map((x) => dailyRain(x)).filter(Number.isFinite);
-    const gusts = d.map((x) => dailyGust(x)).filter(Number.isFinite);
+
+    const byMonth = new Map();
+    for (const row of d) {
+      const ym = String(row?.date || "").slice(0, 7);
+      if (!ym) continue;
+      if (!byMonth.has(ym)) byMonth.set(ym, []);
+      byMonth.get(ym).push(row);
+    }
+
+    const monthly = Array.from(byMonth.keys())
+      .sort()
+      .map((ym) => {
+        const arr = byMonth.get(ym) || [];
+        const rawRainSum = sumFinite(arr.map((x) => x.rain_total));
+        const rainOverride = findMonthlyOverride(overrides, ym, "rainSum");
+        const resolvedRain = applyRainMonthOverride(rawRainSum, rainOverride);
+
+        return {
+          ym,
+          rainSum: resolvedRain.value,
+          rainIsOverride: resolvedRain.isOverride,
+          rainLabel: resolvedRain.label,
+          rainSource: resolvedRain.source,
+          rainNote: resolvedRain.note,
+        };
+      });
+
+    const overrideMonths = monthly.filter((m) => m.rainIsOverride);
+
+    const tmin = minFinite(d.map((x) => dailyTmin(x)));
+    const tmax = maxFinite(d.map((x) => dailyTmax(x)));
+    const tmean = avgFinite(d.map((x) => n(x?.tmean)));
+    const rainSum = sumFinite(monthly.map((m) => m.rainSum));
+    const gustMax = maxFinite(d.map((x) => dailyGust(x)));
 
     return {
       year: y,
       ndays: d.length,
-      tmin: tmins.length ? Math.min(...tmins) : null,
-      tmax: tmaxs.length ? Math.max(...tmaxs) : null,
-      tmean: Number.isFinite(avg(tmeans)) ? avg(tmeans) : null,
-      rain: rains.length ? sum(rains) : null,
-      rainyDays: rains.filter((x) => x > 0).length,
-      gustMax: gusts.length ? Math.max(...gusts) : null,
+      tmin: Number.isFinite(tmin) ? tmin : null,
+      tmax: Number.isFinite(tmax) ? tmax : null,
+      tmean: Number.isFinite(tmean) ? tmean : null,
+      rain: Number.isFinite(rainSum) ? rainSum : null,
+      rainyDays: d
+        .map((x) => n(x?.rain_total))
+        .filter((x) => Number.isFinite(x) && x > 1).length,
+      gustMax: Number.isFinite(gustMax) ? gustMax : null,
+      rainHasOverride: overrideMonths.length > 0,
+      rainOverrideMonthsText: overrideMonths.map((m) => monthFull(m.ym)).join(", "),
     };
   });
 
@@ -543,7 +691,7 @@ function YearCard({ y, norm }) {
       <div className="mainStats">
         <div className="metric">
           <div className="mTop">
-            <span className="mLabel">Temperatura media</span>
+            <span className="mLabel">Temperatura media annua</span>
             <span className="mValue">{fmt(y.tmean, 1)} °C</span>
           </div>
           <div className="track" aria-hidden="true">
@@ -556,8 +704,17 @@ function YearCard({ y, norm }) {
 
         <div className="metric">
           <div className="mTop">
-            <span className="mLabel">Precipitazioni totali</span>
-            <span className="mValue">{fmt(y.rain, 1)} mm</span>
+            <span className="mLabel">Precipitazione totale annua</span>
+            <span
+              className={`mValue ${y.rainHasOverride ? "rainOverrideValue" : ""}`}
+              title={
+                y.rainHasOverride
+                  ? `Totale annuale con priorità ARPAS nei mesi: ${y.rainOverrideMonthsText}`
+                  : ""
+              }
+            >
+              {fmt(y.rain, 1)} mm
+            </span>
           </div>
           <div className="track" aria-hidden="true">
             <div
@@ -570,29 +727,24 @@ function YearCard({ y, norm }) {
 
       <div className="details">
         <div className="row">
-          <span>Tmin / Tmax</span>
-          <b>
-            {fmt(y.tmin, 1)} / {fmt(y.tmax, 1)} °C
-          </b>
+          <span>Minima assoluta giornaliera</span>
+          <b>{fmt(y.tmin, 1)} °C</b>
         </div>
+
         <div className="row">
-          <span>Giorni piovosi</span>
+          <span>Massima assoluta giornaliera</span>
+          <b>{fmt(y.tmax, 1)} °C</b>
+        </div>
+
+        <div className="row">
+          <span>Giorni con pioggia &gt; 1 mm</span>
           <b>{Number.isFinite(n(y.rainyDays)) ? y.rainyDays : "—"}</b>
         </div>
+
         <div className="row">
-          <span>Raffica max</span>
+          <span>Raffica massima giornaliera</span>
           <b>{fmt(y.gustMax, 1)} km/h</b>
         </div>
-      </div>
-
-      <div className="actions">
-        <Link
-          className="btn"
-          href={href}
-          aria-label={`Apri dettagli anno ${y.year}`}
-        >
-          Apri dettagli <span aria-hidden="true">→</span>
-        </Link>
       </div>
 
       <style jsx>{`
@@ -683,6 +835,29 @@ function YearCard({ y, norm }) {
           font-weight: 950;
           color: rgba(15, 23, 42, 0.9);
           white-space: nowrap;
+        }
+
+        .rainOverrideValue {
+          position: relative;
+          text-decoration: underline;
+          text-decoration-color: #dc2626;
+          text-decoration-thickness: 2px;
+          text-underline-offset: 3px;
+          padding-left: 14px;
+          cursor: help;
+        }
+
+        .rainOverrideValue::before {
+          content: "";
+          position: absolute;
+          left: 0;
+          top: 50%;
+          transform: translateY(-50%);
+          width: 7px;
+          height: 7px;
+          border-radius: 999px;
+          background: #dc2626;
+          box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.16);
         }
 
         .track {
@@ -1378,7 +1553,7 @@ function WeekChart({
         <div>
           <div className="weekTitle">Ultimi 7 giorni disponibili</div>
           <div className="weekSub">
-            {weekLabel}. Valori <b>orari</b> (aggregati dai dati intraday).
+            {weekLabel}. Valori <b>orari</b> aggregati dai dati intraday.
           </div>
         </div>
 
