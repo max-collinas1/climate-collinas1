@@ -828,6 +828,22 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
           <section className="daysBar" aria-label={`Seleziona giorno ${formatMonthIT(ym)}`}>
             <div className="daysBarHead">Seleziona giorno {formatMonthIT(ym)}</div>
 
+            <select
+              className="daySelectMobile"
+              value={day.date}
+              onChange={(e) => {
+                const targetDate = e.target.value;
+                if (!targetDate) return;
+                router.push(`/giorni/${targetDate}`);
+              }}
+            >
+              {monthDays.map((item) => (
+                <option key={item.date} value={item.date}>
+                  {item.dayNum}
+                </option>
+              ))}
+            </select>
+
             <nav className="dayNavGrid">
               {monthDays.map((item) => {
                 const isActive = String(item.date) === String(day.date);
@@ -1352,6 +1368,40 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
             transition: background 120ms ease, transform 120ms ease, box-shadow 120ms ease;
           }
 
+          .daySelectMobile {
+            display: none;
+            appearance: none;
+            -webkit-appearance: none;
+            -moz-appearance: none;
+            width: 100%;
+            height: 50px;
+            padding: 0 16px;
+            border-radius: 999px;
+            background: linear-gradient(180deg, #ffffff, #f8fafc);
+            border: 1px solid #d8dee7;
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9),
+              0 4px 14px rgba(15, 23, 42, 0.04);
+            font-weight: 900;
+            font-size: 15px;
+            color: #0f172a;
+            cursor: pointer;
+            color-scheme: light;
+            text-align: center;
+          }
+
+          .daySelectMobile:focus {
+            outline: none;
+            border-color: #b9c5d6;
+            box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.12),
+              inset 0 1px 0 rgba(255, 255, 255, 0.9),
+              0 4px 14px rgba(15, 23, 42, 0.05);
+          }
+
+          .daySelectMobile option {
+            color: #111111;
+            background: #ffffff;
+          }
+
           .dayLinkNum {
             font-weight: 900;
           }
@@ -1802,7 +1852,13 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
 
           @media (max-width: 520px) {
             .year {
-              font-size: 46px;
+              width: 100%;
+              max-width: 100%;
+              font-size: 34px;
+              line-height: 1.05;
+              letter-spacing: -0.04em;
+              white-space: normal;
+              overflow-wrap: anywhere;
             }
 
             .titleMain {
@@ -1816,6 +1872,23 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
             .dayMeta,
             .subLink {
               font-size: 17px;
+            }
+
+            .daysBar {
+              padding: 14px;
+            }
+
+            .daysBarHead {
+              margin-bottom: 10px;
+              font-size: 12px;
+            }
+
+            .daySelectMobile {
+              display: block;
+            }
+
+            .dayNavGrid {
+              display: none;
             }
 
             .arrowCircle {

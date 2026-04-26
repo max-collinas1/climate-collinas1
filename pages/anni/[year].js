@@ -711,20 +711,39 @@ export default function YearOverviewPage(props) {
 
   const baseChart = {
     animation: false,
-    grid: { left: 72, right: 56, top: 58, bottom: 92 },
+    grid: { left: 64, right: 34, top: 92, bottom: 88 },
     xAxis: {
       type: "category",
       data: x,
       axisLabel: { rotate: 0, margin: 14 },
     },
-    title: { left: "center", top: 10 },
-    legend: {
-      bottom: 8,
+    title: {
       left: "center",
-      itemGap: 16,
-      padding: [8, 10, 2, 10],
+      top: 10,
+      textStyle: {
+        fontSize: 17,
+        fontWeight: 900,
+        width: 300,
+        overflow: "break",
+      },
     },
-    toolbox: { feature: { restore: {} }, right: 10, top: 10 },
+    legend: {
+      bottom: 10,
+      left: "center",
+      type: "scroll",
+      itemGap: 12,
+      padding: [6, 10, 6, 10],
+      textStyle: {
+        fontSize: 11,
+        fontWeight: 700,
+      },
+    },
+    toolbox: {
+      feature: { restore: {} },
+      right: 4,
+      top: 8,
+      itemSize: 14,
+    },
     tooltip: { trigger: "axis", order: "seriesAsc" },
   };
 
@@ -1024,8 +1043,8 @@ export default function YearOverviewPage(props) {
     ],
   };
 
-  const LARGE_CHART_HEIGHT = 365;
-  const NORMAL_CHART_HEIGHT = 340;
+  const LARGE_CHART_HEIGHT = 390;
+  const NORMAL_CHART_HEIGHT = 370;
 
   function renderRecordLink(entry, type) {
     if (!entry) return "—";
@@ -1148,6 +1167,24 @@ export default function YearOverviewPage(props) {
 
           <section className="monthsBar" aria-label="Seleziona mese">
             <div className="monthsBarHead">Seleziona mese</div>
+
+            <select
+              className="monthSelectMobile"
+              defaultValue=""
+              onChange={(e) => {
+                const ym = e.target.value;
+                if (!ym) return;
+                const mm = monthNum(ym);
+                router.push(`/mesi/${year}/${mm}`);
+              }}
+            >
+              <option value="">Mese</option>
+              {monthsInYear.map((ym) => (
+                <option key={ym} value={ym}>
+                  {monthFull(ym)}
+                </option>
+              ))}
+            </select>
 
             <nav className="monthNav">
               {monthsInYear.map((ym) => {
@@ -1751,6 +1788,40 @@ export default function YearOverviewPage(props) {
             justify-content: center;
             gap: 10px;
             text-align: center;
+          }
+
+          .monthSelectMobile {
+            display: none;
+            appearance: none;
+            -webkit-appearance: none;
+            -moz-appearance: none;
+            width: 100%;
+            height: 50px;
+            padding: 0 16px;
+            border-radius: 999px;
+            background: linear-gradient(180deg, #ffffff, #f8fafc);
+            border: 1px solid #d8dee7;
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9),
+              0 4px 14px rgba(15, 23, 42, 0.04);
+            font-weight: 900;
+            font-size: 15px;
+            color: #0f172a;
+            cursor: pointer;
+            color-scheme: light;
+            text-align: center;
+          }
+
+          .monthSelectMobile:focus {
+            outline: none;
+            border-color: #b9c5d6;
+            box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.12),
+              inset 0 1px 0 rgba(255, 255, 255, 0.9),
+              0 4px 14px rgba(15, 23, 42, 0.05);
+          }
+
+          .monthSelectMobile option {
+            color: #111111;
+            background: #ffffff;
           }
 
           .monthLink {
@@ -2403,8 +2474,30 @@ export default function YearOverviewPage(props) {
           }
 
           @media (max-width: 520px) {
+            .hero {
+              padding: 14px;
+              border-radius: 16px;
+            }
+
             .year {
               font-size: 52px;
+            }
+
+            .monthsBar {
+              padding: 14px;
+            }
+
+            .monthsBarHead {
+              margin-bottom: 10px;
+              font-size: 12px;
+            }
+
+            .monthSelectMobile {
+              display: block;
+            }
+
+            .monthNav {
+              display: none;
             }
 
             .monthLink {
@@ -2412,12 +2505,66 @@ export default function YearOverviewPage(props) {
               padding: 7px 10px;
             }
 
+            .summaryRows {
+              gap: 12px;
+            }
+
+            .summaryRow,
+            .summaryHalf {
+              display: block;
+              padding: 14px;
+            }
+
+            .summaryRow.dual {
+              display: grid;
+              grid-template-columns: 1fr;
+              gap: 12px;
+            }
+
+            .summaryLabel {
+              border-right: 0;
+              border-bottom: 1px solid #ececec;
+              padding-right: 0;
+              padding-bottom: 10px;
+              margin-bottom: 12px;
+              font-size: 14px;
+            }
+
+            .summaryMetrics.three,
+            .summaryMetrics.two {
+              grid-template-columns: 1fr;
+              gap: 12px;
+            }
+
+            .summaryMetric {
+              display: flex;
+              justify-content: space-between;
+              align-items: baseline;
+              gap: 12px;
+            }
+
+            .summaryKey {
+              font-size: 11px;
+              margin-bottom: 0;
+            }
+
             .summaryMetric strong {
-              font-size: 16px;
+              font-size: 17px;
+              text-align: right;
             }
 
             .cellText {
               font-size: 16px;
+            }
+
+            .charts2 {
+              gap: 14px;
+            }
+
+            .chartBox {
+              padding: 6px;
+              border-radius: 14px;
+              overflow: hidden;
             }
 
             .arrowCircle {

@@ -487,20 +487,39 @@ export default function MonthPage(props) {
 
   const baseChart = {
     animation: false,
-    grid: { left: 72, right: 56, top: 58, bottom: 92 },
+    grid: { left: 64, right: 34, top: 92, bottom: 110 },
     xAxis: {
       type: "category",
       data: x,
       axisLabel: { rotate: 0, margin: 14, hideOverlap: true },
     },
-    title: { left: "center", top: 10 },
-    legend: {
-      bottom: 8,
+    title: {
       left: "center",
-      itemGap: 16,
-      padding: [8, 10, 2, 10],
+      top: 10,
+      textStyle: {
+        fontSize: 17,
+        fontWeight: 900,
+        width: 300,
+        overflow: "break",
+      },
     },
-    toolbox: { feature: { restore: {} }, right: 10, top: 10 },
+    legend: {
+      bottom: 10,
+      left: "center",
+      type: "scroll",
+      itemGap: 12,
+      padding: [6, 10, 6, 10],
+      textStyle: {
+        fontSize: 11,
+        fontWeight: 700,
+      },
+    },
+    toolbox: {
+      feature: { restore: {} },
+      right: 4,
+      top: 8,
+      itemSize: 14,
+    },
     tooltip: { trigger: "axis", order: "seriesAsc" },
   };
 
@@ -902,8 +921,8 @@ export default function MonthPage(props) {
     ],
   };
 
-  const LARGE_CHART_HEIGHT = 365;
-  const NORMAL_CHART_HEIGHT = 340;
+  const LARGE_CHART_HEIGHT = 390;
+  const NORMAL_CHART_HEIGHT = 370;
 
   function downloadCsv() {
     const cols = [
@@ -1061,6 +1080,23 @@ export default function MonthPage(props) {
 
           <section className="monthsBar" aria-label={`Seleziona mese ${year}`}>
             <div className="monthsBarHead">Seleziona mese {year}</div>
+
+            <select
+              className="monthSelectMobile"
+              value={ym}
+              onChange={(e) => {
+                const itemYm = e.target.value;
+                if (!itemYm) return;
+                const mm = monthNum(itemYm);
+                router.push(`/mesi/${year}/${mm}`);
+              }}
+            >
+              {monthsInYear.map((itemYm) => (
+                <option key={itemYm} value={itemYm}>
+                  {monthFullFromYm(itemYm)}
+                </option>
+              ))}
+            </select>
 
             <nav className="monthNav">
               {monthsInYear.map((itemYm) => {
@@ -1699,6 +1735,40 @@ export default function MonthPage(props) {
             text-align: center;
           }
 
+          .monthSelectMobile {
+            display: none;
+            appearance: none;
+            -webkit-appearance: none;
+            -moz-appearance: none;
+            width: 100%;
+            height: 50px;
+            padding: 0 16px;
+            border-radius: 999px;
+            background: linear-gradient(180deg, #ffffff, #f8fafc);
+            border: 1px solid #d8dee7;
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9),
+              0 4px 14px rgba(15, 23, 42, 0.04);
+            font-weight: 900;
+            font-size: 15px;
+            color: #0f172a;
+            cursor: pointer;
+            color-scheme: light;
+            text-align: center;
+          }
+
+          .monthSelectMobile:focus {
+            outline: none;
+            border-color: #b9c5d6;
+            box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.12),
+              inset 0 1px 0 rgba(255, 255, 255, 0.9),
+              0 4px 14px rgba(15, 23, 42, 0.05);
+          }
+
+          .monthSelectMobile option {
+            color: #111111;
+            background: #ffffff;
+          }
+
           .monthLink {
             display: inline-flex;
             align-items: center;
@@ -1950,6 +2020,13 @@ export default function MonthPage(props) {
             opacity: 0.7;
           }
 
+          th.stickyHead,
+          td.date.sticky {
+            width: 70px;
+            min-width: 70px;
+            max-width: 70px;
+          }
+
           input {
             border: 1px solid #e2e2e2;
             border-radius: 10px;
@@ -2134,27 +2211,24 @@ export default function MonthPage(props) {
           }
 
           td.date {
-            padding: 9px 10px;
+            padding: 6px 6px;
           }
 
           .dayCell {
-            display: inline-flex;
+            display: flex;
             align-items: center;
             justify-content: center;
-            gap: 6px;
-            width: 100%;
+            gap: 4px;
           }
 
           .dayNum {
-            font-weight: 950;
-            font-size: 16px;
-            line-height: 1;
+            font-weight: 900;
+            font-size: 14px;
           }
 
           .dayIcon {
-            opacity: 0.65;
-            font-size: 12px;
-            transform: translateY(-1px);
+            font-size: 10px;
+            opacity: 0.6;
           }
 
           .strong {
@@ -2348,6 +2422,23 @@ export default function MonthPage(props) {
 
             .dayNum {
               font-size: 15px;
+            }
+
+            .monthsBar {
+              padding: 14px;
+            }
+
+            .monthsBarHead {
+              margin-bottom: 10px;
+              font-size: 12px;
+            }
+
+            .monthSelectMobile {
+              display: block;
+            }
+
+            .monthNav {
+              display: none;
             }
 
             .monthMeta,
