@@ -161,6 +161,37 @@ const MONTHS_IT_FULL = [
   "Dicembre",
 ];
 
+const MONTHS_IT_SHORT = [
+  "gen",
+  "feb",
+  "mar",
+  "apr",
+  "mag",
+  "giu",
+  "lug",
+  "ago",
+  "set",
+  "ott",
+  "nov",
+  "dic",
+];
+
+function dayOfYearLabel(dayNumber, leap = false) {
+  const year = leap ? 2020 : 2021;
+  const d = new Date(year, 0, Number(dayNumber));
+  return `${d.getDate()} ${MONTHS_IT_SHORT[d.getMonth()]}`;
+}
+
+function dayOfYearSmartLabel(dayNumber, leap = false) {
+  const year = leap ? 2020 : 2021;
+  const d = new Date(year, 0, Number(dayNumber));
+  const day = d.getDate();
+  const month = MONTHS_IT_SHORT[d.getMonth()];
+
+  if (day === 1) return `1 ${month}`;
+  return String(day);
+}
+
 function monthFull(ym) {
   const mm = Number(String(ym).slice(5, 7));
   return MONTHS_IT_FULL[mm - 1] || String(ym).slice(5, 7);
@@ -327,6 +358,46 @@ function computeDistributionCurve(values, { binCount = 20, clampMin = null } = {
     xLabels: labels,
     smoothCounts: gaussianSmooth(counts, 2, 1.15),
   };
+}
+
+function computeGaussianCurve(values, { points = 100 } = {}) {
+  const vals = (values || []).map(n).filter(Number.isFinite);
+  if (vals.length < 2) return null;
+
+  const mean = avgFinite(vals);
+  const variance = vals.reduce((s, v) => s + Math.pow(v - mean, 2), 0) / vals.length;
+  const std = Math.sqrt(variance);
+
+  if (!Number.isFinite(mean) || !Number.isFinite(std) || std <= 0) return null;
+
+  const min = mean - 4 * std;
+  const max = mean + 4 * std;
+  const step = (max - min) / (points - 1);
+
+  const xLabels = [];
+  const density = [];
+
+  for (let i = 0; i < points; i += 1) {
+    const x = min + i * step;
+    const y = gaussianValue(x, mean, std);
+
+    xLabels.push(Number(x.toFixed(1)));
+    density.push(Number(y.toFixed(4)));
+  }
+
+  return {
+    xLabels,
+    density,
+    mean,
+    std,
+  };
+}
+
+function gaussianValue(x, mean, std) {
+  return (
+    (1 / (std * Math.sqrt(2 * Math.PI))) *
+    Math.exp(-0.5 * Math.pow((x - mean) / std, 2))
+  );
 }
 
 // -----------------------------------------------------
@@ -1083,20 +1154,110 @@ export default function ConfrontoPage({ dailyRows }) {
       rows: aggregateYearRows(daily, s.year),
     }));
 
-    if (param === "temp_mean_dist" || param === "rain_dist") {
+    if (param === "temp_mean_dist") {
       const curves = yearRows.map((s) => {
-        const values = param === "temp_mean_dist" ? s.rows.map((r) => r.tmean) : s.rows.map((r) => r.rain_total);
+        const values = s.rows.map((r) => r.tmean);
+        const dist = computeGaussianCurve(values, { points: 120 });
+        return { ...s, dist };
+      });
+
+      const validCurves = curves.filter((s) => s.dist);
+      if (!validCurves.length) {
+        return buildEmptyChart(baseChart, "Nessun dato disponibile per la distribuzione");
+      }
+
+      const allX = validCurves.flatMap((s) => s.dist.xLabels);
+      const minX = Math.floor(Math.min(...allX));
+      const maxX = Math.ceil(Math.max(...allX));
+      const points = 140;
+      const step = (maxX - minX) / (points - 1);
+
+      const xAxis = Array.from({ length: points }, (_, i) =>
+        Number((minX + i * step).toFixed(1))
+      );
+
+      return {
+        ...baseChart,
+        title: {
+          ...baseChart.title,
+          text: "Distribuzione temperature medie giornaliere",
+        },
+        xAxis: {
+          ...baseChart.xAxis,
+          data: xAxis,
+          axisLabel: {
+            rotate: 0,
+            margin: 14,
+            interval: "auto",
+            hideOverlap: true,
+            formatter: (v) => `${Number(v).toFixed(1)}`,
+          },
+          name: "Temperatura media giornaliera (°C)",
+          nameLocation: "middle",
+          nameGap: 34,
+        },
+        yAxis: {
+          type: "value",
+          name: "Densità di probabilità",
+          nameLocation: "middle",
+          nameRotate: 90,
+          nameGap: 58,
+          scale: true,
+          axisLabel: {
+            formatter: (v) => Number(v).toFixed(2),
+          },
+        },
+        tooltip: {
+          trigger: "axis",
+          order: "seriesAsc",
+          formatter: (params) =>
+            axisTooltipFormatter(
+              params,
+              validCurves.map((s) => ({
+                name: s.label,
+                formatter: (v) => `${Number(v).toFixed(4)}`,
+              }))
+            ),
+        },
+        series: validCurves.map((s) => ({
+          name: s.label,
+          type: "line",
+          data: xAxis.map((x) =>
+            Number(gaussianValue(Number(x), s.dist.mean, s.dist.std).toFixed(4))
+          ),
+          showSymbol: false,
+          smooth: true,
+          connectNulls: false,
+          lineStyle: {
+            width: 3,
+            color: s.color,
+          },
+          itemStyle: {
+            color: s.color,
+          },
+          emphasis: {
+            focus: "series",
+          },
+        })),
+      };
+    }
+
+    if (param === "rain_dist") {
+      const curves = yearRows.map((s) => {
+        const values = s.rows.map((r) => r.rain_total);
 
         const dist = computeDistributionCurve(values, {
-          binCount: param === "temp_mean_dist" ? 20 : 22,
-          clampMin: param === "rain_dist" ? 0 : null,
+          binCount: 22,
+          clampMin: 0,
         });
 
         return { ...s, dist };
       });
 
       const firstValid = curves.find((x) => x.dist);
-      if (!firstValid) return buildEmptyChart(baseChart, "Nessun dato disponibile per la distribuzione");
+      if (!firstValid) {
+        return buildEmptyChart(baseChart, "Nessun dato disponibile per la distribuzione");
+      }
 
       const xAxis = firstValid.dist.xLabels;
 
@@ -1104,13 +1265,18 @@ export default function ConfrontoPage({ dailyRows }) {
         ...baseChart,
         title: {
           ...baseChart.title,
-          text: param === "temp_mean_dist" ? "Distribuzione temperature medie giornaliere" : "Distribuzione precipitazioni giornaliere",
+          text: "Distribuzione precipitazioni giornaliere",
         },
         xAxis: {
           ...baseChart.xAxis,
           data: xAxis,
-          axisLabel: { rotate: 0, margin: 14 },
-          name: param === "temp_mean_dist" ? "°C" : "mm",
+          axisLabel: {
+            rotate: 0,
+            margin: 14,
+            interval: "auto",
+            hideOverlap: true,
+          },
+          name: "Precipitazione giornaliera (mm)",
           nameLocation: "middle",
           nameGap: 34,
         },
@@ -1142,14 +1308,23 @@ export default function ConfrontoPage({ dailyRows }) {
           showSymbol: false,
           smooth: true,
           connectNulls: false,
-          lineStyle: { width: 3, color: s.color },
-          itemStyle: { color: s.color },
+          lineStyle: {
+            width: 3,
+            color: s.color,
+          },
+          itemStyle: {
+            color: s.color,
+          },
         })),
       };
     }
 
     const maxDays = Math.max(...yearRows.map((s) => s.rows.length), 366, 365);
-    const xAxis = Array.from({ length: maxDays }, (_, i) => String(i + 1));
+    const hasLeapYear = maxDays >= 366;
+
+    const xAxis = Array.from({ length: maxDays }, (_, i) =>
+      dayOfYearSmartLabel(i + 1, hasLeapYear)
+    );
 
     function buildYearSeries(getValue) {
       return yearRows.map((s) => ({
@@ -1357,7 +1532,7 @@ export default function ConfrontoPage({ dailyRows }) {
     });
   }, [mode, param, daySelections, monthSelections, yearSelections, intradayData, daily]);
 
-  const summaryCols = summaries.length === 0 ? 1 : Math.min(summaries.length, 4);
+  const MAX_BIG_SELECTORS = 2;
 
   return (
     <SiteLayout
@@ -1410,76 +1585,134 @@ export default function ConfrontoPage({ dailyRows }) {
               </div>
 
               {daySelections.length > 0 && (
-                <div className="selectorsGrid">
-                  {daySelections.map((sel, index) => {
-                    const months = monthsByYear[sel.year] || [];
-                    const days = daysByYearMonth[`${sel.year}-${sel.month}`] || [];
+                <>
+                  <div className="selectorsGrid">
+                    {daySelections.slice(0, MAX_BIG_SELECTORS).map((sel, index) => {
+                      const months = monthsByYear[sel.year] || [];
+                      const days = daysByYearMonth[`${sel.year}-${sel.month}`] || [];
 
-                    return (
-                      <div className="selectorCard" key={`day-${index}`}>
-                        <div className="selectorHead">
-                          <div className="selectorTitle">Giorno {index + 1}</div>
-                          <button type="button" className="removeButton" onClick={() => removeDaySelection(index)}>
-                            Rimuovi
-                          </button>
+                      return (
+                        <div className="selectorCard" key={`day-big-${index}`}>
+                          <div className="selectorHead">
+                            <div className="selectorTitle">Giorno {index + 1}</div>
+                            <button type="button" className="removeButton" onClick={() => removeDaySelection(index)}>
+                              Rimuovi
+                            </button>
+                          </div>
+
+                          <div className="tripleGrid">
+                            <div>
+                              <div className="miniLabel">Anno</div>
+                              <div className="selectWrap">
+                                <select
+                                  className="selectNative"
+                                  value={sel.year}
+                                  onChange={(e) => updateDaySelection(index, { year: e.target.value })}
+                                >
+                                  {availableYears.map((y) => (
+                                    <option key={y} value={y}>
+                                      {y}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                            </div>
+
+                            <div>
+                              <div className="miniLabel">Mese</div>
+                              <div className="selectWrap">
+                                <select
+                                  className="selectNative"
+                                  value={sel.month}
+                                  onChange={(e) => updateDaySelection(index, { month: e.target.value })}
+                                >
+                                  {months.map((m) => (
+                                    <option key={m} value={m}>
+                                      {MONTHS_IT_FULL[Number(m) - 1]}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                            </div>
+
+                            <div>
+                              <div className="miniLabel">Giorno</div>
+                              <div className="selectWrap">
+                                <select
+                                  className="selectNative"
+                                  value={sel.day}
+                                  onChange={(e) => updateDaySelection(index, { day: e.target.value })}
+                                >
+                                  {days.map((d) => (
+                                    <option key={d} value={d}>
+                                      {Number(d)}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                            </div>
+                          </div>
                         </div>
+                      );
+                    })}
+                  </div>
 
-                        <div className="tripleGrid">
-                          <div>
-                            <div className="miniLabel">Anno</div>
-                            <div className="selectWrap">
-                              <select
-                                className="selectNative"
-                                value={sel.year}
-                                onChange={(e) => updateDaySelection(index, { year: e.target.value })}
-                              >
-                                {availableYears.map((y) => (
-                                  <option key={y} value={y}>
-                                    {y}
-                                  </option>
-                                ))}
-                              </select>
-                            </div>
-                          </div>
+                  {daySelections.length > MAX_BIG_SELECTORS && (
+                    <div className="compactList">
+                      {daySelections.slice(MAX_BIG_SELECTORS).map((sel, offset) => {
+                        const index = offset + MAX_BIG_SELECTORS;
+                        const months = monthsByYear[sel.year] || [];
+                        const days = daysByYearMonth[`${sel.year}-${sel.month}`] || [];
 
-                          <div>
-                            <div className="miniLabel">Mese</div>
-                            <div className="selectWrap">
-                              <select
-                                className="selectNative"
-                                value={sel.month}
-                                onChange={(e) => updateDaySelection(index, { month: e.target.value })}
-                              >
-                                {months.map((m) => (
-                                  <option key={m} value={m}>
-                                    {MONTHS_IT_FULL[Number(m) - 1]}
-                                  </option>
-                                ))}
-                              </select>
-                            </div>
-                          </div>
+                        return (
+                          <div className="compactRow" key={`day-compact-${index}`}>
+                            <div className="compactTitle">Giorno {index + 1}</div>
 
-                          <div>
-                            <div className="miniLabel">Giorno</div>
-                            <div className="selectWrap">
-                              <select
-                                className="selectNative"
-                                value={sel.day}
-                                onChange={(e) => updateDaySelection(index, { day: e.target.value })}
-                              >
-                                {days.map((d) => (
-                                  <option key={d} value={d}>
-                                    {Number(d)}
-                                  </option>
-                                ))}
-                              </select>
-                            </div>
+                            <select
+                              className="compactSelect"
+                              value={sel.year}
+                              onChange={(e) => updateDaySelection(index, { year: e.target.value })}
+                            >
+                              {availableYears.map((y) => (
+                                <option key={y} value={y}>
+                                  {y}
+                                </option>
+                              ))}
+                            </select>
+
+                            <select
+                              className="compactSelect"
+                              value={sel.month}
+                              onChange={(e) => updateDaySelection(index, { month: e.target.value })}
+                            >
+                              {months.map((m) => (
+                                <option key={m} value={m}>
+                                  {MONTHS_IT_FULL[Number(m) - 1]}
+                                </option>
+                              ))}
+                            </select>
+
+                            <select
+                              className="compactSelect"
+                              value={sel.day}
+                              onChange={(e) => updateDaySelection(index, { day: e.target.value })}
+                            >
+                              {days.map((d) => (
+                                <option key={d} value={d}>
+                                  {Number(d)}
+                                </option>
+                              ))}
+                            </select>
+
+                            <button type="button" className="compactRemove" onClick={() => removeDaySelection(index)}>
+                              ×
+                            </button>
                           </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </>
               )}
             </>
           )}
@@ -1493,58 +1726,103 @@ export default function ConfrontoPage({ dailyRows }) {
               </div>
 
               {monthSelections.length > 0 && (
-                <div className="selectorsGrid">
-                  {monthSelections.map((sel, index) => {
-                    const months = monthsByYear[sel.year] || [];
+                <>
+                  <div className="selectorsGrid">
+                    {monthSelections.slice(0, MAX_BIG_SELECTORS).map((sel, index) => {
+                      const months = monthsByYear[sel.year] || [];
 
-                    return (
-                      <div className="selectorCard" key={`month-${index}`}>
-                        <div className="selectorHead">
-                          <div className="selectorTitle">Mese {index + 1}</div>
-                          <button type="button" className="removeButton" onClick={() => removeMonthSelection(index)}>
-                            Rimuovi
-                          </button>
-                        </div>
-
-                        <div className="doubleGrid">
-                          <div>
-                            <div className="miniLabel">Mese</div>
-                            <div className="selectWrap">
-                              <select
-                                className="selectNative"
-                                value={sel.month}
-                                onChange={(e) => updateMonthSelection(index, { month: e.target.value })}
-                              >
-                                {months.map((m) => (
-                                  <option key={m} value={m}>
-                                    {MONTHS_IT_FULL[Number(m) - 1]}
-                                  </option>
-                                ))}
-                              </select>
-                            </div>
+                      return (
+                        <div className="selectorCard" key={`month-big-${index}`}>
+                          <div className="selectorHead">
+                            <div className="selectorTitle">Mese {index + 1}</div>
+                            <button type="button" className="removeButton" onClick={() => removeMonthSelection(index)}>
+                              Rimuovi
+                            </button>
                           </div>
 
-                          <div>
-                            <div className="miniLabel">Anno</div>
-                            <div className="selectWrap">
-                              <select
-                                className="selectNative"
-                                value={sel.year}
-                                onChange={(e) => updateMonthSelection(index, { year: e.target.value })}
-                              >
-                                {availableYears.map((y) => (
-                                  <option key={y} value={y}>
-                                    {y}
-                                  </option>
-                                ))}
-                              </select>
+                          <div className="doubleGrid">
+                            <div>
+                              <div className="miniLabel">Mese</div>
+                              <div className="selectWrap">
+                                <select
+                                  className="selectNative"
+                                  value={sel.month}
+                                  onChange={(e) => updateMonthSelection(index, { month: e.target.value })}
+                                >
+                                  {months.map((m) => (
+                                    <option key={m} value={m}>
+                                      {MONTHS_IT_FULL[Number(m) - 1]}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                            </div>
+
+                            <div>
+                              <div className="miniLabel">Anno</div>
+                              <div className="selectWrap">
+                                <select
+                                  className="selectNative"
+                                  value={sel.year}
+                                  onChange={(e) => updateMonthSelection(index, { year: e.target.value })}
+                                >
+                                  {availableYears.map((y) => (
+                                    <option key={y} value={y}>
+                                      {y}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
                             </div>
                           </div>
                         </div>
-                      </div>
-                    );
-                  })}
-                </div>
+                      );
+                    })}
+                  </div>
+
+                  {monthSelections.length > MAX_BIG_SELECTORS && (
+                    <div className="compactList">
+                      {monthSelections.slice(MAX_BIG_SELECTORS).map((sel, offset) => {
+                        const index = offset + MAX_BIG_SELECTORS;
+                        const months = monthsByYear[sel.year] || [];
+
+                        return (
+                          <div className="compactRow" key={`month-compact-${index}`}>
+                            <div className="compactTitle">Mese {index + 1}</div>
+
+                            <select
+                              className="compactSelect"
+                              value={sel.month}
+                              onChange={(e) => updateMonthSelection(index, { month: e.target.value })}
+                            >
+                              {months.map((m) => (
+                                <option key={m} value={m}>
+                                  {MONTHS_IT_FULL[Number(m) - 1]}
+                                </option>
+                              ))}
+                            </select>
+
+                            <select
+                              className="compactSelect"
+                              value={sel.year}
+                              onChange={(e) => updateMonthSelection(index, { year: e.target.value })}
+                            >
+                              {availableYears.map((y) => (
+                                <option key={y} value={y}>
+                                  {y}
+                                </option>
+                              ))}
+                            </select>
+
+                            <button type="button" className="compactRemove" onClick={() => removeMonthSelection(index)}>
+                              ×
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </>
               )}
             </>
           )}
@@ -1558,22 +1836,50 @@ export default function ConfrontoPage({ dailyRows }) {
               </div>
 
               {yearSelections.length > 0 && (
-                <div className="selectorsGrid">
-                  {yearSelections.map((sel, index) => (
-                    <div className="selectorCard" key={`year-${index}`}>
-                      <div className="selectorHead">
-                        <div className="selectorTitle">Anno {index + 1}</div>
-                        <button type="button" className="removeButton" onClick={() => removeYearSelection(index)}>
-                          Rimuovi
-                        </button>
-                      </div>
+                <>
+                  <div className="selectorsGrid">
+                    {yearSelections.slice(0, MAX_BIG_SELECTORS).map((sel, index) => (
+                      <div className="selectorCard" key={`year-big-${index}`}>
+                        <div className="selectorHead">
+                          <div className="selectorTitle">Anno {index + 1}</div>
+                          <button type="button" className="removeButton" onClick={() => removeYearSelection(index)}>
+                            Rimuovi
+                          </button>
+                        </div>
 
-                      <div className="singleGrid">
-                        <div>
-                          <div className="miniLabel">Anno</div>
-                          <div className="selectWrap">
+                        <div className="singleGrid">
+                          <div>
+                            <div className="miniLabel">Anno</div>
+                            <div className="selectWrap">
+                              <select
+                                className="selectNative"
+                                value={sel.year}
+                                onChange={(e) => updateYearSelection(index, { year: e.target.value })}
+                              >
+                                {availableYears.map((y) => (
+                                  <option key={y} value={y}>
+                                    {y}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {yearSelections.length > MAX_BIG_SELECTORS && (
+                    <div className="compactList">
+                      {yearSelections.slice(MAX_BIG_SELECTORS).map((sel, offset) => {
+                        const index = offset + MAX_BIG_SELECTORS;
+
+                        return (
+                          <div className="compactRow" key={`year-compact-${index}`}>
+                            <div className="compactTitle">Anno {index + 1}</div>
+
                             <select
-                              className="selectNative"
+                              className="compactSelect"
                               value={sel.year}
                               onChange={(e) => updateYearSelection(index, { year: e.target.value })}
                             >
@@ -1583,31 +1889,47 @@ export default function ConfrontoPage({ dailyRows }) {
                                 </option>
                               ))}
                             </select>
+
+                            <button type="button" className="compactRemove" onClick={() => removeYearSelection(index)}>
+                              ×
+                            </button>
                           </div>
-                        </div>
-                      </div>
+                        );
+                      })}
                     </div>
-                  ))}
-                </div>
+                  )}
+                </>
               )}
             </>
           )}
 
           {summaries.length > 0 && (
-            <div className={`summaryGrid cols-${summaryCols}`}>
-              {summaries.map((card, index) => (
-                <div className="summaryCard" key={`${card.title}-${index}`}>
-                  <div className="summaryTitle">{card.title}</div>
-                  <div className="summaryList">
-                    {card.items.map(([k, v]) => (
-                      <div className="summaryRow" key={`${card.title}-${k}`}>
-                        <span>{k}</span>
-                        <strong>{v}</strong>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ))}
+            <div className="summaryTableBox">
+              <table className="summaryTable">
+                <thead>
+                  <tr>
+                    <th>Elemento</th>
+                    <th>Dati sintetici</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {summaries.map((card, index) => (
+                    <tr key={`${card.title}-${index}`}>
+                      <td className="summaryTableTitle">{card.title}</td>
+                      <td>
+                        <div className="summaryInline">
+                          {card.items.map(([k, v]) => (
+                            <span className="summaryPill" key={`${card.title}-${k}`}>
+                              <span>{k}</span>
+                              <strong>{v}</strong>
+                            </span>
+                          ))}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
         </section>
@@ -1637,7 +1959,7 @@ export default function ConfrontoPage({ dailyRows }) {
             border-radius: 18px;
             background: rgba(255, 255, 255, 0.9);
             box-shadow: 0 1px 0 rgba(0, 0, 0, 0.02), 0 12px 34px rgba(0, 0, 0, 0.04);
-            padding: 22px;
+            padding: 18px;
           }
 
           .topControls {
@@ -1647,12 +1969,11 @@ export default function ConfrontoPage({ dailyRows }) {
           }
 
           .controlCard,
-          .selectorCard,
-          .summaryCard {
+          .selectorCard {
             border: 1px solid #ececec;
             border-radius: 16px;
             background: #fcfcfc;
-            padding: 14px 16px;
+            padding: 12px 14px;
           }
 
           .controlCardWide {
@@ -1666,7 +1987,7 @@ export default function ConfrontoPage({ dailyRows }) {
             text-transform: uppercase;
             color: #374151;
             font-weight: 900;
-            margin-bottom: 12px;
+            margin-bottom: 10px;
           }
 
           .pillRow {
@@ -1713,7 +2034,7 @@ export default function ConfrontoPage({ dailyRows }) {
             background: #f5f8ff;
             color: #0b1b3b;
             border-radius: 14px;
-            padding: 12px 16px;
+            padding: 11px 16px;
             font-size: 14px;
             font-weight: 900;
             cursor: pointer;
@@ -1730,8 +2051,8 @@ export default function ConfrontoPage({ dailyRows }) {
             display: flex;
             align-items: center;
             justify-content: space-between;
-            gap: 12px;
-            margin-bottom: 12px;
+            gap: 10px;
+            margin-bottom: 8px;
           }
 
           .selectorHead .selectorTitle {
@@ -1744,7 +2065,7 @@ export default function ConfrontoPage({ dailyRows }) {
             background: #fff7f7;
             color: #991b1b;
             border-radius: 12px;
-            padding: 8px 12px;
+            padding: 7px 11px;
             font-size: 12px;
             font-weight: 900;
             cursor: pointer;
@@ -1772,7 +2093,7 @@ export default function ConfrontoPage({ dailyRows }) {
             font-size: 11px;
             font-weight: 800;
             color: #6b7280;
-            margin-bottom: 8px;
+            margin-bottom: 6px;
             text-transform: uppercase;
             letter-spacing: 0.08em;
           }
@@ -1794,13 +2115,13 @@ export default function ConfrontoPage({ dailyRows }) {
             -webkit-appearance: none;
             -moz-appearance: none;
             width: 100%;
-            min-height: 46px;
-            padding: 0 16px;
+            min-height: 40px;
+            padding: 0 12px;
             border: 0;
             background: transparent;
             cursor: pointer;
             font-weight: 800;
-            font-size: 14px;
+            font-size: 13px;
             color: #111111;
             color-scheme: light;
           }
@@ -1815,62 +2136,160 @@ export default function ConfrontoPage({ dailyRows }) {
             background: #ffffff;
           }
 
-          .summaryGrid {
-            margin-top: 18px;
+          .compactList {
+            margin-top: 10px;
             display: grid;
-            gap: 12px;
+            gap: 8px;
+            max-height: 190px;
+            overflow-y: auto;
+            padding-right: 6px;
+            overscroll-behavior: contain;
           }
 
-          .summaryGrid.cols-1 {
-            grid-template-columns: 1fr;
-          }
-
-          .summaryGrid.cols-2 {
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-          }
-
-          .summaryGrid.cols-3 {
-            grid-template-columns: repeat(3, minmax(0, 1fr));
-          }
-
-          .summaryGrid.cols-4 {
-            grid-template-columns: repeat(4, minmax(0, 1fr));
-          }
-
-          .summaryTitle {
-            font-size: 18px;
-            line-height: 1.15;
-            font-weight: 950;
-            letter-spacing: -0.02em;
-            margin-bottom: 12px;
-            color: #0f172a;
-          }
-
-          .summaryList {
+          .compactRow {
             display: grid;
-            gap: 10px;
-          }
-
-          .summaryRow {
-            display: flex;
+            grid-template-columns: 110px repeat(3, minmax(90px, 1fr)) 34px;
             align-items: center;
-            justify-content: space-between;
-            gap: 12px;
-            padding-bottom: 10px;
-            border-bottom: 1px solid #ececec;
-            font-size: 14px;
-            color: #4b5563;
+            gap: 8px;
+            border: 1px solid #ececec;
+            border-radius: 14px;
+            background: #fcfcfc;
+            padding: 8px;
           }
 
-          .summaryRow:last-child {
-            border-bottom: 0;
-            padding-bottom: 0;
-          }
-
-          .summaryRow strong {
-            color: #0f172a;
+          .compactTitle {
+            color: #374151;
+            font-size: 12px;
             font-weight: 900;
-            text-align: right;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            white-space: nowrap;
+          }
+
+          .compactSelect {
+            appearance: none;
+            -webkit-appearance: none;
+            -moz-appearance: none;
+            width: 100%;
+            min-height: 34px;
+            border: 1px solid #e5e7eb;
+            border-radius: 11px;
+            background: linear-gradient(180deg, #ffffff, #f8fafc);
+            color: #111111;
+            font-size: 13px;
+            font-weight: 800;
+            padding: 0 10px;
+            cursor: pointer;
+            color-scheme: light;
+          }
+
+          .compactRemove {
+            appearance: none;
+            width: 34px;
+            height: 34px;
+            border: 1px solid #ead1d1;
+            background: #fff7f7;
+            color: #991b1b;
+            border-radius: 11px;
+            font-size: 18px;
+            font-weight: 900;
+            cursor: pointer;
+            line-height: 1;
+          }
+
+          .compactList::-webkit-scrollbar,
+          .summaryTableBox::-webkit-scrollbar {
+            width: 8px;
+          }
+
+          .compactList::-webkit-scrollbar-track,
+          .summaryTableBox::-webkit-scrollbar-track {
+            background: #f1f5f9;
+            border-radius: 999px;
+          }
+
+          .compactList::-webkit-scrollbar-thumb,
+          .summaryTableBox::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 999px;
+          }
+
+          .summaryTableBox {
+            margin-top: 14px;
+            max-height: 210px;
+            overflow-y: auto;
+            border: 1px solid #ececec;
+            border-radius: 16px;
+            background: #fcfcfc;
+          }
+
+          .summaryTable {
+            width: 100%;
+            border-collapse: collapse;
+            table-layout: fixed;
+          }
+
+          .summaryTable th {
+            position: sticky;
+            top: 0;
+            z-index: 1;
+            background: #f8fafc;
+            color: #374151;
+            font-size: 11px;
+            font-weight: 900;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            text-align: left;
+            padding: 10px 12px;
+            border-bottom: 1px solid #ececec;
+          }
+
+          .summaryTable th:first-child {
+            width: 240px;
+          }
+
+          .summaryTable td {
+            padding: 9px 12px;
+            border-bottom: 1px solid #ececec;
+            vertical-align: middle;
+          }
+
+          .summaryTable tr:last-child td {
+            border-bottom: 0;
+          }
+
+          .summaryTableTitle {
+            color: #0f172a;
+            font-size: 14px;
+            font-weight: 950;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+          }
+
+          .summaryInline {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+          }
+
+          .summaryPill {
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+            border: 1px solid #e5e7eb;
+            border-radius: 999px;
+            background: #ffffff;
+            padding: 6px 10px;
+            color: #4b5563;
+            font-size: 13px;
+            font-weight: 700;
+            white-space: nowrap;
+          }
+
+          .summaryPill strong {
+            color: #0f172a;
+            font-weight: 950;
           }
 
           .chartSection {
@@ -1889,19 +2308,13 @@ export default function ConfrontoPage({ dailyRows }) {
               grid-template-columns: 1fr;
             }
 
-            .summaryGrid.cols-4 {
-              grid-template-columns: repeat(2, minmax(0, 1fr));
+            .compactRow {
+              grid-template-columns: 100px repeat(3, minmax(80px, 1fr)) 34px;
             }
           }
 
-          @media (max-width: 1100px) {
-            .selectorsGrid,
-            .summaryGrid.cols-3,
-            .summaryGrid.cols-2 {
-              grid-template-columns: 1fr;
-            }
-
-            .summaryGrid.cols-4 {
+          @media (max-width: 900px) {
+            .selectorsGrid {
               grid-template-columns: 1fr;
             }
 
@@ -1909,12 +2322,35 @@ export default function ConfrontoPage({ dailyRows }) {
             .doubleGrid {
               grid-template-columns: 1fr;
             }
-          }
 
-          @media (max-width: 720px) {
-            .addButton,
-            .pill {
+            .compactRow {
+              grid-template-columns: 1fr;
+            }
+
+            .compactTitle {
+              margin-bottom: 2px;
+            }
+
+            .compactRemove {
               width: 100%;
+            }
+
+            .summaryTable {
+              table-layout: auto;
+            }
+
+            .summaryTable th:first-child {
+              width: 150px;
+            }
+
+            .summaryInline {
+              flex-direction: column;
+              align-items: stretch;
+            }
+
+            .summaryPill {
+              justify-content: space-between;
+              border-radius: 12px;
             }
           }
         `}</style>
@@ -2040,7 +2476,16 @@ function buildYearChart(baseChart, title, xAxis, yName, yearRows, formatter, ser
   return {
     ...baseChart,
     title: { ...baseChart.title, text: title },
-    xAxis: { ...baseChart.xAxis, data: xAxis, axisLabel: { rotate: 0, margin: 14, interval: 29 } },
+    xAxis: {
+      ...baseChart.xAxis,
+      data: xAxis,
+      axisLabel: {
+        rotate: 0,
+        margin: 14,
+        interval: "auto",
+        hideOverlap: true,
+      },
+    },
     yAxis: {
       type: "value",
       name: yName,

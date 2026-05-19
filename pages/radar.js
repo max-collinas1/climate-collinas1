@@ -50,7 +50,7 @@ export default function RadarPage() {
     >
       <section className="section">
         <div className="sectionHead">
-          <div>
+          <div className="sectionText">
             <h2>Radar in tempo reale</h2>
             <div className="hint">
               Radar Windy centrato sulla Sardegna per monitorare precipitazioni
@@ -82,7 +82,7 @@ export default function RadarPage() {
 
       <section className="section">
         <div className="sectionHead compact">
-          <div>
+          <div className="sectionText">
             <h2>Satellite e fulminazioni</h2>
             <div className="hint">
               Monitoraggio in tempo reale della copertura nuvolosa e
@@ -143,13 +143,21 @@ export default function RadarPage() {
 
         .sectionHead {
           display: flex;
-          align-items: flex-end;
-          justify-content: space-between;
+          align-items: center;
+          justify-content: center;
           margin: 16px 0 10px;
+          width: 100%;
+          text-align: center;
         }
 
         .sectionHead.compact {
-          align-items: flex-start;
+          align-items: center;
+          justify-content: center;
+        }
+
+        .sectionText {
+          width: 100%;
+          text-align: center;
         }
 
         h2 {
@@ -157,12 +165,16 @@ export default function RadarPage() {
           font-size: 22px;
           font-weight: 950;
           color: #0f172a;
+          text-align: center;
         }
 
         .hint {
           margin-top: 4px;
           font-size: 12px;
           color: rgba(15, 23, 42, 0.66);
+          text-align: center;
+          margin-left: auto;
+          margin-right: auto;
         }
 
         .grid {

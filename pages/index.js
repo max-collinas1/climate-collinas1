@@ -390,7 +390,9 @@ export async function getStaticProps() {
         .filter((x) => Number.isFinite(x) && x > 1).length,
       gustMax: Number.isFinite(gustMax) ? gustMax : null,
       rainHasOverride: overrideMonths.length > 0,
-      rainOverrideMonthsText: overrideMonths.map((m) => monthFull(m.ym)).join(", "),
+      rainOverrideMonthsText: overrideMonths
+        .map((m) => monthFull(m.ym))
+        .join(", "),
     };
   });
 
@@ -485,7 +487,7 @@ export default function Home({
 
       <section className="section">
         <div className="sectionHead">
-          <div>
+          <div className="sectionText">
             <h2>Seleziona un anno</h2>
             <div className="hint">
               Clicca una scheda per entrare nell’anno. Gli anni sono ordinati dal
@@ -537,11 +539,23 @@ export default function Home({
         }
 
         .sectionHead {
+          position: relative;
+          min-height: 74px;
           display: flex;
-          align-items: flex-end;
-          justify-content: space-between;
+          align-items: center;
+          justify-content: flex-end;
           gap: 12px;
           margin: 16px 0 10px;
+        }
+
+        .sectionText {
+          position: absolute;
+          left: 50%;
+          top: 50%;
+          width: min(760px, calc(100% - 360px));
+          transform: translate(-50%, -50%);
+          text-align: center;
+          pointer-events: none;
         }
 
         h2 {
@@ -550,6 +564,7 @@ export default function Home({
           font-weight: 950;
           letter-spacing: -0.01em;
           color: #0f172a;
+          text-align: center;
         }
 
         .hint {
@@ -557,9 +572,14 @@ export default function Home({
           font-size: 12px;
           color: rgba(15, 23, 42, 0.66);
           max-width: 720px;
+          margin-left: auto;
+          margin-right: auto;
+          text-align: center;
         }
 
         .tools {
+          position: relative;
+          z-index: 2;
           display: flex;
           align-items: center;
           gap: 10px;
@@ -618,12 +638,26 @@ export default function Home({
         }
 
         @media (max-width: 1080px) {
-          .grid {
-            grid-template-columns: 1fr;
+          .sectionHead {
+            min-height: 0;
+            flex-direction: column;
+            align-items: stretch;
+            justify-content: flex-start;
+          }
+
+          .sectionText {
+            position: static;
+            width: 100%;
+            transform: none;
+            pointer-events: auto;
           }
 
           .tools {
-            justify-content: flex-start;
+            justify-content: center;
+          }
+
+          .grid {
+            grid-template-columns: 1fr;
           }
         }
       `}</style>
@@ -903,40 +937,6 @@ function YearCard({ y, norm }) {
           color: #0f172a;
           white-space: nowrap;
         }
-
-        .actions {
-          margin-top: 12px;
-          border-top: 1px dashed #e7e7e7;
-          padding-top: 12px;
-          display: flex;
-          justify-content: flex-start;
-          align-items: center;
-          gap: 10px;
-        }
-
-        .btn {
-          text-decoration: none;
-          color: #0f172a;
-          background: #fff;
-          border: 1px solid #e5e7eb;
-          padding: 10px 12px;
-          border-radius: 16px;
-          font-weight: 950;
-          font-size: 13px;
-          transition:
-            transform 140ms ease,
-            background 140ms ease,
-            border-color 140ms ease;
-          display: inline-flex;
-          align-items: center;
-          gap: 8px;
-        }
-
-        .btn:hover {
-          transform: translateY(-1px);
-          background: #f8fafc;
-          border-color: #d7dde5;
-        }
       `}</style>
     </article>
   );
@@ -950,10 +950,10 @@ function WeekChart({
 }) {
   const GROUPS = useMemo(
     () => [
-      { key: "temp", label: "Temperatura + Dew point" },
-      { key: "rain", label: "Precipitazioni (oraria + cumulata)" },
+      { key: "temp", label: "Temperatura + Punto di rugiada" },
+      { key: "rain", label: "Precipitazioni" },
       { key: "rh", label: "Umidità" },
-      { key: "wind", label: "Vento (medio + raffiche + direzione)" },
+      { key: "wind", label: "Vento" },
       { key: "press", label: "Pressione" },
       { key: "uv", label: "UV + Radiazione" },
     ],
@@ -1091,7 +1091,10 @@ function WeekChart({
 
         for (const dISO of dates) {
           const hourTotals = dailyHourMap.get(dISO) || new Map();
-          const rawTotal = Array.from(hourTotals.values()).reduce((a, b) => a + b, 0);
+          const rawTotal = Array.from(hourTotals.values()).reduce(
+            (a, b) => a + b,
+            0
+          );
           const ovrTotal = Number.isFinite(n(weekDailyRain?.[dISO]))
             ? Number(weekDailyRain[dISO])
             : null;
@@ -1218,13 +1221,16 @@ function WeekChart({
       },
     };
 
-    const gridNoLegend = { left: 70, right: 32, top: 55, bottom: 100 };
-    const gridWithLegend = { left: 70, right: 70, top: 85, bottom: 100 };
+    const gridNoLegend = { left: 70, right: 32, top: 82, bottom: 100 };
+    const gridWithLegend = { left: 70, right: 70, top: 105, bottom: 100 };
 
     const toolboxZoom = {
-      feature: { dataZoom: { yAxisIndex: "none" }, restore: {} },
-      right: 10,
-      top: 8,
+      feature: {
+        dataZoom: { yAxisIndex: "none" },
+        restore: {},
+      },
+      right: 12,
+      top: 42,
     };
 
     const xAxis = {
@@ -1548,17 +1554,17 @@ function WeekChart({
   }, [data, groupKey]);
 
   return (
-    <div className="weekCard" aria-label="Grafico ultimi 7 giorni (orario)">
+    <div className="weekCard" aria-label="Grafico ultima settimana disponibile">
       <div className="weekHead">
-        <div>
-          <div className="weekTitle">Ultimi 7 giorni disponibili</div>
+        <div className="weekText">
+          <div className="weekTitle">Ultima settimana disponibile</div>
           <div className="weekSub">
             {weekLabel}. Valori <b>orari</b> aggregati dai dati intraday.
           </div>
         </div>
 
         <div className="menu">
-          <span className="menuLabel">Parametro</span>
+          <span className="menuLabel">Seleziona parametro</span>
           <select
             className="select"
             value={groupKey}
@@ -1596,46 +1602,69 @@ function WeekChart({
         }
 
         .weekHead {
-          padding: 14px 14px 10px;
+          position: relative;
+          min-height: 104px;
+          padding: 18px;
           display: flex;
-          justify-content: space-between;
-          align-items: flex-start;
-          gap: 12px;
+          align-items: center;
+          justify-content: flex-end;
+          gap: 14px;
           border-bottom: 1px solid #f0f0f0;
         }
 
+        .weekText {
+          position: absolute;
+          left: 50%;
+          top: 50%;
+          width: min(760px, calc(100% - 390px));
+          transform: translate(-50%, -50%);
+          text-align: center;
+          pointer-events: none;
+        }
+
         .weekTitle {
-          font-size: 14px;
+          font-size: 24px;
           font-weight: 950;
+          letter-spacing: -0.02em;
+          line-height: 1.1;
           color: #0f172a;
+          text-align: center;
         }
 
         .weekSub {
-          margin-top: 3px;
-          font-size: 11px;
+          margin-top: 6px;
+          font-size: 12px;
           color: rgba(15, 23, 42, 0.64);
           max-width: 760px;
+          margin-left: auto;
+          margin-right: auto;
+          text-align: center;
         }
 
         .menu {
+          position: relative;
+          z-index: 2;
+          width: 320px;
           display: grid;
           gap: 6px;
           justify-items: end;
         }
 
         .menuLabel {
-          font-size: 11px;
+          font-size: 12px;
           font-weight: 950;
           color: rgba(15, 23, 42, 0.7);
+          text-align: right;
         }
 
         .select {
+          width: 100%;
           border: 1px solid #e7e7e7;
           background: #fff;
           border-radius: 14px;
-          padding: 9px 10px;
-          font-size: 12px;
-          font-weight: 900;
+          padding: 12px 14px;
+          font-size: 13px;
+          font-weight: 950;
           color: #0f172a;
           outline: none;
         }
@@ -1653,12 +1682,26 @@ function WeekChart({
 
         @media (max-width: 1080px) {
           .weekHead {
+            min-height: 0;
             flex-direction: column;
             align-items: stretch;
+            justify-content: flex-start;
+          }
+
+          .weekText {
+            position: static;
+            width: 100%;
+            transform: none;
+            pointer-events: auto;
           }
 
           .menu {
-            justify-items: start;
+            width: 100%;
+            justify-items: stretch;
+          }
+
+          .menuLabel {
+            text-align: center;
           }
 
           .select {
