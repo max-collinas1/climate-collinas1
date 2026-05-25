@@ -839,6 +839,23 @@ export default function RecordsPage({ records }) {
       <div className="wrap">
         <SiteHeader kicker="RECORD" title="Record" subtitle="" />
 
+        <section className="pageDescription" aria-label="Descrizione pagina record">
+          <div className="descriptionCard">
+            <p>
+              Questa pagina raccoglie i principali record meteorologici
+              registrati nell’archivio della stazione. Puoi consultare le
+              classifiche giornaliere, mensili e annuali, filtrando i dati per
+              anno, mese e parametro: temperature, precipitazioni, vento,
+              pressione, umidità e radiazione. Ogni tabella mostra i valori più
+              significativi disponibili e permette di aprire direttamente il
+              dettaglio del giorno, del mese o dell’anno corrispondente. Per le
+              precipitazioni mensili e annuali, quando presenti, vengono
+              mantenuti in evidenza anche i valori corretti o integrati con dato
+              ARPAS.
+            </p>
+          </div>
+        </section>
+
         <header className="hero">
           <div className="heroTop">
             <div className="heroMeta">
@@ -1006,6 +1023,35 @@ const baseCss = `
     margin: 0 auto;
     padding: 18px 10px 50px;
     background: #fff;
+  }
+
+  .pageDescription {
+    width: 100%;
+    margin: 14px 0 12px;
+  }
+
+  .descriptionCard {
+    width: 100%;
+    box-sizing: border-box;
+    margin: 0 auto;
+    padding: 18px 24px;
+    border: 1px solid #dfe5ec;
+    border-radius: 18px;
+    background: rgba(248, 250, 252, 0.92);
+    box-shadow: 0 10px 28px rgba(15, 23, 42, 0.05);
+  }
+
+  .descriptionCard p {
+    margin: 0;
+    font-size: 14px;
+    line-height: 1.75;
+    font-weight: 800;
+    color: #334155;
+    text-align: justify;
+    text-align-last: left;
+    hyphens: auto;
+    -webkit-hyphens: auto;
+    overflow-wrap: break-word;
   }
 
   .hero {
@@ -1434,6 +1480,23 @@ const baseCss = `
   }
 
   @media (max-width: 640px) {
+    .pageDescription {
+      margin: 12px 0 10px;
+    }
+
+    .descriptionCard {
+      padding: 16px 18px;
+      border-radius: 18px;
+    }
+
+    .descriptionCard p {
+      font-size: 14px;
+      line-height: 1.75;
+      font-weight: 800;
+      text-align: justify;
+      text-align-last: left;
+    }
+
     .grid {
       grid-template-columns: 1fr;
     }

@@ -48,6 +48,22 @@ export default function RadarPage() {
         showPeriod: false,
       }}
     >
+      <section className="pageDescription">
+        <div className="descriptionCard">
+          <p>
+            Questa pagina permette di seguire in tempo reale l’evoluzione delle
+            precipitazioni, della copertura nuvolosa e dell’attività elettrica
+            sulla Sardegna e sull’Italia. Il radar Windy, basato sui dati della
+            Protezione Civile, consente di monitorare piogge e nuclei
+            temporaleschi in atto; è possibile andare più nel dettaglio
+            aumentando lo zoom sulla zona di interesse. Anche la mappa delle
+            fulminazioni può essere esplorata nello stesso modo, così da seguire
+            con maggiore precisione la distribuzione dei fulmini e l’evoluzione
+            dei temporali.
+          </p>
+        </div>
+      </section>
+
       <section className="section">
         <div className="sectionHead">
           <div className="sectionText">
@@ -137,6 +153,36 @@ export default function RadarPage() {
       </section>
 
       <style jsx>{`
+        .pageDescription {
+          width: 100%;
+          margin: 20px auto 4px;
+        }
+
+        .descriptionCard {
+          width: 100%;
+          max-width: none;
+          box-sizing: border-box;
+          margin: 0 auto;
+          padding: 18px 20px;
+          border: 1px solid #dfe5ec;
+          border-radius: 18px;
+          background: rgba(248, 250, 252, 0.92);
+          box-shadow: 0 10px 28px rgba(15, 23, 42, 0.05);
+        }
+
+        .descriptionCard p {
+          margin: 0;
+          font-size: 14px;
+          line-height: 1.75;
+          font-weight: 800;
+          color: #334155;
+          text-align: justify;
+          text-align-last: left;
+          hyphens: auto;
+          -webkit-hyphens: auto;
+          overflow-wrap: break-word;
+        }
+
         .section {
           margin: 18px auto 0;
         }
@@ -248,6 +294,29 @@ export default function RadarPage() {
         }
 
         @media (max-width: 768px) {
+          .pageDescription {
+            width: 100%;
+            margin-top: 16px;
+          }
+
+          .descriptionCard {
+            width: 100%;
+            max-width: none;
+            padding: 16px 18px;
+            border-radius: 18px;
+          }
+
+          .descriptionCard p {
+            font-size: 14px;
+            line-height: 1.75;
+            font-weight: 800;
+            text-align: justify;
+            text-align-last: left;
+            hyphens: auto;
+            -webkit-hyphens: auto;
+            overflow-wrap: break-word;
+          }
+
           .radarFrame {
             height: 560px;
           }

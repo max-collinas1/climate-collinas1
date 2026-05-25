@@ -177,7 +177,7 @@ export default function GraficiPrevisionePage() {
         <title>Grafici di previsione | Meteo Collinas</title>
         <meta
           name="description"
-          content='Grafici di previsione ensemble di Wetterzentrale per Collinas con selezione di modello, parametro e orario di corsa.'
+          content="Grafici di previsione ensemble di Wetterzentrale per Collinas con selezione di modello, parametro e orario di corsa."
         />
       </Head>
 
@@ -188,6 +188,27 @@ export default function GraficiPrevisionePage() {
       />
 
       <main className="forecastPage">
+        <section
+          className="pageDescription"
+          aria-label="Descrizione grafici di previsione"
+        >
+          <div className="descriptionCard">
+            <p>
+              Questa pagina permette di consultare i grafici ensemble di
+              previsione per Collinas, utili per valutare non solo la tendenza
+              prevista, ma anche il grado di incertezza tra i diversi scenari
+              modellistici. Puoi scegliere il modello di previsione, il
+              parametro da visualizzare e l’orario di corsa disponibile. Il
+              grafico si aggiorna automaticamente in base alla combinazione
+              selezionata e mostra l’andamento previsto di temperatura,
+              precipitazioni, neve, punto di rugiada o vento. Le linee
+              ravvicinate indicano una previsione più stabile e concorde, mentre
+              una maggiore apertura tra gli scenari segnala un aumento
+              dell’incertezza previsionale.
+            </p>
+          </div>
+        </section>
+
         <section className="selectorsBox">
           <div className="selectorGroup">
             <div className="selectorLabel">Seleziona modello</div>
@@ -337,6 +358,35 @@ export default function GraficiPrevisionePage() {
           max-width: 1280px;
           margin: 0 auto;
           padding: 22px 14px 40px;
+        }
+
+        .pageDescription {
+          width: 100%;
+          margin: 0 0 18px;
+        }
+
+        .descriptionCard {
+          width: 100%;
+          box-sizing: border-box;
+          margin: 0 auto;
+          padding: 18px 24px;
+          border: 1px solid #dfe5ec;
+          border-radius: 18px;
+          background: rgba(248, 250, 252, 0.92);
+          box-shadow: 0 10px 28px rgba(15, 23, 42, 0.05);
+        }
+
+        .descriptionCard p {
+          margin: 0;
+          font-size: 14px;
+          line-height: 1.75;
+          font-weight: 800;
+          color: #334155;
+          text-align: justify;
+          text-align-last: left;
+          hyphens: auto;
+          -webkit-hyphens: auto;
+          overflow-wrap: break-word;
         }
 
         .selectorsBox,
@@ -564,6 +614,23 @@ export default function GraficiPrevisionePage() {
         @media (max-width: 640px) {
           .forecastPage {
             padding: 16px 10px 32px;
+          }
+
+          .pageDescription {
+            margin: 0 0 16px;
+          }
+
+          .descriptionCard {
+            padding: 16px 18px;
+            border-radius: 18px;
+          }
+
+          .descriptionCard p {
+            font-size: 14px;
+            line-height: 1.75;
+            font-weight: 800;
+            text-align: justify;
+            text-align-last: left;
           }
 
           .viewerHeader h2,

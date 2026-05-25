@@ -437,6 +437,40 @@ function axisTooltipFormatter(params, specs) {
   return lines.join("<br/>");
 }
 
+function YearArrow({ href, direction, label, title, disabled = false }) {
+  const d =
+    direction === "prev"
+      ? "M21 6.5L9.5 16L21 25.5"
+      : "M11 6.5L22.5 16L11 25.5";
+
+  const content = (
+    <svg className="yearArrowSvg" viewBox="0 0 32 32" aria-hidden="true">
+      <path
+        d={d}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+
+  if (disabled || !href) {
+    return (
+      <span className="yearArrowButton disabled" aria-hidden="true">
+        {content}
+      </span>
+    );
+  }
+
+  return (
+    <Link href={href} className="yearArrowButton" aria-label={label} title={title}>
+      {content}
+    </Link>
+  );
+}
+
 export default function YearOverviewPage(props) {
   const router = useRouter();
 
@@ -1406,9 +1440,6 @@ export default function YearOverviewPage(props) {
     ],
   };
 
-  const LARGE_CHART_HEIGHT = 390;
-  const NORMAL_CHART_HEIGHT = 370;
-
   function renderRecordLink(entry, type) {
     if (!entry) return "—";
 
@@ -1438,93 +1469,28 @@ export default function YearOverviewPage(props) {
           <div className="yearTopRow">
             <div className="yearBlock">
               <div className="yearAndNav">
-                <div className="titleActions">
-                  {prevYear ? (
-                    <Link
-                      href={`/anni/${prevYear}`}
-                      className="arrowCircle"
-                      aria-label="Anno precedente"
-                      title="Precedente"
-                    >
-                      <svg
-                        viewBox="0 0 32 32"
-                        aria-hidden="true"
-                        className="arrowSvg"
-                      >
-                        <path
-                          d="M19 9.5L12.5 16L19 22.5"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2.4"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                      </svg>
-                    </Link>
-                  ) : (
-                    <span className="arrowCircle disabled" aria-hidden="true">
-                      <svg
-                        viewBox="0 0 32 32"
-                        aria-hidden="true"
-                        className="arrowSvg"
-                      >
-                        <path
-                          d="M19 9.5L12.5 16L19 22.5"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2.4"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                      </svg>
-                    </span>
-                  )}
-
-                  {nextYear ? (
-                    <Link
-                      href={`/anni/${nextYear}`}
-                      className="arrowCircle"
-                      aria-label="Anno successivo"
-                      title="Successivo"
-                    >
-                      <svg
-                        viewBox="0 0 32 32"
-                        aria-hidden="true"
-                        className="arrowSvg"
-                      >
-                        <path
-                          d="M13 9.5L19.5 16L13 22.5"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2.4"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                      </svg>
-                    </Link>
-                  ) : (
-                    <span className="arrowCircle disabled" aria-hidden="true">
-                      <svg
-                        viewBox="0 0 32 32"
-                        aria-hidden="true"
-                        className="arrowSvg"
-                      >
-                        <path
-                          d="M13 9.5L19.5 16L13 22.5"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2.4"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                      </svg>
-                    </span>
-                  )}
-                </div>
-
                 <div className="titleMain">
                   <div className="kicker">Anno</div>
-                  <h1 className="year">{year}</h1>
+
+                  <div className="yearLine">
+                    <YearArrow
+                      href={prevYear ? `/anni/${prevYear}` : ""}
+                      direction="prev"
+                      label="Anno precedente"
+                      title="Precedente"
+                      disabled={!prevYear}
+                    />
+
+                    <h1 className="year">{year}</h1>
+
+                    <YearArrow
+                      href={nextYear ? `/anni/${nextYear}` : ""}
+                      direction="next"
+                      label="Anno successivo"
+                      title="Successivo"
+                      disabled={!nextYear}
+                    />
+                  </div>
                 </div>
 
                 <div className="inlineCompareWrap">
@@ -1553,6 +1519,19 @@ export default function YearOverviewPage(props) {
               </div>
             </div>
           </div>
+
+          <section className="pageDescription" aria-label="Descrizione pagina annuale">
+            <div className="descriptionCard">
+              <p>
+                Questa pagina riassume l’andamento meteorologico dell’anno
+                selezionato, mostrando sintesi annuale, riepilogo mensile,
+                grafici e tabella completa dei principali parametri osservati.
+                Puoi cambiare anno con le frecce o dal menu dedicato, aprire il
+                dettaglio dei singoli mesi e consultare temperature,
+                precipitazioni, umidità, vento, pressione, UV e radiazione.
+              </p>
+            </div>
+          </section>
 
           <section className="monthsBar" aria-label="Seleziona mese">
             <div className="monthsBarHead">Seleziona mese</div>
@@ -2158,24 +2137,11 @@ export default function YearOverviewPage(props) {
 
           .yearAndNav {
             position: relative;
-            min-height: 112px;
+            min-height: 132px;
             display: flex;
             align-items: center;
             justify-content: center;
             width: 100%;
-          }
-
-          .titleActions {
-            position: absolute;
-            left: 0;
-            top: 50%;
-            transform: translateY(-50%);
-            z-index: 2;
-            display: inline-flex !important;
-            align-items: center !important;
-            justify-content: flex-start !important;
-            gap: 12px !important;
-            flex: 0 0 auto;
           }
 
           .titleMain {
@@ -2199,6 +2165,14 @@ export default function YearOverviewPage(props) {
             text-align: center;
           }
 
+          .yearLine {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 18px;
+            width: max-content;
+          }
+
           .year {
             margin: 0;
             font-size: 68px;
@@ -2207,47 +2181,46 @@ export default function YearOverviewPage(props) {
             text-align: center;
           }
 
-          .arrowCircle {
+          :global(.yearArrowButton) {
             display: inline-flex !important;
             align-items: center !important;
             justify-content: center !important;
-            width: 62px !important;
-            height: 62px !important;
-            min-width: 62px !important;
-            min-height: 62px !important;
+            width: 58px !important;
+            height: 58px !important;
+            min-width: 58px !important;
+            min-height: 58px !important;
             border-radius: 999px !important;
-            border: 2.2px solid #1f1f1f !important;
-            background: #ffffff !important;
-            color: #1f1f1f !important;
+            color: #111827 !important;
             text-decoration: none !important;
-            box-sizing: border-box !important;
+            user-select: none !important;
+            flex: 0 0 auto !important;
+            opacity: 1 !important;
+            visibility: visible !important;
             transition:
-              transform 0.15s ease,
-              background 0.15s ease,
-              box-shadow 0.15s ease;
+              background 120ms ease,
+              transform 120ms ease,
+              opacity 120ms ease;
           }
 
-          .arrowCircle:hover {
-            background: #fafafa !important;
+          :global(.yearArrowButton:hover) {
+            background: rgba(15, 23, 42, 0.06) !important;
             transform: translateY(-1px);
-            box-shadow: 0 10px 18px rgba(0, 0, 0, 0.06);
           }
 
-          .arrowCircle:active {
-            transform: scale(0.98);
+          :global(.yearArrowButton.disabled) {
+            opacity: 0.34 !important;
+            pointer-events: none !important;
           }
 
-          .arrowCircle.disabled {
-            opacity: 0.3;
-            pointer-events: none;
-          }
-
-          .arrowSvg {
-            width: 26px !important;
-            height: 26px !important;
+          :global(.yearArrowSvg) {
+            width: 40px !important;
+            height: 40px !important;
+            min-width: 40px !important;
+            min-height: 40px !important;
             display: block !important;
-            color: #1f1f1f !important;
-            flex: 0 0 auto;
+            overflow: visible !important;
+            color: #111827 !important;
+            stroke: currentColor !important;
           }
 
           .inlineCompareWrap {
@@ -2307,6 +2280,35 @@ export default function YearOverviewPage(props) {
           .compareSelectMini optgroup {
             color: #111111;
             background: #ffffff;
+          }
+
+          .pageDescription {
+            width: 100%;
+            margin: 18px 0 0;
+          }
+
+          .descriptionCard {
+            width: 100%;
+            box-sizing: border-box;
+            margin: 0 auto;
+            padding: 16px 20px;
+            border: 1px solid #dfe5ec;
+            border-radius: 18px;
+            background: rgba(248, 250, 252, 0.92);
+            box-shadow: 0 10px 28px rgba(15, 23, 42, 0.05);
+          }
+
+          .descriptionCard p {
+            margin: 0;
+            font-size: 14px;
+            line-height: 1.75;
+            font-weight: 800;
+            color: #334155;
+            text-align: justify;
+            text-align-last: left;
+            hyphens: none;
+            -webkit-hyphens: none;
+            overflow-wrap: break-word;
           }
 
           .monthsBar {
@@ -2985,10 +2987,9 @@ export default function YearOverviewPage(props) {
             .yearAndNav {
               min-height: 0;
               display: grid;
-              grid-template-columns: auto auto;
+              grid-template-columns: 1fr;
               justify-content: center;
-              align-items: end;
-              column-gap: 14px;
+              align-items: center;
               row-gap: 18px;
             }
 
@@ -2996,43 +2997,34 @@ export default function YearOverviewPage(props) {
               position: static;
               transform: none;
               width: auto;
-              order: initial;
               grid-column: 1;
               grid-row: 1;
-            }
-
-            .titleActions {
-              position: static;
-              transform: none;
-              justify-content: flex-start !important;
-              order: initial;
-              grid-column: 2;
-              grid-row: 1;
-              align-self: end;
-              margin-bottom: 8px;
-              gap: 8px !important;
             }
 
             .inlineCompareWrap {
               position: static;
               transform: none;
               justify-content: center;
-              order: initial;
-              grid-column: 1 / -1;
+              grid-column: 1;
               grid-row: 2;
             }
 
-            .arrowCircle {
-              width: 42px !important;
-              height: 42px !important;
-              min-width: 42px !important;
-              min-height: 42px !important;
-              border-width: 1.8px !important;
+            .yearLine {
+              gap: 14px;
             }
 
-            .arrowSvg {
-              width: 18px !important;
-              height: 18px !important;
+            :global(.yearArrowButton) {
+              width: 52px !important;
+              height: 52px !important;
+              min-width: 52px !important;
+              min-height: 52px !important;
+            }
+
+            :global(.yearArrowSvg) {
+              width: 36px !important;
+              height: 36px !important;
+              min-width: 36px !important;
+              min-height: 36px !important;
             }
           }
 
@@ -3087,33 +3079,48 @@ export default function YearOverviewPage(props) {
             }
 
             .yearAndNav {
-              column-gap: 10px;
               row-gap: 16px;
+              justify-content: center;
+              align-items: center;
+            }
+
+            .yearLine {
+              gap: 8px;
             }
 
             .year {
               font-size: 52px;
             }
 
-            .titleActions {
-              position: static;
-              transform: none;
-              justify-content: flex-start !important;
-              gap: 6px !important;
-              margin-bottom: 7px;
+            :global(.yearArrowButton) {
+              width: 40px !important;
+              height: 44px !important;
+              min-width: 40px !important;
+              min-height: 44px !important;
             }
 
-            .arrowCircle {
-              width: 34px !important;
-              height: 34px !important;
-              min-width: 34px !important;
-              min-height: 34px !important;
-              border-width: 1.5px !important;
+            :global(.yearArrowSvg) {
+              width: 30px !important;
+              height: 30px !important;
+              min-width: 30px !important;
+              min-height: 30px !important;
             }
 
-            .arrowSvg {
-              width: 15px !important;
-              height: 15px !important;
+            .pageDescription {
+              margin-top: 16px;
+            }
+
+            .descriptionCard {
+              padding: 14px 16px;
+              border-radius: 18px;
+            }
+
+            .descriptionCard p {
+              font-size: 14px;
+              line-height: 1.75;
+              font-weight: 800;
+              text-align: justify;
+              text-align-last: left;
             }
 
             .monthsBar {

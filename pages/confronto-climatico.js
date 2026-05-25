@@ -37,29 +37,6 @@ function n(x) {
   return Number.isFinite(v) ? v : NaN;
 }
 
-function fmt(x, d = 1) {
-  const v = n(x);
-  return Number.isFinite(v) ? v.toFixed(d) : "—";
-}
-
-function fmtInt(x) {
-  const v = n(x);
-  return Number.isFinite(v) ? String(Math.round(v)) : "—";
-}
-
-function sumFinite(arr) {
-  let s = 0;
-  let ok = false;
-  for (const x of arr) {
-    const v = n(x);
-    if (Number.isFinite(v)) {
-      s += v;
-      ok = true;
-    }
-  }
-  return ok ? s : NaN;
-}
-
 function avgFinite(arr) {
   let s = 0;
   let c = 0;
@@ -71,32 +48,6 @@ function avgFinite(arr) {
     }
   }
   return c ? s / c : NaN;
-}
-
-function minFinite(arr) {
-  let m = Infinity;
-  let ok = false;
-  for (const x of arr) {
-    const v = n(x);
-    if (Number.isFinite(v)) {
-      m = Math.min(m, v);
-      ok = true;
-    }
-  }
-  return ok ? m : NaN;
-}
-
-function maxFinite(arr) {
-  let m = -Infinity;
-  let ok = false;
-  for (const x of arr) {
-    const v = n(x);
-    if (Number.isFinite(v)) {
-      m = Math.max(m, v);
-      ok = true;
-    }
-  }
-  return ok ? m : NaN;
 }
 
 function getAny(obj, keys) {
@@ -176,20 +127,49 @@ const MONTHS_IT_SHORT = [
   "dic",
 ];
 
-function dayOfYearLabel(dayNumber, leap = false) {
-  const year = leap ? 2020 : 2021;
-  const d = new Date(year, 0, Number(dayNumber));
-  return `${d.getDate()} ${MONTHS_IT_SHORT[d.getMonth()]}`;
+function pickFromEndByIndex(list, index) {
+  if (!Array.isArray(list) || !list.length) return "";
+  const safeIndex = Math.min(Math.max(Number(index) || 0, 0), list.length - 1);
+  return list[list.length - 1 - safeIndex] || "";
 }
 
-function dayOfYearSmartLabel(dayNumber, leap = false) {
-  const year = leap ? 2020 : 2021;
-  const d = new Date(year, 0, Number(dayNumber));
-  const day = d.getDate();
-  const month = MONTHS_IT_SHORT[d.getMonth()];
+function isLeapYear(year) {
+  const y = Number(year);
+  if (!Number.isFinite(y)) return false;
+  return (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
+}
 
-  if (day === 1) return `1 ${month}`;
-  return String(day);
+function buildYearAxisItems(years = []) {
+  const includeLeapDay = years.some((y) => isLeapYear(y));
+  const baseYear = includeLeapDay ? 2020 : 2021;
+  const totalDays = includeLeapDay ? 366 : 365;
+
+  return Array.from({ length: totalDays }, (_, i) => {
+    const d = new Date(baseYear, 0, i + 1);
+    const mm = pad2(d.getMonth() + 1);
+    const dd = pad2(d.getDate());
+
+    return {
+      key: `${mm}-${dd}`,
+      day: d.getDate(),
+      label: `${d.getDate()} ${MONTHS_IT_SHORT[d.getMonth()]}`,
+    };
+  });
+}
+
+function getYearAxisLabelInterval(zoomSpan = 100) {
+  return (_index, value) => {
+    const day = Number(String(value).split(" ")[0]);
+    if (!Number.isFinite(day)) return false;
+
+    if (zoomSpan > 60) return day === 1;
+    if (zoomSpan > 35) return day === 1 || day === 15;
+    if (zoomSpan > 18) return day === 1 || day === 8 || day === 15 || day === 22;
+    if (zoomSpan > 9) return day === 1 || day === 5 || day === 10 || day === 15 || day === 20 || day === 25;
+    if (zoomSpan > 4) return day === 1 || day % 2 === 1;
+
+    return true;
+  };
 }
 
 function monthFull(ym) {
@@ -252,13 +232,102 @@ function pickColor(i) {
   return colors[i % colors.length];
 }
 
+function gaussianKernel(radius = 2, sigma = 1.2) {
+  const kernel = [];
+  let sum = 0;
+
+  for (let i = -radius; i <= radius; i += 1) {
+    const w = Math.exp(-(i * i) / (2 * sigma * sigma));
+    kernel.push(w);
+    sum += w;
+  }
+
+  return kernel.map((v) => v / sum);
+}
+
+function gaussianSmooth(values, radius = 2, sigma = 1.2) {
+  const arr = (values || []).map((v) => n(v)).map((v) => (Number.isFinite(v) ? v : 0));
+  if (!arr.length) return [];
+
+  const kernel = gaussianKernel(radius, sigma);
+  const out = [];
+
+  for (let i = 0; i < arr.length; i += 1) {
+    let s = 0;
+    let wsum = 0;
+
+    for (let k = -radius; k <= radius; k += 1) {
+      const ix = i + k;
+      if (ix >= 0 && ix < arr.length) {
+        const w = kernel[k + radius];
+        s += arr[ix] * w;
+        wsum += w;
+      }
+    }
+
+    out.push(Number((wsum ? s / wsum : 0).toFixed(3)));
+  }
+
+  return out;
+}
+
+function computeFrequencyDistribution(
+  values,
+  { binCount = 24, filterFn = null, minValue = null, maxValue = null } = {}
+) {
+  let vals = (values || []).map(n).filter(Number.isFinite);
+  if (filterFn) vals = vals.filter(filterFn);
+
+  if (vals.length < 2) return null;
+
+  let min = minValue !== null ? minValue : Math.min(...vals);
+  let max = maxValue !== null ? maxValue : Math.max(...vals);
+
+  if (!Number.isFinite(min) || !Number.isFinite(max)) return null;
+
+  if (min === max) {
+    min -= 0.5;
+    max += 0.5;
+  }
+
+  const width = (max - min) / binCount;
+  const counts = Array.from({ length: binCount }, () => 0);
+  const xValues = [];
+
+  for (let i = 0; i < binCount; i += 1) {
+    const start = min + i * width;
+    const end = i === binCount - 1 ? max : min + (i + 1) * width;
+    const center = start + (end - start) / 2;
+    xValues.push(Number(center.toFixed(2)));
+  }
+
+  for (const v of vals) {
+    let idx = Math.floor((v - min) / width);
+    if (idx < 0) idx = 0;
+    if (idx >= binCount) idx = binCount - 1;
+    counts[idx] += 1;
+  }
+
+  const smoothCounts = gaussianSmooth(counts, 2, 1.15);
+
+  return {
+    xValues,
+    counts,
+    smoothCounts,
+    sampleSize: vals.length,
+    min,
+    max,
+    width,
+  };
+}
+
 function buildEmptyChart(baseChart, text = "Seleziona almeno un elemento per visualizzare il grafico") {
   return {
     animation: false,
-    grid: { left: 72, right: 56, top: 58, bottom: 120 },
+    grid: { left: 72, right: 56, top: 58, bottom: 90 },
     title: { left: "center", top: 10, text: "" },
     legend: { show: false },
-    toolbox: { feature: { restore: {} }, right: 10, top: 10 },
+    toolbox: { feature: { restore: { title: "Ripristina grafico" } }, right: 10, top: 10 },
     tooltip: { show: false },
     xAxis: {
       type: "category",
@@ -293,113 +362,6 @@ function buildEmptyChart(baseChart, text = "Seleziona almeno un elemento per vis
   };
 }
 
-function gaussianKernel(radius = 2, sigma = 1.2) {
-  const kernel = [];
-  let sum = 0;
-  for (let i = -radius; i <= radius; i += 1) {
-    const w = Math.exp(-(i * i) / (2 * sigma * sigma));
-    kernel.push(w);
-    sum += w;
-  }
-  return kernel.map((v) => v / sum);
-}
-
-function gaussianSmooth(values, radius = 2, sigma = 1.2) {
-  const arr = (values || []).map((v) => n(v)).map((v) => (Number.isFinite(v) ? v : 0));
-  if (!arr.length) return [];
-  const kernel = gaussianKernel(radius, sigma);
-  const out = [];
-
-  for (let i = 0; i < arr.length; i += 1) {
-    let s = 0;
-    for (let k = -radius; k <= radius; k += 1) {
-      const ix = i + k;
-      if (ix >= 0 && ix < arr.length) s += arr[ix] * kernel[k + radius];
-    }
-    out.push(Number(s.toFixed(3)));
-  }
-
-  return out;
-}
-
-function computeDistributionCurve(values, { binCount = 20, clampMin = null } = {}) {
-  const vals = (values || []).map(n).filter(Number.isFinite);
-  if (!vals.length) return null;
-
-  let min = Math.min(...vals);
-  let max = Math.max(...vals);
-
-  if (clampMin !== null) min = Math.min(min, clampMin);
-
-  if (min === max) {
-    min -= 0.5;
-    max += 0.5;
-  }
-
-  const width = (max - min) / binCount;
-  const labels = [];
-  const counts = Array.from({ length: binCount }, () => 0);
-
-  for (let i = 0; i < binCount; i += 1) {
-    const start = min + i * width;
-    const end = i === binCount - 1 ? max : min + (i + 1) * width;
-    const center = start + (end - start) / 2;
-    labels.push(center.toFixed(1));
-  }
-
-  for (const v of vals) {
-    let idx = Math.floor((v - min) / width);
-    if (idx < 0) idx = 0;
-    if (idx >= binCount) idx = binCount - 1;
-    counts[idx] += 1;
-  }
-
-  return {
-    xLabels: labels,
-    smoothCounts: gaussianSmooth(counts, 2, 1.15),
-  };
-}
-
-function computeGaussianCurve(values, { points = 100 } = {}) {
-  const vals = (values || []).map(n).filter(Number.isFinite);
-  if (vals.length < 2) return null;
-
-  const mean = avgFinite(vals);
-  const variance = vals.reduce((s, v) => s + Math.pow(v - mean, 2), 0) / vals.length;
-  const std = Math.sqrt(variance);
-
-  if (!Number.isFinite(mean) || !Number.isFinite(std) || std <= 0) return null;
-
-  const min = mean - 4 * std;
-  const max = mean + 4 * std;
-  const step = (max - min) / (points - 1);
-
-  const xLabels = [];
-  const density = [];
-
-  for (let i = 0; i < points; i += 1) {
-    const x = min + i * step;
-    const y = gaussianValue(x, mean, std);
-
-    xLabels.push(Number(x.toFixed(1)));
-    density.push(Number(y.toFixed(4)));
-  }
-
-  return {
-    xLabels,
-    density,
-    mean,
-    std,
-  };
-}
-
-function gaussianValue(x, mean, std) {
-  return (
-    (1 / (std * Math.sqrt(2 * Math.PI))) *
-    Math.exp(-0.5 * Math.pow((x - mean) / std, 2))
-  );
-}
-
 // -----------------------------------------------------
 // COMPAT FIELDS
 // -----------------------------------------------------
@@ -416,32 +378,6 @@ function getRhMax(d) {
 function getRhMean(d) {
   const a = n(getAny(d, ["rh_mean", "rh_pct_mean", "hum_avg", "humidity_avg"]));
   return Number.isFinite(a) ? a : NaN;
-}
-
-function degToCardinal16(v) {
-  const n0 = Number(v);
-  if (!Number.isFinite(n0)) return "—";
-  const d = ((n0 % 360) + 360) % 360;
-  const ix = Math.round(d / 22.5) % 16;
-  return ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"][ix];
-}
-
-function circularMeanDeg(values) {
-  const vals = (values || []).map(n).filter(Number.isFinite);
-  if (!vals.length) return NaN;
-
-  let sx = 0;
-  let sy = 0;
-  for (const d of vals) {
-    const rad = (d * Math.PI) / 180;
-    sx += Math.cos(rad);
-    sy += Math.sin(rad);
-  }
-
-  const meanRad = Math.atan2(sy / vals.length, sx / vals.length);
-  let meanDeg = (meanRad * 180) / Math.PI;
-  if (meanDeg < 0) meanDeg += 360;
-  return meanDeg;
 }
 
 // -----------------------------------------------------
@@ -561,47 +497,27 @@ function aggregateYearRows(rows, year) {
     .sort((a, b) => a.date.localeCompare(b.date));
 }
 
-function summarizeDailyIntraday(rows) {
-  return {
-    tempMin: minFinite(rows.map((r) => r.temp)),
-    tempAvg: avgFinite(rows.map((r) => r.temp)),
-    tempMax: maxFinite(rows.map((r) => r.temp)),
+// -----------------------------------------------------
+// DESCRIZIONI GRAFICI
+// -----------------------------------------------------
+function getChartDescription(mode, param) {
+  if (param === "temp_mean_dist") {
+    return "Il grafico mostra la distribuzione di frequenza delle temperature medie giornaliere. Le barre indicano quanti giorni ricadono in ciascun intervallo di temperatura, mentre la linea smussata serve a leggere meglio la forma generale della distribuzione. Il picco indica i valori più frequenti nell’anno selezionato.";
+  }
 
-    rhMin: minFinite(rows.map((r) => r.rh)),
-    rhAvg: avgFinite(rows.map((r) => r.rh)),
-    rhMax: maxFinite(rows.map((r) => r.rh)),
+  if (param === "rain_dist") {
+    return "Il grafico mostra la distribuzione di frequenza delle precipitazioni giornaliere nei soli giorni piovosi, cioè con accumulo superiore a 0 mm. Le barre indicano quanti giorni ricadono in ciascun intervallo di pioggia, mentre la linea smussata evidenzia gli accumuli più tipici.";
+  }
 
-    rainTotal: sumFinite(rows.map((r) => r.rain)),
-    windAvg: avgFinite(rows.map((r) => r.wind)),
-    gustMax: maxFinite(rows.map((r) => r.gust)),
-    pressAvg: avgFinite(rows.map((r) => r.press)),
-    uvAvg: avgFinite(rows.map((r) => r.uv)),
-    solarAvg: avgFinite(rows.map((r) => r.solar)),
-  };
-}
+  if (mode === "giorni") {
+    return "Il grafico mostra l’andamento intragiornaliero del parametro scelto. L’asse orizzontale rappresenta le ore del giorno, mentre ogni linea corrisponde a uno dei giorni selezionati.";
+  }
 
-function summarizePeriodDailyRows(rows) {
-  return {
-    tmax_mean: avgFinite(rows.map((d) => d.tmax)),
-    tmean: avgFinite(rows.map((d) => d.tmean)),
-    tmin_mean: avgFinite(rows.map((d) => d.tmin)),
+  if (mode === "mesi") {
+    return "Il grafico confronta l’andamento giornaliero del parametro scelto nei mesi selezionati. L’asse orizzontale rappresenta i giorni del mese, mentre ogni linea o barra corrisponde a un mese diverso.";
+  }
 
-    rainSum: sumFinite(rows.map((d) => d.rain_total)),
-    rainrate_max: maxFinite(rows.map((d) => d.rainrate_max)),
-
-    rh_max_mean: avgFinite(rows.map((d) => getRhMax(d))),
-    rh_mean: avgFinite(rows.map((d) => getRhMean(d))),
-    rh_min_mean: avgFinite(rows.map((d) => getRhMin(d))),
-
-    wind_mean: avgFinite(rows.map((d) => d.wind_avg)),
-    gust_max: maxFinite(rows.map((d) => d.gust_max)),
-    wind_dir_mean_deg: circularMeanDeg(rows.map((d) => d.wind_dir_mean_deg)),
-
-    press_mean: avgFinite(rows.map((d) => d.press_avg)),
-
-    uv_mean: avgFinite(rows.map((d) => d.uv_mean_pos)),
-    solar_mean: avgFinite(rows.map((d) => d.solar_mean_pos)),
-  };
+  return "Il grafico confronta l’andamento annuale del parametro scelto. L’asse orizzontale segue il calendario da gennaio a dicembre e le serie sono allineate sulle date reali, quindi eventuali anni incompleti iniziano solo dal primo dato disponibile.";
 }
 
 // -----------------------------------------------------
@@ -663,11 +579,17 @@ const YEAR_PARAMS = [
 // -----------------------------------------------------
 export default function ConfrontoPage({ dailyRows }) {
   const [mounted, setMounted] = useState(false);
+  const [zoomRange, setZoomRange] = useState({ start: 0, end: 100 });
+
   useEffect(() => setMounted(true), []);
 
   const daily = useMemo(() => dailyRows.map(normalizeDailyRow), [dailyRows]);
 
   const availableDates = useMemo(() => daily.map((r) => r.date).sort(), [daily]);
+
+  const availableMonths = useMemo(() => {
+    return Array.from(new Set(daily.map((r) => r.date.slice(0, 7)))).sort();
+  }, [daily]);
 
   const availableYears = useMemo(() => {
     return Array.from(new Set(daily.map((r) => r.date.slice(0, 4)))).sort();
@@ -713,10 +635,52 @@ export default function ConfrontoPage({ dailyRows }) {
     return YEAR_PARAMS;
   }, [mode]);
 
+  const activeSelectionCount =
+    mode === "giorni"
+      ? daySelections.length
+      : mode === "mesi"
+      ? monthSelections.length
+      : yearSelections.length;
+
+  const legendRows = Math.max(1, Math.ceil(activeSelectionCount / 4));
+  const chartHeight = activeSelectionCount <= 4 ? 560 : Math.min(860, 560 + legendRows * 42);
+  const gridBottom = activeSelectionCount <= 4 ? 108 : Math.min(250, 92 + legendRows * 28);
+  const zoomSpan = Math.max(0, zoomRange.end - zoomRange.start);
+
+  const chartDescription = useMemo(() => getChartDescription(mode, param), [mode, param]);
+
+  const chartEvents = useMemo(
+    () => ({
+      datazoom: (params) => {
+        const payload = Array.isArray(params?.batch) ? params.batch[0] : params;
+        const start = Number(payload?.start);
+        const end = Number(payload?.end);
+
+        if (Number.isFinite(start) && Number.isFinite(end)) {
+          setZoomRange((prev) => {
+            if (Math.abs(prev.start - start) < 0.1 && Math.abs(prev.end - end) < 0.1) {
+              return prev;
+            }
+
+            return { start, end };
+          });
+        }
+      },
+      restore: () => {
+        setZoomRange({ start: 0, end: 100 });
+      },
+    }),
+    []
+  );
+
   useEffect(() => {
     const valid = currentParams.some((p) => p.key === param);
     if (!valid) setParam(currentParams[0]?.key || "");
   }, [mode, currentParams, param]);
+
+  useEffect(() => {
+    setZoomRange({ start: 0, end: 100 });
+  }, [mode, param, daySelections.length, monthSelections.length, yearSelections.length]);
 
   useEffect(() => {
     if (mode !== "giorni") {
@@ -773,21 +737,41 @@ export default function ConfrontoPage({ dailyRows }) {
   }, [mode, daySelections]);
 
   function addDaySelection() {
-    const y = availableYears[availableYears.length - 1] || "";
-    const m = monthsByYear[y]?.[monthsByYear[y]?.length - 1] || "";
-    const d = daysByYearMonth[`${y}-${m}`]?.[daysByYearMonth[`${y}-${m}`]?.length - 1] || "";
-    setDaySelections((prev) => [...prev, { year: y, month: m, day: d }]);
+    setDaySelections((prev) => {
+      const picked = pickFromEndByIndex(availableDates, prev.length);
+      const [year = "", month = "", day = ""] = picked ? picked.split("-") : [];
+      return [...prev, { year, month, day }];
+    });
   }
 
   function addMonthSelection() {
-    const y = availableYears[availableYears.length - 1] || "";
-    const m = monthsByYear[y]?.[monthsByYear[y]?.length - 1] || "";
-    setMonthSelections((prev) => [...prev, { year: y, month: m }]);
+    setMonthSelections((prev) => {
+      const picked = pickFromEndByIndex(availableMonths, prev.length);
+      const [year = "", month = ""] = picked ? picked.split("-") : [];
+      return [...prev, { year, month }];
+    });
   }
 
   function addYearSelection() {
-    const y = availableYears[availableYears.length - 1] || "";
-    setYearSelections((prev) => [...prev, { year: y }]);
+    setYearSelections((prev) => {
+      const year = pickFromEndByIndex(availableYears, prev.length);
+      return [...prev, { year }];
+    });
+  }
+
+  function clearCurrentSelections() {
+    if (mode === "giorni") {
+      setDaySelections([]);
+      setIntradayData({});
+      return;
+    }
+
+    if (mode === "mesi") {
+      setMonthSelections([]);
+      return;
+    }
+
+    setYearSelections([]);
   }
 
   function removeDaySelection(index) {
@@ -874,16 +858,33 @@ export default function ConfrontoPage({ dailyRows }) {
   const baseChart = useMemo(() => {
     return {
       animation: false,
-      grid: { left: 72, right: 56, top: 58, bottom: 120 },
+      grid: { left: 72, right: 56, top: 58, bottom: gridBottom },
       title: { left: "center", top: 10 },
       legend: {
         show: true,
-        bottom: 44,
+        bottom: 38,
         left: "center",
-        itemGap: 16,
+        itemGap: 18,
+        itemWidth: 22,
+        itemHeight: 12,
         padding: [8, 10, 2, 10],
+        textStyle: {
+          fontSize: 13,
+          fontWeight: 600,
+        },
       },
-      toolbox: { feature: { restore: {} }, right: 10, top: 10 },
+      toolbox: {
+        show: true,
+        right: 10,
+        top: 10,
+        itemSize: 20,
+        feature: {
+          restore: {
+            show: true,
+            title: "Ripristina grafico",
+          },
+        },
+      },
       tooltip: { trigger: "axis", order: "seriesAsc" },
       xAxis: {
         type: "category",
@@ -897,13 +898,17 @@ export default function ConfrontoPage({ dailyRows }) {
           type: "inside",
           xAxisIndex: 0,
           filterMode: "none",
+          start: zoomRange.start,
+          end: zoomRange.end,
         },
         {
           type: "slider",
           xAxisIndex: 0,
-          height: 24,
-          bottom: 18,
+          height: 22,
+          bottom: 8,
           filterMode: "none",
+          start: zoomRange.start,
+          end: zoomRange.end,
           borderColor: "#d9e2f2",
           fillerColor: "rgba(79,111,213,0.14)",
           backgroundColor: "#eef3fb",
@@ -919,7 +924,7 @@ export default function ConfrontoPage({ dailyRows }) {
       graphic: [],
       series: [],
     };
-  }, []);
+  }, [zoomRange, gridBottom]);
 
   const chartOption = useMemo(() => {
     if (mode === "giorni") {
@@ -1149,48 +1154,62 @@ export default function ConfrontoPage({ dailyRows }) {
 
     if (!selected.length) return buildEmptyChart(baseChart);
 
-    const yearRows = selected.map((s) => ({
-      ...s,
-      rows: aggregateYearRows(daily, s.year),
-    }));
+    const yearRows = selected.map((s) => {
+      const rows = aggregateYearRows(daily, s.year);
+      const rowByMonthDay = new Map(rows.map((r) => [r.date.slice(5, 10), r]));
+
+      return {
+        ...s,
+        rows,
+        rowByMonthDay,
+      };
+    });
 
     if (param === "temp_mean_dist") {
-      const curves = yearRows.map((s) => {
-        const values = s.rows.map((r) => r.tmean);
-        const dist = computeGaussianCurve(values, { points: 120 });
-        return { ...s, dist };
-      });
+      const allValues = yearRows
+        .flatMap((s) => s.rows.map((r) => r.tmean))
+        .map(n)
+        .filter(Number.isFinite);
 
-      const validCurves = curves.filter((s) => s.dist);
-      if (!validCurves.length) {
+      if (allValues.length < 2) {
         return buildEmptyChart(baseChart, "Nessun dato disponibile per la distribuzione");
       }
 
-      const allX = validCurves.flatMap((s) => s.dist.xLabels);
-      const minX = Math.floor(Math.min(...allX));
-      const maxX = Math.ceil(Math.max(...allX));
-      const points = 140;
-      const step = (maxX - minX) / (points - 1);
+      const globalMin = Math.min(...allValues);
+      const globalMax = Math.max(...allValues);
 
-      const xAxis = Array.from({ length: points }, (_, i) =>
-        Number((minX + i * step).toFixed(1))
-      );
+      const dists = yearRows.map((s) => {
+        const values = s.rows.map((r) => r.tmean);
+        const dist = computeFrequencyDistribution(values, {
+          binCount: 26,
+          minValue: globalMin,
+          maxValue: globalMax,
+        });
+        return { ...s, dist };
+      });
+
+      const validDists = dists.filter((s) => s.dist);
+      if (!validDists.length) {
+        return buildEmptyChart(baseChart, "Nessun dato disponibile per la distribuzione");
+      }
 
       return {
         ...baseChart,
+        legend: {
+          ...baseChart.legend,
+          data: validDists.map((s) => s.label),
+        },
         title: {
           ...baseChart.title,
           text: "Distribuzione temperature medie giornaliere",
         },
         xAxis: {
-          ...baseChart.xAxis,
-          data: xAxis,
+          type: "value",
+          min: Number(globalMin.toFixed(1)),
+          max: Number(globalMax.toFixed(1)),
           axisLabel: {
-            rotate: 0,
-            margin: 14,
-            interval: "auto",
-            hideOverlap: true,
             formatter: (v) => `${Number(v).toFixed(1)}`,
+            hideOverlap: true,
           },
           name: "Temperatura media giornaliera (°C)",
           nameLocation: "middle",
@@ -1198,13 +1217,13 @@ export default function ConfrontoPage({ dailyRows }) {
         },
         yAxis: {
           type: "value",
-          name: "Densità di probabilità",
+          name: "Frequenza (giorni)",
           nameLocation: "middle",
           nameRotate: 90,
           nameGap: 58,
-          scale: true,
+          min: 0,
           axisLabel: {
-            formatter: (v) => Number(v).toFixed(2),
+            formatter: (v) => `${Number(v).toFixed(0)}`,
           },
         },
         tooltip: {
@@ -1213,124 +1232,170 @@ export default function ConfrontoPage({ dailyRows }) {
           formatter: (params) =>
             axisTooltipFormatter(
               params,
-              validCurves.map((s) => ({
-                name: s.label,
-                formatter: (v) => `${Number(v).toFixed(4)}`,
-              }))
-            ),
-        },
-        series: validCurves.map((s) => ({
-          name: s.label,
-          type: "line",
-          data: xAxis.map((x) =>
-            Number(gaussianValue(Number(x), s.dist.mean, s.dist.std).toFixed(4))
-          ),
-          showSymbol: false,
-          smooth: true,
-          connectNulls: false,
-          lineStyle: {
-            width: 3,
-            color: s.color,
-          },
-          itemStyle: {
-            color: s.color,
-          },
-          emphasis: {
-            focus: "series",
-          },
-        })),
-      };
-    }
-
-    if (param === "rain_dist") {
-      const curves = yearRows.map((s) => {
-        const values = s.rows.map((r) => r.rain_total);
-
-        const dist = computeDistributionCurve(values, {
-          binCount: 22,
-          clampMin: 0,
-        });
-
-        return { ...s, dist };
-      });
-
-      const firstValid = curves.find((x) => x.dist);
-      if (!firstValid) {
-        return buildEmptyChart(baseChart, "Nessun dato disponibile per la distribuzione");
-      }
-
-      const xAxis = firstValid.dist.xLabels;
-
-      return {
-        ...baseChart,
-        title: {
-          ...baseChart.title,
-          text: "Distribuzione precipitazioni giornaliere",
-        },
-        xAxis: {
-          ...baseChart.xAxis,
-          data: xAxis,
-          axisLabel: {
-            rotate: 0,
-            margin: 14,
-            interval: "auto",
-            hideOverlap: true,
-          },
-          name: "Precipitazione giornaliera (mm)",
-          nameLocation: "middle",
-          nameGap: 34,
-        },
-        yAxis: {
-          type: "value",
-          name: "Frequenza",
-          nameLocation: "middle",
-          nameRotate: 90,
-          nameGap: 52,
-          scale: true,
-          axisLabel: { formatter: (v) => Number(v).toFixed(0) },
-        },
-        tooltip: {
-          trigger: "axis",
-          order: "seriesAsc",
-          formatter: (params) =>
-            axisTooltipFormatter(
-              params,
-              curves.map((s) => ({
+              validDists.map((s) => ({
                 name: s.label,
                 formatter: (v) => `${Number(v).toFixed(1)} giorni`,
               }))
             ),
         },
-        series: curves.map((s) => ({
-          name: s.label,
-          type: "line",
-          data: s.dist ? s.dist.smoothCounts : xAxis.map(() => null),
-          showSymbol: false,
-          smooth: true,
-          connectNulls: false,
-          lineStyle: {
-            width: 3,
-            color: s.color,
+        series: validDists.flatMap((s) => [
+          {
+            name: `${s.label} barre`,
+            type: "bar",
+            data: s.dist.xValues.map((x, idx) => [x, s.dist.counts[idx]]),
+            barWidth: 12,
+            silent: true,
+            tooltip: { show: false },
+            itemStyle: {
+              color: s.color,
+              opacity: 0.18,
+            },
+            emphasis: {
+              disabled: true,
+            },
           },
-          itemStyle: {
-            color: s.color,
+          {
+            name: s.label,
+            type: "line",
+            data: s.dist.xValues.map((x, idx) => [x, s.dist.smoothCounts[idx]]),
+            showSymbol: false,
+            smooth: true,
+            connectNulls: false,
+            lineStyle: {
+              width: 3,
+              color: s.color,
+            },
+            itemStyle: {
+              color: s.color,
+            },
+            emphasis: {
+              focus: "series",
+            },
           },
-        })),
+        ]),
       };
     }
 
-    const maxDays = Math.max(...yearRows.map((s) => s.rows.length), 366, 365);
-    const hasLeapYear = maxDays >= 366;
+    if (param === "rain_dist") {
+      const allValues = yearRows
+        .flatMap((s) => s.rows.map((r) => r.rain_total))
+        .map(n)
+        .filter((v) => Number.isFinite(v) && v > 0);
 
-    const xAxis = Array.from({ length: maxDays }, (_, i) =>
-      dayOfYearSmartLabel(i + 1, hasLeapYear)
-    );
+      if (allValues.length < 2) {
+        return buildEmptyChart(baseChart, "Nessun dato disponibile per la distribuzione");
+      }
+
+      const globalMin = 0;
+      const globalMax = Math.max(...allValues);
+
+      const dists = yearRows.map((s) => {
+        const values = s.rows.map((r) => r.rain_total);
+        const dist = computeFrequencyDistribution(values, {
+          binCount: 24,
+          filterFn: (v) => v > 0,
+          minValue: globalMin,
+          maxValue: globalMax,
+        });
+        return { ...s, dist };
+      });
+
+      const validDists = dists.filter((s) => s.dist);
+      if (!validDists.length) {
+        return buildEmptyChart(baseChart, "Nessun dato disponibile per la distribuzione");
+      }
+
+      return {
+        ...baseChart,
+        legend: {
+          ...baseChart.legend,
+          data: validDists.map((s) => s.label),
+        },
+        title: {
+          ...baseChart.title,
+          text: "Distribuzione precipitazioni giornaliere",
+        },
+        xAxis: {
+          type: "value",
+          min: 0,
+          max: Number(globalMax.toFixed(1)),
+          axisLabel: {
+            formatter: (v) => `${Number(v).toFixed(1)}`,
+            hideOverlap: true,
+          },
+          name: "Precipitazione nei giorni piovosi (mm)",
+          nameLocation: "middle",
+          nameGap: 34,
+        },
+        yAxis: {
+          type: "value",
+          name: "Frequenza (giorni)",
+          nameLocation: "middle",
+          nameRotate: 90,
+          nameGap: 58,
+          min: 0,
+          axisLabel: {
+            formatter: (v) => `${Number(v).toFixed(0)}`,
+          },
+        },
+        tooltip: {
+          trigger: "axis",
+          order: "seriesAsc",
+          formatter: (params) =>
+            axisTooltipFormatter(
+              params,
+              validDists.map((s) => ({
+                name: s.label,
+                formatter: (v) => `${Number(v).toFixed(1)} giorni`,
+              }))
+            ),
+        },
+        series: validDists.flatMap((s) => [
+          {
+            name: `${s.label} barre`,
+            type: "bar",
+            data: s.dist.xValues.map((x, idx) => [x, s.dist.counts[idx]]),
+            barWidth: 12,
+            silent: true,
+            tooltip: { show: false },
+            itemStyle: {
+              color: s.color,
+              opacity: 0.18,
+            },
+            emphasis: {
+              disabled: true,
+            },
+          },
+          {
+            name: s.label,
+            type: "line",
+            data: s.dist.xValues.map((x, idx) => [x, s.dist.smoothCounts[idx]]),
+            showSymbol: false,
+            smooth: true,
+            connectNulls: false,
+            lineStyle: {
+              width: 3,
+              color: s.color,
+            },
+            itemStyle: {
+              color: s.color,
+            },
+            emphasis: {
+              focus: "series",
+            },
+          },
+        ]),
+      };
+    }
+
+    const yearAxisItems = buildYearAxisItems(yearRows.map((s) => s.year));
+    const xAxis = yearAxisItems.map((item) => item.label);
 
     function buildYearSeries(getValue) {
       return yearRows.map((s) => ({
         name: s.label,
         type: "line",
-        data: xAxis.map((_, idx) => getValue(s.rows[idx])),
+        data: yearAxisItems.map((item) => getValue(s.rowByMonthDay.get(item.key))),
         showSymbol: false,
         connectNulls: false,
         lineStyle: { width: 3, color: s.color },
@@ -1343,7 +1408,7 @@ export default function ConfrontoPage({ dailyRows }) {
         name: s.label,
         type: "bar",
         barMaxWidth: 12,
-        data: xAxis.map((_, idx) => getValue(s.rows[idx])),
+        data: yearAxisItems.map((item) => getValue(s.rowByMonthDay.get(item.key))),
         itemStyle: { color: s.color },
       }));
     }
@@ -1352,7 +1417,7 @@ export default function ConfrontoPage({ dailyRows }) {
       return yearRows.map((s) => ({
         name: s.label,
         type: "line",
-        data: cumulative(xAxis.map((_, idx) => n(getValue(s.rows[idx])))),
+        data: cumulative(yearAxisItems.map((item) => n(getValue(s.rowByMonthDay.get(item.key))))),
         showSymbol: false,
         connectNulls: false,
         lineStyle: { width: 3, color: s.color },
@@ -1360,28 +1425,31 @@ export default function ConfrontoPage({ dailyRows }) {
       }));
     }
 
+    const yearChartExtra = { zoomSpan };
+
     if (param === "temp_max") {
-      return buildYearChart(baseChart, "Temperatura massima", xAxis, "°C", yearRows, (v) => `${Number(v).toFixed(1)} °C`, buildYearSeries((r) => safeVal(r?.tmax)));
+      return buildYearChart(baseChart, "Temperatura massima", xAxis, "°C", yearRows, (v) => `${Number(v).toFixed(1)} °C`, buildYearSeries((r) => safeVal(r?.tmax)), yearChartExtra);
     }
 
     if (param === "temp_mean") {
-      return buildYearChart(baseChart, "Temperatura media", xAxis, "°C", yearRows, (v) => `${Number(v).toFixed(1)} °C`, buildYearSeries((r) => safeVal(r?.tmean)));
+      return buildYearChart(baseChart, "Temperatura media", xAxis, "°C", yearRows, (v) => `${Number(v).toFixed(1)} °C`, buildYearSeries((r) => safeVal(r?.tmean)), yearChartExtra);
     }
 
     if (param === "temp_min") {
-      return buildYearChart(baseChart, "Temperatura minima", xAxis, "°C", yearRows, (v) => `${Number(v).toFixed(1)} °C`, buildYearSeries((r) => safeVal(r?.tmin)));
+      return buildYearChart(baseChart, "Temperatura minima", xAxis, "°C", yearRows, (v) => `${Number(v).toFixed(1)} °C`, buildYearSeries((r) => safeVal(r?.tmin)), yearChartExtra);
     }
 
     if (param === "rain") {
-      return buildYearChart(baseChart, "Precipitazione giornaliera", xAxis, "mm", yearRows, (v) => `${Number(v).toFixed(1)} mm`, buildYearBarSeries((r) => safeVal(r?.rain_total)));
+      return buildYearChart(baseChart, "Precipitazione giornaliera", xAxis, "mm", yearRows, (v) => `${Number(v).toFixed(1)} mm`, buildYearBarSeries((r) => safeVal(r?.rain_total)), yearChartExtra);
     }
 
     if (param === "rain_cum") {
-      return buildYearChart(baseChart, "Precipitazione cumulata", xAxis, "mm", yearRows, (v) => `${Number(v).toFixed(1)} mm`, buildYearCumLineSeries((r) => safeVal(r?.rain_total)));
+      return buildYearChart(baseChart, "Precipitazione cumulata", xAxis, "mm", yearRows, (v) => `${Number(v).toFixed(1)} mm`, buildYearCumLineSeries((r) => safeVal(r?.rain_total)), yearChartExtra);
     }
 
     if (param === "humidity_max") {
       return buildYearChart(baseChart, "Umidità massima", xAxis, "%", yearRows, (v) => `${Math.round(Number(v))} %`, buildYearSeries((r) => safeVal(getRhMax(r))), {
+        ...yearChartExtra,
         min: 0,
         max: 100,
         axisLabelFormatter: (v) => `${Math.round(Number(v))}`,
@@ -1390,6 +1458,7 @@ export default function ConfrontoPage({ dailyRows }) {
 
     if (param === "humidity_mean") {
       return buildYearChart(baseChart, "Umidità media", xAxis, "%", yearRows, (v) => `${Math.round(Number(v))} %`, buildYearSeries((r) => safeVal(getRhMean(r))), {
+        ...yearChartExtra,
         min: 0,
         max: 100,
         axisLabelFormatter: (v) => `${Math.round(Number(v))}`,
@@ -1398,6 +1467,7 @@ export default function ConfrontoPage({ dailyRows }) {
 
     if (param === "humidity_min") {
       return buildYearChart(baseChart, "Umidità minima", xAxis, "%", yearRows, (v) => `${Math.round(Number(v))} %`, buildYearSeries((r) => safeVal(getRhMin(r))), {
+        ...yearChartExtra,
         min: 0,
         max: 100,
         axisLabelFormatter: (v) => `${Math.round(Number(v))}`,
@@ -1406,33 +1476,38 @@ export default function ConfrontoPage({ dailyRows }) {
 
     if (param === "wind") {
       return buildYearChart(baseChart, "Vento medio", xAxis, "km/h", yearRows, (v) => `${Number(v).toFixed(1)} km/h`, buildYearSeries((r) => safeVal(r?.wind_avg)), {
+        ...yearChartExtra,
         axisLabelFormatter: (v) => Number(v).toFixed(0),
       });
     }
 
     if (param === "gust") {
       return buildYearChart(baseChart, "Raffiche", xAxis, "km/h", yearRows, (v) => `${Number(v).toFixed(1)} km/h`, buildYearSeries((r) => safeVal(r?.gust_max)), {
+        ...yearChartExtra,
         axisLabelFormatter: (v) => Number(v).toFixed(0),
       });
     }
 
     if (param === "pressure") {
       return buildYearChart(baseChart, "Pressione media", xAxis, "hPa", yearRows, (v) => `${Number(v).toFixed(1)} hPa`, buildYearSeries((r) => safeVal(r?.press_avg)), {
+        ...yearChartExtra,
         axisLabelFormatter: (v) => Number(v).toFixed(0),
       });
     }
 
     if (param === "uv") {
       return buildYearChart(baseChart, "UV medio", xAxis, "UV", yearRows, (v) => `${Number(v).toFixed(1)}`, buildYearSeries((r) => safeVal(r?.uv_mean_pos)), {
+        ...yearChartExtra,
         axisLabelFormatter: (v) => Number(v).toFixed(1),
       });
     }
 
     return buildYearChart(baseChart, "Radiazione media", xAxis, "W/m²", yearRows, (v) => `${Math.round(Number(v))} W/m²`, buildYearSeries((r) => safeVal(r?.solar_mean_pos)), {
+      ...yearChartExtra,
       axisLabelFormatter: (v) => `${Math.round(Number(v))}`,
       nameGap: 56,
     });
-  }, [mode, param, daySelections, monthSelections, yearSelections, seriesLabels, intradayData, daily, baseChart]);
+  }, [mode, param, daySelections, monthSelections, yearSelections, seriesLabels, intradayData, daily, baseChart, zoomSpan]);
 
   const chartKey = useMemo(() => {
     return JSON.stringify({
@@ -1445,106 +1520,21 @@ export default function ConfrontoPage({ dailyRows }) {
     });
   }, [mode, param, daySelections, monthSelections, yearSelections, intradayData]);
 
-  const summaries = useMemo(() => {
-    if (mode === "giorni") {
-      return daySelections.map((s) => {
-        const iso = s.year && s.month && s.day ? `${s.year}-${s.month}-${s.day}` : "";
-        const rows = iso ? intradayData[iso] || [] : [];
-        const sum = summarizeDailyIntraday(rows);
-
-        if (param === "temp") {
-          return {
-            title: iso ? formatDateIt(iso) : "—",
-            items: [
-              ["Min", `${fmt(sum.tempMin, 1)} °C`],
-              ["Media", `${fmt(sum.tempAvg, 1)} °C`],
-              ["Max", `${fmt(sum.tempMax, 1)} °C`],
-            ],
-          };
-        }
-
-        if (param === "rh") {
-          return {
-            title: iso ? formatDateIt(iso) : "—",
-            items: [
-              ["Min", `${fmtInt(sum.rhMin)} %`],
-              ["Media", `${fmtInt(sum.rhAvg)} %`],
-              ["Max", `${fmtInt(sum.rhMax)} %`],
-            ],
-          };
-        }
-
-        if (param === "rain") {
-          return {
-            title: iso ? formatDateIt(iso) : "—",
-            items: [["Cumulata totale", `${fmt(sum.rainTotal, 1)} mm`]],
-          };
-        }
-
-        if (param === "wind") {
-          return {
-            title: iso ? formatDateIt(iso) : "—",
-            items: [["Media", `${fmt(sum.windAvg, 1)} km/h`]],
-          };
-        }
-
-        if (param === "gust") {
-          return {
-            title: iso ? formatDateIt(iso) : "—",
-            items: [["Max", `${fmt(sum.gustMax, 1)} km/h`]],
-          };
-        }
-
-        if (param === "press") {
-          return {
-            title: iso ? formatDateIt(iso) : "—",
-            items: [["Media", `${fmt(sum.pressAvg, 1)} hPa`]],
-          };
-        }
-
-        if (param === "uv") {
-          return {
-            title: iso ? formatDateIt(iso) : "—",
-            items: [["Media", fmt(sum.uvAvg, 1)]],
-          };
-        }
-
-        return {
-          title: iso ? formatDateIt(iso) : "—",
-          items: [["Media", Number.isFinite(n(sum.solarAvg)) ? `${Math.round(n(sum.solarAvg))} W/m²` : "—"]],
-        };
-      });
-    }
-
-    if (mode === "mesi") {
-      return monthSelections.map((s) => {
-        const ym = s.year && s.month ? `${s.year}-${s.month}` : "";
-        const rows = ym ? aggregateMonthRows(daily, s.year, s.month) : [];
-        const sum = summarizePeriodDailyRows(rows);
-        return buildPeriodSummaryCard(param, ym ? formatMonthYear(ym) : "—", sum, rows);
-      });
-    }
-
-    return yearSelections.map((s) => {
-      const rows = s.year ? aggregateYearRows(daily, s.year) : [];
-      const sum = summarizePeriodDailyRows(rows);
-      return buildPeriodSummaryCard(param, s.year || "—", sum, rows);
-    });
-  }, [mode, param, daySelections, monthSelections, yearSelections, intradayData, daily]);
-
-  const MAX_BIG_SELECTORS = 2;
-
   return (
     <SiteLayout
       headerProps={{
         title: "Confronto climatico",
-        subtitle: "Confronto tra giorni, mesi e anni di tutti i parametri",
+        subtitle: "Confronta giorni, mesi e anni dell’archivio meteo scegliendo il parametro da analizzare.",
         showPeriod: false,
         currentPath: "/confronto-climatico",
       }}
     >
       <div className="wrap">
         <section className="hero">
+          <div className="pageDescription">
+            Questa pagina permette di confrontare tra loro giorni, mesi e anni presenti nell’archivio della stazione meteo. Per usarla, scegli prima il tipo di confronto, poi seleziona il parametro da visualizzare e aggiungi uno o più elementi con il pulsante dedicato. Ogni nuovo elemento viene proposto automaticamente partendo dal dato più recente e andando via via verso quelli precedenti; puoi comunque modificare manualmente giorno, mese o anno dai menu. Il grafico si aggiorna subito e, nella modalità annuale, l’asse temporale resta allineato alle date reali: se un anno non ha dati a gennaio, la linea inizierà solo dal primo giorno realmente disponibile.
+          </div>
+
           <div className="topControls">
             <div className="controlCard">
               <div className="controlLabel">Tipo di confronto</div>
@@ -1576,361 +1566,174 @@ export default function ConfrontoPage({ dailyRows }) {
             </div>
           </div>
 
-          {mode === "giorni" && (
-            <>
-              <div className="toolbarRow">
-                <button type="button" className="addButton" onClick={addDaySelection}>
-                  + Aggiungi giorno
-                </button>
-              </div>
+          <div className="toolbarRow">
+            {mode === "giorni" && (
+              <button type="button" className="addButton" onClick={addDaySelection}>
+                + Aggiungi giorno
+              </button>
+            )}
 
-              {daySelections.length > 0 && (
-                <>
-                  <div className="selectorsGrid">
-                    {daySelections.slice(0, MAX_BIG_SELECTORS).map((sel, index) => {
-                      const months = monthsByYear[sel.year] || [];
-                      const days = daysByYearMonth[`${sel.year}-${sel.month}`] || [];
+            {mode === "mesi" && (
+              <button type="button" className="addButton" onClick={addMonthSelection}>
+                + Aggiungi mese
+              </button>
+            )}
 
-                      return (
-                        <div className="selectorCard" key={`day-big-${index}`}>
-                          <div className="selectorHead">
-                            <div className="selectorTitle">Giorno {index + 1}</div>
-                            <button type="button" className="removeButton" onClick={() => removeDaySelection(index)}>
-                              Rimuovi
-                            </button>
-                          </div>
+            {mode === "anni" && (
+              <button type="button" className="addButton" onClick={addYearSelection}>
+                + Aggiungi anno
+              </button>
+            )}
 
-                          <div className="tripleGrid">
-                            <div>
-                              <div className="miniLabel">Anno</div>
-                              <div className="selectWrap">
-                                <select
-                                  className="selectNative"
-                                  value={sel.year}
-                                  onChange={(e) => updateDaySelection(index, { year: e.target.value })}
-                                >
-                                  {availableYears.map((y) => (
-                                    <option key={y} value={y}>
-                                      {y}
-                                    </option>
-                                  ))}
-                                </select>
-                              </div>
-                            </div>
+            {activeSelectionCount > 0 && (
+              <button type="button" className="clearButton" onClick={clearCurrentSelections}>
+                Cancella tutto
+              </button>
+            )}
+          </div>
 
-                            <div>
-                              <div className="miniLabel">Mese</div>
-                              <div className="selectWrap">
-                                <select
-                                  className="selectNative"
-                                  value={sel.month}
-                                  onChange={(e) => updateDaySelection(index, { month: e.target.value })}
-                                >
-                                  {months.map((m) => (
-                                    <option key={m} value={m}>
-                                      {MONTHS_IT_FULL[Number(m) - 1]}
-                                    </option>
-                                  ))}
-                                </select>
-                              </div>
-                            </div>
+          {mode === "giorni" && daySelections.length > 0 && (
+            <details className="selectionDrawer" open={daySelections.length <= 8 ? true : undefined}>
+              <summary className="selectionSummary">
+                <span>{daySelections.length} giorni selezionati</span>
+                <span className="selectionHint">Apri / modifica selezioni</span>
+              </summary>
 
-                            <div>
-                              <div className="miniLabel">Giorno</div>
-                              <div className="selectWrap">
-                                <select
-                                  className="selectNative"
-                                  value={sel.day}
-                                  onChange={(e) => updateDaySelection(index, { day: e.target.value })}
-                                >
-                                  {days.map((d) => (
-                                    <option key={d} value={d}>
-                                      {Number(d)}
-                                    </option>
-                                  ))}
-                                </select>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
+              <div className="compactList">
+                {daySelections.map((sel, index) => {
+                  const months = monthsByYear[sel.year] || [];
+                  const days = daysByYearMonth[`${sel.year}-${sel.month}`] || [];
 
-                  {daySelections.length > MAX_BIG_SELECTORS && (
-                    <div className="compactList">
-                      {daySelections.slice(MAX_BIG_SELECTORS).map((sel, offset) => {
-                        const index = offset + MAX_BIG_SELECTORS;
-                        const months = monthsByYear[sel.year] || [];
-                        const days = daysByYearMonth[`${sel.year}-${sel.month}`] || [];
+                  return (
+                    <div className="compactRow dayCompactRow" key={`day-${index}`}>
+                      <div className="compactTitle">Giorno {index + 1}</div>
 
-                        return (
-                          <div className="compactRow" key={`day-compact-${index}`}>
-                            <div className="compactTitle">Giorno {index + 1}</div>
+                      <select
+                        className="compactSelect daySelect"
+                        value={sel.day}
+                        onChange={(e) => updateDaySelection(index, { day: e.target.value })}
+                      >
+                        {days.map((d) => (
+                          <option key={d} value={d}>
+                            {Number(d)}
+                          </option>
+                        ))}
+                      </select>
 
-                            <select
-                              className="compactSelect"
-                              value={sel.year}
-                              onChange={(e) => updateDaySelection(index, { year: e.target.value })}
-                            >
-                              {availableYears.map((y) => (
-                                <option key={y} value={y}>
-                                  {y}
-                                </option>
-                              ))}
-                            </select>
+                      <select
+                        className="compactSelect monthSelect"
+                        value={sel.month}
+                        onChange={(e) => updateDaySelection(index, { month: e.target.value })}
+                      >
+                        {months.map((m) => (
+                          <option key={m} value={m}>
+                            {MONTHS_IT_FULL[Number(m) - 1]}
+                          </option>
+                        ))}
+                      </select>
 
-                            <select
-                              className="compactSelect"
-                              value={sel.month}
-                              onChange={(e) => updateDaySelection(index, { month: e.target.value })}
-                            >
-                              {months.map((m) => (
-                                <option key={m} value={m}>
-                                  {MONTHS_IT_FULL[Number(m) - 1]}
-                                </option>
-                              ))}
-                            </select>
+                      <select
+                        className="compactSelect yearSelect"
+                        value={sel.year}
+                        onChange={(e) => updateDaySelection(index, { year: e.target.value })}
+                      >
+                        {availableYears.map((y) => (
+                          <option key={y} value={y}>
+                            {y}
+                          </option>
+                        ))}
+                      </select>
 
-                            <select
-                              className="compactSelect"
-                              value={sel.day}
-                              onChange={(e) => updateDaySelection(index, { day: e.target.value })}
-                            >
-                              {days.map((d) => (
-                                <option key={d} value={d}>
-                                  {Number(d)}
-                                </option>
-                              ))}
-                            </select>
-
-                            <button type="button" className="compactRemove" onClick={() => removeDaySelection(index)}>
-                              ×
-                            </button>
-                          </div>
-                        );
-                      })}
+                      <button type="button" className="compactRemove" onClick={() => removeDaySelection(index)}>
+                        ×
+                      </button>
                     </div>
-                  )}
-                </>
-              )}
-            </>
+                  );
+                })}
+              </div>
+            </details>
           )}
 
-          {mode === "mesi" && (
-            <>
-              <div className="toolbarRow">
-                <button type="button" className="addButton" onClick={addMonthSelection}>
-                  + Aggiungi mese
-                </button>
-              </div>
+          {mode === "mesi" && monthSelections.length > 0 && (
+            <details className="selectionDrawer" open={monthSelections.length <= 8 ? true : undefined}>
+              <summary className="selectionSummary">
+                <span>{monthSelections.length} mesi selezionati</span>
+                <span className="selectionHint">Apri / modifica selezioni</span>
+              </summary>
 
-              {monthSelections.length > 0 && (
-                <>
-                  <div className="selectorsGrid">
-                    {monthSelections.slice(0, MAX_BIG_SELECTORS).map((sel, index) => {
-                      const months = monthsByYear[sel.year] || [];
+              <div className="compactList">
+                {monthSelections.map((sel, index) => {
+                  const months = monthsByYear[sel.year] || [];
 
-                      return (
-                        <div className="selectorCard" key={`month-big-${index}`}>
-                          <div className="selectorHead">
-                            <div className="selectorTitle">Mese {index + 1}</div>
-                            <button type="button" className="removeButton" onClick={() => removeMonthSelection(index)}>
-                              Rimuovi
-                            </button>
-                          </div>
+                  return (
+                    <div className="compactRow monthCompactRow" key={`month-${index}`}>
+                      <div className="compactTitle">Mese {index + 1}</div>
 
-                          <div className="doubleGrid">
-                            <div>
-                              <div className="miniLabel">Mese</div>
-                              <div className="selectWrap">
-                                <select
-                                  className="selectNative"
-                                  value={sel.month}
-                                  onChange={(e) => updateMonthSelection(index, { month: e.target.value })}
-                                >
-                                  {months.map((m) => (
-                                    <option key={m} value={m}>
-                                      {MONTHS_IT_FULL[Number(m) - 1]}
-                                    </option>
-                                  ))}
-                                </select>
-                              </div>
-                            </div>
+                      <select
+                        className="compactSelect monthSelect"
+                        value={sel.month}
+                        onChange={(e) => updateMonthSelection(index, { month: e.target.value })}
+                      >
+                        {months.map((m) => (
+                          <option key={m} value={m}>
+                            {MONTHS_IT_FULL[Number(m) - 1]}
+                          </option>
+                        ))}
+                      </select>
 
-                            <div>
-                              <div className="miniLabel">Anno</div>
-                              <div className="selectWrap">
-                                <select
-                                  className="selectNative"
-                                  value={sel.year}
-                                  onChange={(e) => updateMonthSelection(index, { year: e.target.value })}
-                                >
-                                  {availableYears.map((y) => (
-                                    <option key={y} value={y}>
-                                      {y}
-                                    </option>
-                                  ))}
-                                </select>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
+                      <select
+                        className="compactSelect yearSelect"
+                        value={sel.year}
+                        onChange={(e) => updateMonthSelection(index, { year: e.target.value })}
+                      >
+                        {availableYears.map((y) => (
+                          <option key={y} value={y}>
+                            {y}
+                          </option>
+                        ))}
+                      </select>
 
-                  {monthSelections.length > MAX_BIG_SELECTORS && (
-                    <div className="compactList">
-                      {monthSelections.slice(MAX_BIG_SELECTORS).map((sel, offset) => {
-                        const index = offset + MAX_BIG_SELECTORS;
-                        const months = monthsByYear[sel.year] || [];
-
-                        return (
-                          <div className="compactRow" key={`month-compact-${index}`}>
-                            <div className="compactTitle">Mese {index + 1}</div>
-
-                            <select
-                              className="compactSelect"
-                              value={sel.month}
-                              onChange={(e) => updateMonthSelection(index, { month: e.target.value })}
-                            >
-                              {months.map((m) => (
-                                <option key={m} value={m}>
-                                  {MONTHS_IT_FULL[Number(m) - 1]}
-                                </option>
-                              ))}
-                            </select>
-
-                            <select
-                              className="compactSelect"
-                              value={sel.year}
-                              onChange={(e) => updateMonthSelection(index, { year: e.target.value })}
-                            >
-                              {availableYears.map((y) => (
-                                <option key={y} value={y}>
-                                  {y}
-                                </option>
-                              ))}
-                            </select>
-
-                            <button type="button" className="compactRemove" onClick={() => removeMonthSelection(index)}>
-                              ×
-                            </button>
-                          </div>
-                        );
-                      })}
+                      <button type="button" className="compactRemove" onClick={() => removeMonthSelection(index)}>
+                        ×
+                      </button>
                     </div>
-                  )}
-                </>
-              )}
-            </>
+                  );
+                })}
+              </div>
+            </details>
           )}
 
-          {mode === "anni" && (
-            <>
-              <div className="toolbarRow">
-                <button type="button" className="addButton" onClick={addYearSelection}>
-                  + Aggiungi anno
-                </button>
-              </div>
+          {mode === "anni" && yearSelections.length > 0 && (
+            <details className="selectionDrawer" open={yearSelections.length <= 8 ? true : undefined}>
+              <summary className="selectionSummary">
+                <span>{yearSelections.length} anni selezionati</span>
+                <span className="selectionHint">Apri / modifica selezioni</span>
+              </summary>
 
-              {yearSelections.length > 0 && (
-                <>
-                  <div className="selectorsGrid">
-                    {yearSelections.slice(0, MAX_BIG_SELECTORS).map((sel, index) => (
-                      <div className="selectorCard" key={`year-big-${index}`}>
-                        <div className="selectorHead">
-                          <div className="selectorTitle">Anno {index + 1}</div>
-                          <button type="button" className="removeButton" onClick={() => removeYearSelection(index)}>
-                            Rimuovi
-                          </button>
-                        </div>
+              <div className="compactList">
+                {yearSelections.map((sel, index) => (
+                  <div className="compactRow yearCompactRow" key={`year-${index}`}>
+                    <div className="compactTitle">Anno {index + 1}</div>
 
-                        <div className="singleGrid">
-                          <div>
-                            <div className="miniLabel">Anno</div>
-                            <div className="selectWrap">
-                              <select
-                                className="selectNative"
-                                value={sel.year}
-                                onChange={(e) => updateYearSelection(index, { year: e.target.value })}
-                              >
-                                {availableYears.map((y) => (
-                                  <option key={y} value={y}>
-                                    {y}
-                                  </option>
-                                ))}
-                              </select>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
+                    <select
+                      className="compactSelect yearSelect"
+                      value={sel.year}
+                      onChange={(e) => updateYearSelection(index, { year: e.target.value })}
+                    >
+                      {availableYears.map((y) => (
+                        <option key={y} value={y}>
+                          {y}
+                        </option>
+                      ))}
+                    </select>
+
+                    <button type="button" className="compactRemove" onClick={() => removeYearSelection(index)}>
+                      ×
+                    </button>
                   </div>
-
-                  {yearSelections.length > MAX_BIG_SELECTORS && (
-                    <div className="compactList">
-                      {yearSelections.slice(MAX_BIG_SELECTORS).map((sel, offset) => {
-                        const index = offset + MAX_BIG_SELECTORS;
-
-                        return (
-                          <div className="compactRow" key={`year-compact-${index}`}>
-                            <div className="compactTitle">Anno {index + 1}</div>
-
-                            <select
-                              className="compactSelect"
-                              value={sel.year}
-                              onChange={(e) => updateYearSelection(index, { year: e.target.value })}
-                            >
-                              {availableYears.map((y) => (
-                                <option key={y} value={y}>
-                                  {y}
-                                </option>
-                              ))}
-                            </select>
-
-                            <button type="button" className="compactRemove" onClick={() => removeYearSelection(index)}>
-                              ×
-                            </button>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </>
-              )}
-            </>
-          )}
-
-          {summaries.length > 0 && (
-            <div className="summaryTableBox">
-              <table className="summaryTable">
-                <thead>
-                  <tr>
-                    <th>Elemento</th>
-                    <th>Dati sintetici</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {summaries.map((card, index) => (
-                    <tr key={`${card.title}-${index}`}>
-                      <td className="summaryTableTitle">{card.title}</td>
-                      <td>
-                        <div className="summaryInline">
-                          {card.items.map(([k, v]) => (
-                            <span className="summaryPill" key={`${card.title}-${k}`}>
-                              <span>{k}</span>
-                              <strong>{v}</strong>
-                            </span>
-                          ))}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                ))}
+              </div>
+            </details>
           )}
         </section>
 
@@ -1940,10 +1743,15 @@ export default function ConfrontoPage({ dailyRows }) {
               <ReactECharts
                 key={chartKey}
                 option={chartOption}
+                onEvents={chartEvents}
                 notMerge={true}
                 lazyUpdate={false}
-                style={{ height: 560, width: "100%" }}
+                style={{ height: chartHeight, width: "100%" }}
               />
+
+              <div className="chartDescription">
+                {chartDescription}
+              </div>
             </div>
           </section>
         )}
@@ -1962,14 +1770,25 @@ export default function ConfrontoPage({ dailyRows }) {
             padding: 18px;
           }
 
+          .pageDescription {
+            margin-bottom: 14px;
+            border: 1px solid #e5e7eb;
+            border-radius: 16px;
+            background: #f8fafc;
+            color: #475569;
+            font-size: 15px;
+            font-weight: 650;
+            line-height: 1.6;
+            padding: 14px 16px;
+          }
+
           .topControls {
             display: grid;
             grid-template-columns: 1fr 1.4fr;
             gap: 12px;
           }
 
-          .controlCard,
-          .selectorCard {
+          .controlCard {
             border: 1px solid #ececec;
             border-radius: 16px;
             background: #fcfcfc;
@@ -1980,8 +1799,7 @@ export default function ConfrontoPage({ dailyRows }) {
             min-width: 0;
           }
 
-          .controlLabel,
-          .selectorTitle {
+          .controlLabel {
             font-size: 12px;
             letter-spacing: 0.12em;
             text-transform: uppercase;
@@ -2025,77 +1843,31 @@ export default function ConfrontoPage({ dailyRows }) {
           .toolbarRow {
             margin-top: 12px;
             display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
             justify-content: flex-start;
           }
 
-          .addButton {
+          .addButton,
+          .clearButton {
             appearance: none;
-            border: 1px solid #cfd8ea;
-            background: #f5f8ff;
-            color: #0b1b3b;
-            border-radius: 14px;
-            padding: 11px 16px;
+            border-radius: 13px;
+            padding: 10px 14px;
             font-size: 14px;
             font-weight: 900;
             cursor: pointer;
           }
 
-          .selectorsGrid {
-            margin-top: 12px;
-            display: grid;
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 12px;
+          .addButton {
+            border: 1px solid #cfd8ea;
+            background: #f5f8ff;
+            color: #0b1b3b;
           }
 
-          .selectorHead {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 10px;
-            margin-bottom: 8px;
-          }
-
-          .selectorHead .selectorTitle {
-            margin-bottom: 0;
-          }
-
-          .removeButton {
-            appearance: none;
+          .clearButton {
             border: 1px solid #ead1d1;
             background: #fff7f7;
             color: #991b1b;
-            border-radius: 12px;
-            padding: 7px 11px;
-            font-size: 12px;
-            font-weight: 900;
-            cursor: pointer;
-          }
-
-          .tripleGrid {
-            display: grid;
-            grid-template-columns: repeat(3, minmax(0, 1fr));
-            gap: 10px;
-          }
-
-          .doubleGrid {
-            display: grid;
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 10px;
-          }
-
-          .singleGrid {
-            display: grid;
-            grid-template-columns: 1fr;
-            gap: 10px;
-          }
-
-          .miniLabel {
-            font-size: 11px;
-            font-weight: 800;
-            color: #6b7280;
-            margin-bottom: 6px;
-            text-transform: uppercase;
-            letter-spacing: 0.08em;
           }
 
           .selectWrap {
@@ -2136,32 +1908,82 @@ export default function ConfrontoPage({ dailyRows }) {
             background: #ffffff;
           }
 
-          .compactList {
+          .selectionDrawer {
             margin-top: 10px;
+            border: 1px solid #ececec;
+            border-radius: 15px;
+            background: #fcfcfc;
+            overflow: hidden;
+          }
+
+          .selectionSummary {
+            list-style: none;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 10px 12px;
+            color: #0f172a;
+            font-size: 13px;
+            font-weight: 950;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            user-select: none;
+          }
+
+          .selectionSummary::-webkit-details-marker {
+            display: none;
+          }
+
+          .selectionSummary::after {
+            content: "▾";
+            color: #64748b;
+            font-size: 13px;
+            font-weight: 900;
+            transition: transform 120ms ease;
+          }
+
+          .selectionDrawer[open] .selectionSummary::after {
+            transform: rotate(180deg);
+          }
+
+          .selectionHint {
+            margin-left: auto;
+            color: #64748b;
+            font-size: 11px;
+            font-weight: 800;
+            letter-spacing: 0.06em;
+            text-transform: none;
+          }
+
+          .compactList {
             display: grid;
-            gap: 8px;
-            max-height: 190px;
-            overflow-y: auto;
-            padding-right: 6px;
-            overscroll-behavior: contain;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 7px;
+            border-top: 1px solid #ececec;
+            padding: 9px;
           }
 
           .compactRow {
-            display: grid;
-            grid-template-columns: 110px repeat(3, minmax(90px, 1fr)) 34px;
+            display: flex;
+            flex-wrap: nowrap;
             align-items: center;
-            gap: 8px;
+            gap: 5px;
+            min-width: 0;
+            width: 100%;
             border: 1px solid #ececec;
-            border-radius: 14px;
-            background: #fcfcfc;
-            padding: 8px;
+            border-radius: 12px;
+            background: #ffffff;
+            padding: 6px;
           }
 
           .compactTitle {
+            flex: 0 0 auto;
             color: #374151;
-            font-size: 12px;
-            font-weight: 900;
-            letter-spacing: 0.08em;
+            font-size: 10px;
+            font-weight: 950;
+            letter-spacing: 0.06em;
             text-transform: uppercase;
             white-space: nowrap;
           }
@@ -2170,126 +1992,46 @@ export default function ConfrontoPage({ dailyRows }) {
             appearance: none;
             -webkit-appearance: none;
             -moz-appearance: none;
-            width: 100%;
-            min-height: 34px;
+            min-height: 30px;
             border: 1px solid #e5e7eb;
-            border-radius: 11px;
+            border-radius: 10px;
             background: linear-gradient(180deg, #ffffff, #f8fafc);
             color: #111111;
             font-size: 13px;
-            font-weight: 800;
-            padding: 0 10px;
+            font-weight: 900;
+            padding: 0 7px;
             cursor: pointer;
             color-scheme: light;
           }
 
+          .daySelect {
+            flex: 0 0 48px;
+            width: 48px;
+          }
+
+          .monthSelect {
+            flex: 1 1 78px;
+            min-width: 78px;
+          }
+
+          .yearSelect {
+            flex: 0 0 72px;
+            width: 72px;
+          }
+
           .compactRemove {
             appearance: none;
-            width: 34px;
-            height: 34px;
+            flex: 0 0 30px;
+            width: 30px;
+            height: 30px;
             border: 1px solid #ead1d1;
             background: #fff7f7;
             color: #991b1b;
-            border-radius: 11px;
-            font-size: 18px;
+            border-radius: 10px;
+            font-size: 17px;
             font-weight: 900;
             cursor: pointer;
             line-height: 1;
-          }
-
-          .compactList::-webkit-scrollbar,
-          .summaryTableBox::-webkit-scrollbar {
-            width: 8px;
-          }
-
-          .compactList::-webkit-scrollbar-track,
-          .summaryTableBox::-webkit-scrollbar-track {
-            background: #f1f5f9;
-            border-radius: 999px;
-          }
-
-          .compactList::-webkit-scrollbar-thumb,
-          .summaryTableBox::-webkit-scrollbar-thumb {
-            background: #cbd5e1;
-            border-radius: 999px;
-          }
-
-          .summaryTableBox {
-            margin-top: 14px;
-            max-height: 210px;
-            overflow-y: auto;
-            border: 1px solid #ececec;
-            border-radius: 16px;
-            background: #fcfcfc;
-          }
-
-          .summaryTable {
-            width: 100%;
-            border-collapse: collapse;
-            table-layout: fixed;
-          }
-
-          .summaryTable th {
-            position: sticky;
-            top: 0;
-            z-index: 1;
-            background: #f8fafc;
-            color: #374151;
-            font-size: 11px;
-            font-weight: 900;
-            letter-spacing: 0.1em;
-            text-transform: uppercase;
-            text-align: left;
-            padding: 10px 12px;
-            border-bottom: 1px solid #ececec;
-          }
-
-          .summaryTable th:first-child {
-            width: 240px;
-          }
-
-          .summaryTable td {
-            padding: 9px 12px;
-            border-bottom: 1px solid #ececec;
-            vertical-align: middle;
-          }
-
-          .summaryTable tr:last-child td {
-            border-bottom: 0;
-          }
-
-          .summaryTableTitle {
-            color: #0f172a;
-            font-size: 14px;
-            font-weight: 950;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-          }
-
-          .summaryInline {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 8px;
-          }
-
-          .summaryPill {
-            display: inline-flex;
-            align-items: center;
-            gap: 7px;
-            border: 1px solid #e5e7eb;
-            border-radius: 999px;
-            background: #ffffff;
-            padding: 6px 10px;
-            color: #4b5563;
-            font-size: 13px;
-            font-weight: 700;
-            white-space: nowrap;
-          }
-
-          .summaryPill strong {
-            color: #0f172a;
-            font-weight: 950;
           }
 
           .chartSection {
@@ -2303,54 +2045,69 @@ export default function ConfrontoPage({ dailyRows }) {
             background: rgba(255, 255, 255, 0.94);
           }
 
-          @media (max-width: 1280px) {
-            .topControls {
-              grid-template-columns: 1fr;
-            }
+          .chartDescription {
+            margin: 0 8px 8px 8px;
+            border: 1px solid #e5e7eb;
+            border-radius: 14px;
+            background: #f8fafc;
+            color: #475569;
+            font-size: 14px;
+            font-weight: 650;
+            line-height: 1.55;
+            padding: 12px 14px;
+          }
 
-            .compactRow {
-              grid-template-columns: 100px repeat(3, minmax(80px, 1fr)) 34px;
+          @media (max-width: 1320px) {
+            .compactList {
+              grid-template-columns: repeat(2, minmax(0, 1fr));
             }
           }
 
           @media (max-width: 900px) {
-            .selectorsGrid {
+            .topControls {
               grid-template-columns: 1fr;
             }
 
-            .tripleGrid,
-            .doubleGrid {
+            .selectionSummary {
+              align-items: flex-start;
+              flex-direction: column;
+            }
+
+            .selectionHint {
+              margin-left: 0;
+            }
+
+            .compactList {
               grid-template-columns: 1fr;
             }
 
             .compactRow {
-              grid-template-columns: 1fr;
+              flex-wrap: wrap;
             }
 
             .compactTitle {
+              flex: 0 0 100%;
               margin-bottom: 2px;
             }
 
+            .daySelect {
+              flex: 0 0 62px;
+              width: 62px;
+            }
+
+            .monthSelect {
+              flex: 1 1 120px;
+              min-width: 0;
+            }
+
+            .yearSelect {
+              flex: 1 1 90px;
+              width: auto;
+            }
+
             .compactRemove {
-              width: 100%;
-            }
-
-            .summaryTable {
-              table-layout: auto;
-            }
-
-            .summaryTable th:first-child {
-              width: 150px;
-            }
-
-            .summaryInline {
-              flex-direction: column;
-              align-items: stretch;
-            }
-
-            .summaryPill {
-              justify-content: space-between;
-              border-radius: 12px;
+              width: 36px;
+              flex: 0 0 36px;
             }
           }
         `}</style>
@@ -2482,8 +2239,9 @@ function buildYearChart(baseChart, title, xAxis, yName, yearRows, formatter, ser
       axisLabel: {
         rotate: 0,
         margin: 14,
-        interval: "auto",
+        interval: getYearAxisLabelInterval(extra.zoomSpan ?? 100),
         hideOverlap: true,
+        formatter: (v) => String(v),
       },
     },
     yAxis: {
@@ -2502,7 +2260,6 @@ function buildYearChart(baseChart, title, xAxis, yName, yearRows, formatter, ser
             if (yName === "%") return `${Math.round(Number(v))}`;
             if (yName === "W/m²") return `${Math.round(Number(v))}`;
             if (yName === "hPa" || yName === "km/h") return Number(v).toFixed(0);
-            if (yName === "Frequenza") return Number(v).toFixed(0);
             return Number(v).toFixed(1);
           }),
       },
@@ -2520,95 +2277,5 @@ function buildYearChart(baseChart, title, xAxis, yName, yearRows, formatter, ser
         ),
     },
     series,
-  };
-}
-
-function buildPeriodSummaryCard(param, title, sum, rows = []) {
-  if (param === "temp_max") {
-    return { title, items: [["Media periodo", `${fmt(sum.tmax_mean, 1)} °C`]] };
-  }
-
-  if (param === "temp_mean") {
-    return { title, items: [["Media periodo", `${fmt(sum.tmean, 1)} °C`]] };
-  }
-
-  if (param === "temp_min") {
-    return { title, items: [["Media periodo", `${fmt(sum.tmin_mean, 1)} °C`]] };
-  }
-
-  if (param === "rain" || param === "rain_cum") {
-    return {
-      title,
-      items: [
-        ["Cumulata totale", `${fmt(sum.rainSum, 1)} mm`],
-        ["Rate max", `${fmt(sum.rainrate_max, 1)} mm/h`],
-      ],
-    };
-  }
-
-  if (param === "humidity_max") {
-    return { title, items: [["Media periodo", `${fmtInt(sum.rh_max_mean)} %`]] };
-  }
-
-  if (param === "humidity_mean") {
-    return { title, items: [["Media periodo", `${fmtInt(sum.rh_mean)} %`]] };
-  }
-
-  if (param === "humidity_min") {
-    return { title, items: [["Media periodo", `${fmtInt(sum.rh_min_mean)} %`]] };
-  }
-
-  if (param === "wind") {
-    return {
-      title,
-      items: [
-        ["Media periodo", `${fmt(sum.wind_mean, 1)} km/h`],
-        ["Direzione media", degToCardinal16(sum.wind_dir_mean_deg)],
-      ],
-    };
-  }
-
-  if (param === "gust") {
-    return { title, items: [["Massima", `${fmt(sum.gust_max, 1)} km/h`]] };
-  }
-
-  if (param === "pressure") {
-    return { title, items: [["Media periodo", `${fmt(sum.press_mean, 1)} hPa`]] };
-  }
-
-  if (param === "uv") {
-    return { title, items: [["Media periodo", fmt(sum.uv_mean, 1)]] };
-  }
-
-  if (param === "temp_mean_dist") {
-    const vals = rows.map((r) => r.tmean).map(n).filter(Number.isFinite);
-    return {
-      title,
-      items: [
-        ["Giorni validi", String(vals.length)],
-        ["Media", `${fmt(avgFinite(vals), 1)} °C`],
-        ["Min", `${fmt(minFinite(vals), 1)} °C`],
-        ["Max", `${fmt(maxFinite(vals), 1)} °C`],
-      ],
-    };
-  }
-
-  if (param === "rain_dist") {
-    const vals = rows.map((r) => r.rain_total).map(n).filter(Number.isFinite);
-    const rainy = vals.filter((v) => v > 0).length;
-    return {
-      title,
-      items: [
-        ["Giorni validi", String(vals.length)],
-        ["Giorni piovosi", String(rainy)],
-        ["Media", `${fmt(avgFinite(vals), 1)} mm`],
-        ["Massima", `${fmt(maxFinite(vals), 1)} mm`],
-      ],
-    };
-  }
-
-  return {
-    title,
-    items: [["Media periodo", Number.isFinite(n(sum.solar_mean)) ? `${Math.round(n(sum.solar_mean))} W/m²` : "—"]],
   };
 }
