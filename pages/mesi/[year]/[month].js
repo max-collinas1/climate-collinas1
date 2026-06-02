@@ -85,7 +85,8 @@ export async function getStaticProps({ params }) {
 
   const mix = allMonths.indexOf(ym);
   const prevMonth = mix > 0 ? allMonths[mix - 1] : null;
-  const nextMonth = mix >= 0 && mix < allMonths.length - 1 ? allMonths[mix + 1] : null;
+  const nextMonth =
+    mix >= 0 && mix < allMonths.length - 1 ? allMonths[mix + 1] : null;
 
   const compareOptions = allMonths
     .filter((itemYm) => String(itemYm).slice(5, 7) === month)
@@ -140,6 +141,7 @@ function fmtInt(x) {
 function sumFinite(arr) {
   let s = 0;
   let ok = false;
+
   for (const x of arr) {
     const v = n(x);
     if (Number.isFinite(v)) {
@@ -147,12 +149,14 @@ function sumFinite(arr) {
       ok = true;
     }
   }
+
   return ok ? s : NaN;
 }
 
 function avgFinite(arr) {
   let s = 0;
   let c = 0;
+
   for (const x of arr) {
     const v = n(x);
     if (Number.isFinite(v)) {
@@ -160,12 +164,14 @@ function avgFinite(arr) {
       c++;
     }
   }
+
   return c ? s / c : NaN;
 }
 
 function minFinite(arr) {
   let m = Infinity;
   let ok = false;
+
   for (const x of arr) {
     const v = n(x);
     if (Number.isFinite(v)) {
@@ -173,12 +179,14 @@ function minFinite(arr) {
       ok = true;
     }
   }
+
   return ok ? m : NaN;
 }
 
 function maxFinite(arr) {
   let m = -Infinity;
   let ok = false;
+
   for (const x of arr) {
     const v = n(x);
     if (Number.isFinite(v)) {
@@ -186,11 +194,13 @@ function maxFinite(arr) {
       ok = true;
     }
   }
+
   return ok ? m : NaN;
 }
 
 function applyRainMonthOverride(rawValue, override) {
   const ov = n(override?.value);
+
   if (Number.isFinite(ov)) {
     return {
       value: ov,
@@ -214,17 +224,22 @@ function circMeanDeg(arr) {
   let sx = 0;
   let sy = 0;
   let c = 0;
+
   for (const x of arr) {
     const v = n(x);
     if (!Number.isFinite(v)) continue;
+
     const rad = (v * Math.PI) / 180;
     sx += Math.cos(rad);
     sy += Math.sin(rad);
     c++;
   }
+
   if (!c) return NaN;
+
   const ang = Math.atan2(sy / c, sx / c);
   const deg = (ang * 180) / Math.PI;
+
   return ((deg % 360) + 360) % 360;
 }
 
@@ -266,32 +281,57 @@ function dayOfMonthLabel(dateStr) {
 function degToCardinal16(v) {
   const n0 = Number(v);
   if (!Number.isFinite(n0)) return "—";
+
   const d = ((n0 % 360) + 360) % 360;
   const ix = Math.round(d / 22.5) % 16;
-  return ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"][ix];
+
+  return [
+    "N",
+    "NNE",
+    "NE",
+    "ENE",
+    "E",
+    "ESE",
+    "SE",
+    "SSE",
+    "S",
+    "SSW",
+    "SW",
+    "WSW",
+    "W",
+    "WNW",
+    "NW",
+    "NNW",
+  ][ix];
 }
 
 function getRhMin(d) {
   const a = n(d?.rh_min);
   if (Number.isFinite(a)) return a;
+
   const b = n(d?.rh_pct_min);
   if (Number.isFinite(b)) return b;
+
   return NaN;
 }
 
 function getRhMax(d) {
   const a = n(d?.rh_max);
   if (Number.isFinite(a)) return a;
+
   const b = n(d?.rh_pct_max);
   if (Number.isFinite(b)) return b;
+
   return NaN;
 }
 
 function getRhMean(d) {
   const a = n(d?.rh_mean);
   if (Number.isFinite(a)) return a;
+
   const b = n(d?.rh_pct_mean);
   if (Number.isFinite(b)) return b;
+
   return NaN;
 }
 
@@ -302,31 +342,71 @@ function seriesLine(arr) {
 function cumulative(arr) {
   let s = 0;
   let started = false;
+
   return arr.map((v) => {
     const x = n(v);
+
     if (Number.isFinite(x)) {
       s += x;
       started = true;
       return s;
     }
+
     return started ? s : null;
   });
 }
 
 function axisTooltipFormatter(params, specs) {
   if (!Array.isArray(params) || !params.length) return "";
+
   const title = params[0]?.axisValueLabel ?? params[0]?.name ?? "—";
   const lines = [`<b>${title}</b>`];
 
   for (const spec of specs) {
     const p = params.find((x) => x.seriesName === spec.name);
     if (!p) continue;
+
     const value = Array.isArray(p.value) ? p.value[1] : p.value;
     const text = spec.formatter ? spec.formatter(value) : value;
+
     lines.push(`${p.marker}${spec.name}: <b>${text}</b>`);
   }
 
   return lines.join("<br/>");
+}
+
+function MonthArrow({ href, direction, label, title, disabled = false }) {
+  const d =
+    direction === "prev"
+      ? "M21 6.5L9.5 16L21 25.5"
+      : "M11 6.5L22.5 16L11 25.5";
+
+  const content = (
+    <svg className="monthArrowSvg" viewBox="0 0 32 32" aria-hidden="true">
+      <path
+        d={d}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="4.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+
+  if (disabled || !href) {
+    return (
+      <span className="monthArrowButton disabled" aria-hidden="true">
+        {content}
+      </span>
+    );
+  }
+
+  return (
+    <Link href={href} className="monthArrowButton" aria-label={label} title={title}>
+      {content}
+    </Link>
+  );
 }
 
 // -------------------- page --------------------
@@ -339,17 +419,26 @@ export default function MonthPage(props) {
   const prevMonth = props.prevMonth ?? null;
   const nextMonth = props.nextMonth ?? null;
   const days = Array.isArray(props.days) ? props.days : [];
-  const monthsInYear = Array.isArray(props.monthsInYear) ? props.monthsInYear : [];
+  const monthsInYear = Array.isArray(props.monthsInYear)
+    ? props.monthsInYear
+    : [];
   const rainOverride = props.rainOverride ?? null;
-  const compareOptions = Array.isArray(props.compareOptions) ? props.compareOptions : [];
+  const compareOptions = Array.isArray(props.compareOptions)
+    ? props.compareOptions
+    : [];
 
   const [mounted, setMounted] = useState(false);
   const [q, setQ] = useState("");
   const [sortKey, setSortKey] = useState("date");
   const [sortDir, setSortDir] = useState("asc");
 
-  const compareAvailable = compareOptions.filter((x) => x?.ym && x?.year && x.ym !== ym);
-  const [comparePick, setComparePick] = useState(compareAvailable?.[0]?.year ?? "");
+  const compareAvailable = compareOptions.filter(
+    (x) => x?.ym && x?.year && x.ym !== ym
+  );
+
+  const [comparePick, setComparePick] = useState(
+    compareAvailable?.[0]?.year ?? ""
+  );
 
   useEffect(() => setMounted(true), []);
 
@@ -368,12 +457,16 @@ export default function MonthPage(props) {
   function onCompareChange(e) {
     const targetYear = String(e.target.value || "");
     setComparePick(targetYear);
-    if (targetYear) router.push(yearMonthToHref(targetYear, month));
+
+    if (targetYear) {
+      router.push(yearMonthToHref(targetYear, month));
+    }
   }
 
   const filtered = useMemo(() => {
     const qq = q.trim().toLowerCase();
     if (!qq) return days;
+
     return days.filter((d) => String(d.date).toLowerCase().includes(qq));
   }, [days, q]);
 
@@ -382,12 +475,17 @@ export default function MonthPage(props) {
     const dir = sortDir === "asc" ? 1 : -1;
 
     arr.sort((a, b) => {
-      if (sortKey === "date") return dir * String(a.date).localeCompare(String(b.date));
+      if (sortKey === "date") {
+        return dir * String(a.date).localeCompare(String(b.date));
+      }
+
       const av = n(a[sortKey]);
       const bv = n(b[sortKey]);
+
       if (!Number.isFinite(av) && !Number.isFinite(bv)) return 0;
       if (!Number.isFinite(av)) return 1;
       if (!Number.isFinite(bv)) return -1;
+
       return dir * (av - bv);
     });
 
@@ -395,8 +493,9 @@ export default function MonthPage(props) {
   }, [filtered, sortKey, sortDir]);
 
   function toggleSort(k) {
-    if (sortKey === k) setSortDir(sortDir === "asc" ? "desc" : "asc");
-    else {
+    if (sortKey === k) {
+      setSortDir(sortDir === "asc" ? "desc" : "asc");
+    } else {
       setSortKey(k);
       setSortDir(k === "date" ? "asc" : "desc");
     }
@@ -408,7 +507,10 @@ export default function MonthPage(props) {
 
   const summary = useMemo(() => {
     const rawRainMonthSum = sumFinite(days.map((d) => d.rain_total));
-    const resolvedRainMonth = applyRainMonthOverride(rawRainMonthSum, rainOverride);
+    const resolvedRainMonth = applyRainMonthOverride(
+      rawRainMonthSum,
+      rainOverride
+    );
 
     return {
       minT: minFinite(days.map((d) => d.tmin)),
@@ -420,7 +522,9 @@ export default function MonthPage(props) {
       rainLabel: resolvedRainMonth.label,
       rainSource: resolvedRainMonth.source,
       rainNote: resolvedRainMonth.note,
-      rainyDays: days.map((d) => n(d.rain_total)).filter((x) => Number.isFinite(x) && x >= 1).length,
+      rainyDays: days
+        .map((d) => n(d.rain_total))
+        .filter((x) => Number.isFinite(x) && x > 1).length,
       rainrateMax: maxFinite(days.map((d) => d.rainrate_max)),
 
       rhMean: avgFinite(days.map((d) => getRhMean(d))),
@@ -451,21 +555,27 @@ export default function MonthPage(props) {
       tmin: avgFinite(days.map((d) => d.tmin)),
       tmean: avgFinite(days.map((d) => d.tmean)),
       tmax: avgFinite(days.map((d) => d.tmax)),
+
       rain_total: summary.rainSum,
       rain_is_override: summary.rainIsOverride,
       rain_note: summary.rainNote,
       rainrate_max: avgFinite(days.map((d) => d.rainrate_max)),
+
       rh_min: avgFinite(days.map((d) => getRhMin(d))),
       rh_mean: avgFinite(days.map((d) => getRhMean(d))),
       rh_max: avgFinite(days.map((d) => getRhMax(d))),
+
       wind_avg: avgFinite(days.map((d) => d.wind_avg)),
       gust_max: avgFinite(days.map((d) => d.gust_max)),
       wind_dir_mean_deg: circMeanDeg(days.map((d) => d.wind_dir_mean_deg)),
+
       press_min: avgFinite(days.map((d) => d.press_min)),
       press_avg: avgFinite(days.map((d) => d.press_avg)),
       press_max: avgFinite(days.map((d) => d.press_max)),
+
       uv_mean_pos: avgFinite(days.map((d) => d.uv_mean_pos)),
       uv_max: avgFinite(days.map((d) => d.uv_max)),
+
       solar_mean_pos: avgFinite(days.map((d) => d.solar_mean_pos)),
       solar_max: avgFinite(days.map((d) => d.solar_max)),
     };
@@ -474,7 +584,10 @@ export default function MonthPage(props) {
   const x = chrono.map((d) => dayOfMonthLabel(d.date));
   const rainDaily = chrono.map((d) => d.rain_total);
   const rainCum = cumulative(rainDaily);
-  const currentDirTxt = Number.isFinite(n(summary.windDirMean)) ? degToCardinal16(summary.windDirMean) : "—";
+
+  const currentDirTxt = Number.isFinite(n(summary.windDirMean))
+    ? degToCardinal16(summary.windDirMean)
+    : "—";
 
   const COLORS = {
     red: "#ff2d20",
@@ -531,9 +644,21 @@ export default function MonthPage(props) {
       order: "seriesAsc",
       formatter: (params) =>
         axisTooltipFormatter(params, [
-          { name: "Tmax", formatter: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} °C`) },
-          { name: "Tmedia", formatter: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} °C`) },
-          { name: "Tmin", formatter: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} °C`) },
+          {
+            name: "Tmax",
+            formatter: (v) =>
+              v == null ? "—" : `${Number(v).toFixed(1)} °C`,
+          },
+          {
+            name: "Tmedia",
+            formatter: (v) =>
+              v == null ? "—" : `${Number(v).toFixed(1)} °C`,
+          },
+          {
+            name: "Tmin",
+            formatter: (v) =>
+              v == null ? "—" : `${Number(v).toFixed(1)} °C`,
+          },
         ]),
     },
     yAxis: {
@@ -584,9 +709,21 @@ export default function MonthPage(props) {
       order: "seriesAsc",
       formatter: (params) =>
         axisTooltipFormatter(params, [
-          { name: "Rate max", formatter: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} mm/h`) },
-          { name: "Totale progressivo", formatter: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} mm`) },
-          { name: "Pioggia", formatter: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} mm`) },
+          {
+            name: "Rate max",
+            formatter: (v) =>
+              v == null ? "—" : `${Number(v).toFixed(1)} mm/h`,
+          },
+          {
+            name: "Totale progressivo",
+            formatter: (v) =>
+              v == null ? "—" : `${Number(v).toFixed(1)} mm`,
+          },
+          {
+            name: "Pioggia",
+            formatter: (v) =>
+              v == null ? "—" : `${Number(v).toFixed(1)} mm`,
+          },
         ]),
     },
     yAxis: [
@@ -653,10 +790,28 @@ export default function MonthPage(props) {
       order: "seriesAsc",
       formatter: (params) =>
         axisTooltipFormatter(params, [
-          { name: "Raffica max", formatter: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} km/h`) },
-          { name: "Raffica media", formatter: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} km/h`) },
-          { name: "Vento medio", formatter: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} km/h`) },
-          { name: "Dir media", formatter: (v) => (v == null ? "—" : `${degToCardinal16(v)} (${Math.round(Number(v))}°)`) },
+          {
+            name: "Raffica max",
+            formatter: (v) =>
+              v == null ? "—" : `${Number(v).toFixed(1)} km/h`,
+          },
+          {
+            name: "Raffica media",
+            formatter: (v) =>
+              v == null ? "—" : `${Number(v).toFixed(1)} km/h`,
+          },
+          {
+            name: "Vento medio",
+            formatter: (v) =>
+              v == null ? "—" : `${Number(v).toFixed(1)} km/h`,
+          },
+          {
+            name: "Dir media",
+            formatter: (v) =>
+              v == null
+                ? "—"
+                : `${degToCardinal16(v)} (${Math.round(Number(v))}°)`,
+          },
         ]),
     },
     yAxis: [
@@ -732,9 +887,21 @@ export default function MonthPage(props) {
       order: "seriesAsc",
       formatter: (params) =>
         axisTooltipFormatter(params, [
-          { name: "Max", formatter: (v) => (v == null ? "—" : `${Math.round(Number(v))} %`) },
-          { name: "Media", formatter: (v) => (v == null ? "—" : `${Math.round(Number(v))} %`) },
-          { name: "Min", formatter: (v) => (v == null ? "—" : `${Math.round(Number(v))} %`) },
+          {
+            name: "Max",
+            formatter: (v) =>
+              v == null ? "—" : `${Math.round(Number(v))} %`,
+          },
+          {
+            name: "Media",
+            formatter: (v) =>
+              v == null ? "—" : `${Math.round(Number(v))} %`,
+          },
+          {
+            name: "Min",
+            formatter: (v) =>
+              v == null ? "—" : `${Math.round(Number(v))} %`,
+          },
         ]),
     },
     yAxis: {
@@ -787,9 +954,21 @@ export default function MonthPage(props) {
       order: "seriesAsc",
       formatter: (params) =>
         axisTooltipFormatter(params, [
-          { name: "Max", formatter: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} hPa`) },
-          { name: "Media", formatter: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} hPa`) },
-          { name: "Min", formatter: (v) => (v == null ? "—" : `${Number(v).toFixed(1)} hPa`) },
+          {
+            name: "Max",
+            formatter: (v) =>
+              v == null ? "—" : `${Number(v).toFixed(1)} hPa`,
+          },
+          {
+            name: "Media",
+            formatter: (v) =>
+              v == null ? "—" : `${Number(v).toFixed(1)} hPa`,
+          },
+          {
+            name: "Min",
+            formatter: (v) =>
+              v == null ? "—" : `${Number(v).toFixed(1)} hPa`,
+          },
         ]),
     },
     yAxis: {
@@ -841,8 +1020,14 @@ export default function MonthPage(props) {
       order: "seriesAsc",
       formatter: (params) =>
         axisTooltipFormatter(params, [
-          { name: "UV max", formatter: (v) => (v == null ? "—" : `${Number(v).toFixed(1)}`) },
-          { name: "UV medio", formatter: (v) => (v == null ? "—" : `${Number(v).toFixed(1)}`) },
+          {
+            name: "UV max",
+            formatter: (v) => (v == null ? "—" : `${Number(v).toFixed(1)}`),
+          },
+          {
+            name: "UV medio",
+            formatter: (v) => (v == null ? "—" : `${Number(v).toFixed(1)}`),
+          },
         ]),
     },
     yAxis: {
@@ -885,8 +1070,16 @@ export default function MonthPage(props) {
       order: "seriesAsc",
       formatter: (params) =>
         axisTooltipFormatter(params, [
-          { name: "Rad max", formatter: (v) => (v == null ? "—" : `${Math.round(Number(v))} W/m²`) },
-          { name: "Rad media", formatter: (v) => (v == null ? "—" : `${Math.round(Number(v))} W/m²`) },
+          {
+            name: "Rad max",
+            formatter: (v) =>
+              v == null ? "—" : `${Math.round(Number(v))} W/m²`,
+          },
+          {
+            name: "Rad media",
+            formatter: (v) =>
+              v == null ? "—" : `${Math.round(Number(v))} W/m²`,
+          },
         ]),
     },
     yAxis: {
@@ -948,16 +1141,19 @@ export default function MonthPage(props) {
     ];
 
     const header = cols.join(",");
+
     const lines = sorted.map((d) =>
       cols
         .map((c) => {
           let v = d[c];
 
           if (c === "rh_min") v = Number.isFinite(getRhMin(d)) ? getRhMin(d) : v;
-          if (c === "rh_mean") v = Number.isFinite(getRhMean(d)) ? getRhMean(d) : v;
+          if (c === "rh_mean")
+            v = Number.isFinite(getRhMean(d)) ? getRhMean(d) : v;
           if (c === "rh_max") v = Number.isFinite(getRhMax(d)) ? getRhMax(d) : v;
 
           if (v === null || v === undefined) return "";
+
           const s = String(v).replaceAll('"', '""');
           return /[",\n]/.test(s) ? `"${s}"` : s;
         })
@@ -974,6 +1170,7 @@ export default function MonthPage(props) {
     document.body.appendChild(a);
     a.click();
     a.remove();
+
     URL.revokeObjectURL(url);
   }
 
@@ -983,76 +1180,49 @@ export default function MonthPage(props) {
         <header className="hero">
           <div className="yearTopRow">
             <div className="yearBlock">
-              <div className="kicker">Mese</div>
+              <div className="yearAndNav">
+                <div className="yearReturnWrap">
+                  <Link
+                    href={`/anni/${year}`}
+                    className="yearReturnBox"
+                    aria-label={`Torna all'anno ${year}`}
+                    title={`Torna all'anno ${year}`}
+                  >
+                    <span className="yearReturnKicker">Anno</span>
+                    <span className="yearReturnValue">{year}</span>
+                  </Link>
+                </div>
 
-              <div className="titleLine">
                 <div className="titleMain">
-                  <h1 className="year">
-                    {monthFullFromMm(month)} {year}
-                  </h1>
+                  <div className="kicker">Mese</div>
 
-                  <div className="titleActions">
-                    {prevMonth ? (
-                      <Link href={ymToHref(prevMonth)} className="arrowCircle" aria-label="Mese precedente" title="Precedente">
-                        <svg viewBox="0 0 32 32" aria-hidden="true" className="arrowSvg">
-                          <path
-                            d="M19 9.5L12.5 16L19 22.5"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="2.4"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                          />
-                        </svg>
-                      </Link>
-                    ) : (
-                      <span className="arrowCircle disabled" aria-hidden="true">
-                        <svg viewBox="0 0 32 32" aria-hidden="true" className="arrowSvg">
-                          <path
-                            d="M19 9.5L12.5 16L19 22.5"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="2.4"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                          />
-                        </svg>
-                      </span>
-                    )}
+                  <div className="yearLine">
+                    <MonthArrow
+                      href={prevMonth ? ymToHref(prevMonth) : ""}
+                      direction="prev"
+                      label="Mese precedente"
+                      title="Precedente"
+                      disabled={!prevMonth}
+                    />
 
-                    {nextMonth ? (
-                      <Link href={ymToHref(nextMonth)} className="arrowCircle" aria-label="Mese successivo" title="Successivo">
-                        <svg viewBox="0 0 32 32" aria-hidden="true" className="arrowSvg">
-                          <path
-                            d="M13 9.5L19.5 16L13 22.5"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="2.4"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                          />
-                        </svg>
-                      </Link>
-                    ) : (
-                      <span className="arrowCircle disabled" aria-hidden="true">
-                        <svg viewBox="0 0 32 32" aria-hidden="true" className="arrowSvg">
-                          <path
-                            d="M13 9.5L19.5 16L13 22.5"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="2.4"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                          />
-                        </svg>
-                      </span>
-                    )}
+                    <h1 className="year">{monthFullFromMm(month)}</h1>
+
+                    <MonthArrow
+                      href={nextMonth ? ymToHref(nextMonth) : ""}
+                      direction="next"
+                      label="Mese successivo"
+                      title="Successivo"
+                      disabled={!nextMonth}
+                    />
                   </div>
                 </div>
 
                 {compareAvailable.length > 0 && (
                   <div className="inlineCompareWrap">
-                    <span className="inlineCompareLabel">Mese in anni precedenti</span>
+                    <span className="inlineCompareLabel">
+                      Mese in anni precedenti
+                    </span>
+
                     <select
                       id="compare-month-select"
                       className="compareSelectMini"
@@ -1069,12 +1239,6 @@ export default function MonthPage(props) {
                   </div>
                 )}
               </div>
-
-              <div className="monthMeta">
-                <Link href={`/anni/${year}`} className="subLink">
-                  {year}
-                </Link>
-              </div>
             </div>
           </div>
 
@@ -1087,6 +1251,7 @@ export default function MonthPage(props) {
               onChange={(e) => {
                 const itemYm = e.target.value;
                 if (!itemYm) return;
+
                 const mm = monthNum(itemYm);
                 router.push(`/mesi/${year}/${mm}`);
               }}
@@ -1122,7 +1287,7 @@ export default function MonthPage(props) {
           </section>
 
           <section className="summaryCompact">
-            <div className="summaryHead centered">
+            <div className="summaryHead">
               <div>
                 <h2>Sintesi mensile</h2>
                 <p>Lettura rapida dei dati principali del mese.</p>
@@ -1132,15 +1297,18 @@ export default function MonthPage(props) {
             <div className="summaryRows">
               <div className="summaryRow">
                 <div className="summaryLabel">Temperature</div>
+
                 <div className="summaryMetrics three">
                   <div className="summaryMetric">
                     <span className="summaryKey">Max mese</span>
                     <strong>{fmt(summary.maxT, 1)} °C</strong>
                   </div>
+
                   <div className="summaryMetric">
                     <span className="summaryKey">Media</span>
                     <strong>{fmt(summary.meanT, 1)} °C</strong>
                   </div>
+
                   <div className="summaryMetric">
                     <span className="summaryKey">Min mese</span>
                     <strong>{fmt(summary.minT, 1)} °C</strong>
@@ -1150,6 +1318,7 @@ export default function MonthPage(props) {
 
               <div className="summaryRow">
                 <div className="summaryLabel">Precipitazioni</div>
+
                 <div className="summaryMetrics two">
                   <div className="summaryMetric">
                     <span className="summaryKey">Totale</span>
@@ -1160,6 +1329,7 @@ export default function MonthPage(props) {
                       {fmt(summary.rainSum, 1)} mm
                     </strong>
                   </div>
+
                   <div className="summaryMetric">
                     <span className="summaryKey">Giorni &gt; 1 mm</span>
                     <strong>{fmtInt(summary.rainyDays)}</strong>
@@ -1169,15 +1339,18 @@ export default function MonthPage(props) {
 
               <div className="summaryRow">
                 <div className="summaryLabel">Umidità</div>
+
                 <div className="summaryMetrics three">
                   <div className="summaryMetric">
                     <span className="summaryKey">Max media</span>
                     <strong>{fmtInt(summary.rhMaxMean)} %</strong>
                   </div>
+
                   <div className="summaryMetric">
                     <span className="summaryKey">Media</span>
                     <strong>{fmtInt(summary.rhMean)} %</strong>
                   </div>
+
                   <div className="summaryMetric">
                     <span className="summaryKey">Min media</span>
                     <strong>{fmtInt(summary.rhMinMean)} %</strong>
@@ -1187,15 +1360,18 @@ export default function MonthPage(props) {
 
               <div className="summaryRow">
                 <div className="summaryLabel">Vento</div>
+
                 <div className="summaryMetrics three">
                   <div className="summaryMetric">
                     <span className="summaryKey">Medio</span>
                     <strong>{fmt(summary.windMean, 1)} km/h</strong>
                   </div>
+
                   <div className="summaryMetric">
                     <span className="summaryKey">Raffica media</span>
                     <strong>{fmt(summary.gustMean, 1)} km/h</strong>
                   </div>
+
                   <div className="summaryMetric">
                     <span className="summaryKey">Direzione media</span>
                     <strong>{currentDirTxt}</strong>
@@ -1205,15 +1381,18 @@ export default function MonthPage(props) {
 
               <div className="summaryRow">
                 <div className="summaryLabel">Pressione</div>
+
                 <div className="summaryMetrics three">
                   <div className="summaryMetric">
                     <span className="summaryKey">Max media</span>
                     <strong>{fmt(summary.pressMaxMean, 1)} hPa</strong>
                   </div>
+
                   <div className="summaryMetric">
                     <span className="summaryKey">Media</span>
                     <strong>{fmt(summary.pressMean, 1)} hPa</strong>
                   </div>
+
                   <div className="summaryMetric">
                     <span className="summaryKey">Min media</span>
                     <strong>{fmt(summary.pressMinMean, 1)} hPa</strong>
@@ -1224,11 +1403,13 @@ export default function MonthPage(props) {
               <div className="summaryRow dual">
                 <div className="summaryHalf">
                   <div className="summaryLabel">UV</div>
+
                   <div className="summaryMetrics two">
                     <div className="summaryMetric">
                       <span className="summaryKey">UV medio</span>
                       <strong>{fmt(summary.uvMean, 1)}</strong>
                     </div>
+
                     <div className="summaryMetric">
                       <span className="summaryKey">UV max medio</span>
                       <strong>{fmt(summary.uvMaxMean, 1)}</strong>
@@ -1238,50 +1419,85 @@ export default function MonthPage(props) {
 
                 <div className="summaryHalf">
                   <div className="summaryLabel">Radiazione</div>
+
                   <div className="summaryMetrics two">
                     <div className="summaryMetric">
                       <span className="summaryKey">Rad media</span>
-                      <strong>{Number.isFinite(n(summary.solarMean)) ? `${Math.round(n(summary.solarMean))} W/m²` : "—"}</strong>
+                      <strong>
+                        {Number.isFinite(n(summary.solarMean))
+                          ? `${Math.round(n(summary.solarMean))} W/m²`
+                          : "—"}
+                      </strong>
                     </div>
+
                     <div className="summaryMetric">
                       <span className="summaryKey">Rad max media</span>
-                      <strong>{Number.isFinite(n(summary.solarMaxMean)) ? `${Math.round(n(summary.solarMaxMean))} W/m²` : "—"}</strong>
+                      <strong>
+                        {Number.isFinite(n(summary.solarMaxMean))
+                          ? `${Math.round(n(summary.solarMaxMean))} W/m²`
+                          : "—"}
+                      </strong>
                     </div>
                   </div>
                 </div>
               </div>
             </div>
 
-            {summary.rainIsOverride && summary.rainNote ? <div className="overrideNote">{summary.rainNote}</div> : null}
+            {summary.rainIsOverride && summary.rainNote ? (
+              <div className="overrideNote">{summary.rainNote}</div>
+            ) : null}
           </section>
         </header>
 
         {mounted && (
           <section className="charts2">
             <div className="chartBox chartBoxWide">
-              <ReactECharts option={optTemp} style={{ height: LARGE_CHART_HEIGHT, width: "100%" }} />
+              <ReactECharts
+                option={optTemp}
+                style={{ height: LARGE_CHART_HEIGHT, width: "100%" }}
+              />
             </div>
 
             <div className="chartBox chartBoxWide">
-              <ReactECharts option={optRain} style={{ height: LARGE_CHART_HEIGHT, width: "100%" }} />
+              <ReactECharts
+                option={optRain}
+                style={{ height: LARGE_CHART_HEIGHT, width: "100%" }}
+              />
             </div>
 
             <div className="chartBox chartBoxWide">
-              <ReactECharts option={optWind} style={{ height: LARGE_CHART_HEIGHT, width: "100%" }} />
+              <ReactECharts
+                option={optWind}
+                style={{ height: LARGE_CHART_HEIGHT, width: "100%" }}
+              />
             </div>
 
             <div className="chartBox">
-              <ReactECharts option={optRh} style={{ height: NORMAL_CHART_HEIGHT, width: "100%" }} />
-            </div>
-            <div className="chartBox">
-              <ReactECharts option={optPress} style={{ height: NORMAL_CHART_HEIGHT, width: "100%" }} />
+              <ReactECharts
+                option={optRh}
+                style={{ height: NORMAL_CHART_HEIGHT, width: "100%" }}
+              />
             </div>
 
             <div className="chartBox">
-              <ReactECharts option={optUv} style={{ height: NORMAL_CHART_HEIGHT, width: "100%" }} />
+              <ReactECharts
+                option={optPress}
+                style={{ height: NORMAL_CHART_HEIGHT, width: "100%" }}
+              />
             </div>
+
             <div className="chartBox">
-              <ReactECharts option={optSolar} style={{ height: NORMAL_CHART_HEIGHT, width: "100%" }} />
+              <ReactECharts
+                option={optUv}
+                style={{ height: NORMAL_CHART_HEIGHT, width: "100%" }}
+              />
+            </div>
+
+            <div className="chartBox">
+              <ReactECharts
+                option={optSolar}
+                style={{ height: NORMAL_CHART_HEIGHT, width: "100%" }}
+              />
             </div>
           </section>
         )}
@@ -1293,14 +1509,19 @@ export default function MonthPage(props) {
         <section className="toolbar">
           <div className="search">
             <span className="hint">Filtra per data</span>
-            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="es. 2026-02-21" />
+            <input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="es. 2026-02-21"
+            />
           </div>
 
           <div className="tools">
             <div className="callout" title="Suggerimento">
               <span className="dotMini" />
               <span>
-                <span className="calloutFocus">Clicca sulla riga</span> per il dettaglio giornaliero →
+                <span className="calloutFocus">Clicca sulla riga</span> per il
+                dettaglio giornaliero →
               </span>
             </div>
 
@@ -1313,6 +1534,7 @@ export default function MonthPage(props) {
             >
               Reset ordine (giorni)
             </button>
+
             <button className="btn primary" onClick={downloadCsv}>
               Scarica CSV (mese)
             </button>
@@ -1350,68 +1572,152 @@ export default function MonthPage(props) {
               </tr>
 
               <tr className="colRow">
-                <Th onClick={() => toggleSort("date")} active={sortKey === "date"} dir={sortDir} className="bR stickyHead" title="Ordina per giorno">
+                <Th
+                  onClick={() => toggleSort("date")}
+                  active={sortKey === "date"}
+                  dir={sortDir}
+                  className="bR stickyHead"
+                  title="Ordina per giorno"
+                >
                   {"\u00A0"}
                 </Th>
 
-                <Th onClick={() => toggleSort("tmin")} active={sortKey === "tmin"} dir={sortDir}>
+                <Th
+                  onClick={() => toggleSort("tmin")}
+                  active={sortKey === "tmin"}
+                  dir={sortDir}
+                >
                   Min
                 </Th>
-                <Th onClick={() => toggleSort("tmean")} active={sortKey === "tmean"} dir={sortDir}>
+                <Th
+                  onClick={() => toggleSort("tmean")}
+                  active={sortKey === "tmean"}
+                  dir={sortDir}
+                >
                   Media
                 </Th>
-                <Th onClick={() => toggleSort("tmax")} active={sortKey === "tmax"} dir={sortDir} className="bR">
+                <Th
+                  onClick={() => toggleSort("tmax")}
+                  active={sortKey === "tmax"}
+                  dir={sortDir}
+                  className="bR"
+                >
                   Max
                 </Th>
 
-                <Th onClick={() => toggleSort("rain_total")} active={sortKey === "rain_total"} dir={sortDir}>
+                <Th
+                  onClick={() => toggleSort("rain_total")}
+                  active={sortKey === "rain_total"}
+                  dir={sortDir}
+                >
                   Pioggia
                 </Th>
-                <Th onClick={() => toggleSort("rainrate_max")} active={sortKey === "rainrate_max"} dir={sortDir} className="bR">
+                <Th
+                  onClick={() => toggleSort("rainrate_max")}
+                  active={sortKey === "rainrate_max"}
+                  dir={sortDir}
+                  className="bR"
+                >
                   Rate max
                 </Th>
 
-                <Th onClick={() => toggleSort("rh_min")} active={sortKey === "rh_min"} dir={sortDir}>
+                <Th
+                  onClick={() => toggleSort("rh_min")}
+                  active={sortKey === "rh_min"}
+                  dir={sortDir}
+                >
                   Min
                 </Th>
-                <Th onClick={() => toggleSort("rh_mean")} active={sortKey === "rh_mean"} dir={sortDir}>
+                <Th
+                  onClick={() => toggleSort("rh_mean")}
+                  active={sortKey === "rh_mean"}
+                  dir={sortDir}
+                >
                   Media
                 </Th>
-                <Th onClick={() => toggleSort("rh_max")} active={sortKey === "rh_max"} dir={sortDir} className="bR">
+                <Th
+                  onClick={() => toggleSort("rh_max")}
+                  active={sortKey === "rh_max"}
+                  dir={sortDir}
+                  className="bR"
+                >
                   Max
                 </Th>
 
-                <Th onClick={() => toggleSort("wind_avg")} active={sortKey === "wind_avg"} dir={sortDir}>
+                <Th
+                  onClick={() => toggleSort("wind_avg")}
+                  active={sortKey === "wind_avg"}
+                  dir={sortDir}
+                >
                   Medio
                 </Th>
-                <Th onClick={() => toggleSort("gust_max")} active={sortKey === "gust_max"} dir={sortDir}>
+                <Th
+                  onClick={() => toggleSort("gust_max")}
+                  active={sortKey === "gust_max"}
+                  dir={sortDir}
+                >
                   Raffica
                 </Th>
-                <Th onClick={() => toggleSort("wind_dir_mean_deg")} active={sortKey === "wind_dir_mean_deg"} dir={sortDir} className="bR">
+                <Th
+                  onClick={() => toggleSort("wind_dir_mean_deg")}
+                  active={sortKey === "wind_dir_mean_deg"}
+                  dir={sortDir}
+                  className="bR"
+                >
                   Dir media
                 </Th>
 
-                <Th onClick={() => toggleSort("press_min")} active={sortKey === "press_min"} dir={sortDir}>
+                <Th
+                  onClick={() => toggleSort("press_min")}
+                  active={sortKey === "press_min"}
+                  dir={sortDir}
+                >
                   Min
                 </Th>
-                <Th onClick={() => toggleSort("press_avg")} active={sortKey === "press_avg"} dir={sortDir}>
+                <Th
+                  onClick={() => toggleSort("press_avg")}
+                  active={sortKey === "press_avg"}
+                  dir={sortDir}
+                >
                   Media
                 </Th>
-                <Th onClick={() => toggleSort("press_max")} active={sortKey === "press_max"} dir={sortDir} className="bR">
+                <Th
+                  onClick={() => toggleSort("press_max")}
+                  active={sortKey === "press_max"}
+                  dir={sortDir}
+                  className="bR"
+                >
                   Max
                 </Th>
 
-                <Th onClick={() => toggleSort("uv_mean_pos")} active={sortKey === "uv_mean_pos"} dir={sortDir}>
+                <Th
+                  onClick={() => toggleSort("uv_mean_pos")}
+                  active={sortKey === "uv_mean_pos"}
+                  dir={sortDir}
+                >
                   UV medio
                 </Th>
-                <Th onClick={() => toggleSort("uv_max")} active={sortKey === "uv_max"} dir={sortDir} className="bR">
+                <Th
+                  onClick={() => toggleSort("uv_max")}
+                  active={sortKey === "uv_max"}
+                  dir={sortDir}
+                  className="bR"
+                >
                   UV max
                 </Th>
 
-                <Th onClick={() => toggleSort("solar_mean_pos")} active={sortKey === "solar_mean_pos"} dir={sortDir}>
+                <Th
+                  onClick={() => toggleSort("solar_mean_pos")}
+                  active={sortKey === "solar_mean_pos"}
+                  dir={sortDir}
+                >
                   Rad media
                 </Th>
-                <Th onClick={() => toggleSort("solar_max")} active={sortKey === "solar_max"} dir={sortDir}>
+                <Th
+                  onClick={() => toggleSort("solar_max")}
+                  active={sortKey === "solar_max"}
+                  dir={sortDir}
+                >
                   Rad max
                 </Th>
               </tr>
@@ -1423,11 +1729,16 @@ export default function MonthPage(props) {
                 const rhMean = getRhMean(d);
                 const rhMax = getRhMax(d);
 
-                const hasRain = Number.isFinite(n(d.rain_total)) && n(d.rain_total) > 0;
-                const hasRR = Number.isFinite(n(d.rainrate_max)) && n(d.rainrate_max) > 0;
+                const hasRain =
+                  Number.isFinite(n(d.rain_total)) && n(d.rain_total) > 0;
+                const hasRR =
+                  Number.isFinite(n(d.rainrate_max)) && n(d.rainrate_max) > 0;
 
                 const dirDeg = n(d.wind_dir_mean_deg);
-                const dirTxt = Number.isFinite(dirDeg) ? degToCardinal16(dirDeg) : "—";
+                const dirTxt = Number.isFinite(dirDeg)
+                  ? degToCardinal16(dirDeg)
+                  : "—";
+
                 const href = `/giorni/${d.date}`;
 
                 return (
@@ -1456,18 +1767,31 @@ export default function MonthPage(props) {
                     <td className="strong">{fmt(d.tmean, 1)} °C</td>
                     <td className="bR">{fmt(d.tmax, 1)} °C</td>
 
-                    <td className={hasRain ? "rainy" : ""}>{fmt(d.rain_total, 1)} mm</td>
-                    <td className={`bR ${hasRR ? "rainy" : ""}`}>{fmt(d.rainrate_max, 1)} mm/h</td>
+                    <td className={hasRain ? "rainy" : ""}>
+                      {fmt(d.rain_total, 1)} mm
+                    </td>
+                    <td className={`bR ${hasRR ? "rainy" : ""}`}>
+                      {fmt(d.rainrate_max, 1)} mm/h
+                    </td>
 
                     <td>{Number.isFinite(rhMin) ? `${Math.round(rhMin)} %` : "—"}</td>
-                    <td className="strong">{Number.isFinite(rhMean) ? `${Math.round(rhMean)} %` : "—"}</td>
-                    <td className="bR">{Number.isFinite(rhMax) ? `${Math.round(rhMax)} %` : "—"}</td>
+                    <td className="strong">
+                      {Number.isFinite(rhMean) ? `${Math.round(rhMean)} %` : "—"}
+                    </td>
+                    <td className="bR">
+                      {Number.isFinite(rhMax) ? `${Math.round(rhMax)} %` : "—"}
+                    </td>
 
                     <td>{fmt(d.wind_avg, 1)} km/h</td>
                     <td>{fmt(d.gust_max, 1)} km/h</td>
                     <td className="bR">
                       {dirTxt}
-                      {Number.isFinite(dirDeg) ? <span style={{ opacity: 0.65 }}> ({Math.round(dirDeg)}°)</span> : null}
+                      {Number.isFinite(dirDeg) ? (
+                        <span style={{ opacity: 0.65 }}>
+                          {" "}
+                          ({Math.round(dirDeg)}°)
+                        </span>
+                      ) : null}
                     </td>
 
                     <td>{fmt(d.press_min, 1)} hPa</td>
@@ -1477,8 +1801,16 @@ export default function MonthPage(props) {
                     <td>{fmt(d.uv_mean_pos, 1)}</td>
                     <td className="bR">{fmt(d.uv_max, 1)}</td>
 
-                    <td>{Number.isFinite(n(d.solar_mean_pos)) ? `${Math.round(n(d.solar_mean_pos))} W/m²` : "—"}</td>
-                    <td>{Number.isFinite(n(d.solar_max)) ? `${Math.round(n(d.solar_max))} W/m²` : "—"}</td>
+                    <td>
+                      {Number.isFinite(n(d.solar_mean_pos))
+                        ? `${Math.round(n(d.solar_mean_pos))} W/m²`
+                        : "—"}
+                    </td>
+                    <td>
+                      {Number.isFinite(n(d.solar_max))
+                        ? `${Math.round(n(d.solar_max))} W/m²`
+                        : "—"}
+                    </td>
                   </tr>
                 );
               })}
@@ -1502,20 +1834,42 @@ export default function MonthPage(props) {
                 <td className="strong">{fmt(monthAvgRow.tmean, 1)} °C</td>
                 <td className="bR">{fmt(monthAvgRow.tmax, 1)} °C</td>
 
-                <td title={monthAvgRow.rain_is_override ? "Dato rivisto ARPAS" : ""} className={monthAvgRow.rain_is_override ? "rainOverrideCell" : ""}>
+                <td
+                  title={monthAvgRow.rain_is_override ? "Dato rivisto ARPAS" : ""}
+                  className={monthAvgRow.rain_is_override ? "rainOverrideCell" : ""}
+                >
                   {fmt(monthAvgRow.rain_total, 1)} mm
                 </td>
                 <td className="bR">{fmt(monthAvgRow.rainrate_max, 1)} mm/h</td>
 
-                <td>{Number.isFinite(n(monthAvgRow.rh_min)) ? `${Math.round(n(monthAvgRow.rh_min))} %` : "—"}</td>
-                <td className="strong">{Number.isFinite(n(monthAvgRow.rh_mean)) ? `${Math.round(n(monthAvgRow.rh_mean))} %` : "—"}</td>
-                <td className="bR">{Number.isFinite(n(monthAvgRow.rh_max)) ? `${Math.round(n(monthAvgRow.rh_max))} %` : "—"}</td>
+                <td>
+                  {Number.isFinite(n(monthAvgRow.rh_min))
+                    ? `${Math.round(n(monthAvgRow.rh_min))} %`
+                    : "—"}
+                </td>
+                <td className="strong">
+                  {Number.isFinite(n(monthAvgRow.rh_mean))
+                    ? `${Math.round(n(monthAvgRow.rh_mean))} %`
+                    : "—"}
+                </td>
+                <td className="bR">
+                  {Number.isFinite(n(monthAvgRow.rh_max))
+                    ? `${Math.round(n(monthAvgRow.rh_max))} %`
+                    : "—"}
+                </td>
 
                 <td>{fmt(monthAvgRow.wind_avg, 1)} km/h</td>
                 <td>{fmt(monthAvgRow.gust_max, 1)} km/h</td>
                 <td className="bR">
-                  {Number.isFinite(n(monthAvgRow.wind_dir_mean_deg)) ? degToCardinal16(monthAvgRow.wind_dir_mean_deg) : "—"}
-                  {Number.isFinite(n(monthAvgRow.wind_dir_mean_deg)) ? <span style={{ opacity: 0.65 }}> ({Math.round(n(monthAvgRow.wind_dir_mean_deg))}°)</span> : null}
+                  {Number.isFinite(n(monthAvgRow.wind_dir_mean_deg))
+                    ? degToCardinal16(monthAvgRow.wind_dir_mean_deg)
+                    : "—"}
+                  {Number.isFinite(n(monthAvgRow.wind_dir_mean_deg)) ? (
+                    <span style={{ opacity: 0.65 }}>
+                      {" "}
+                      ({Math.round(n(monthAvgRow.wind_dir_mean_deg))}°)
+                    </span>
+                  ) : null}
                 </td>
 
                 <td>{fmt(monthAvgRow.press_min, 1)} hPa</td>
@@ -1525,8 +1879,16 @@ export default function MonthPage(props) {
                 <td>{fmt(monthAvgRow.uv_mean_pos, 1)}</td>
                 <td className="bR">{fmt(monthAvgRow.uv_max, 1)}</td>
 
-                <td>{Number.isFinite(n(monthAvgRow.solar_mean_pos)) ? `${Math.round(n(monthAvgRow.solar_mean_pos))} W/m²` : "—"}</td>
-                <td>{Number.isFinite(n(monthAvgRow.solar_max)) ? `${Math.round(n(monthAvgRow.solar_max))} W/m²` : "—"}</td>
+                <td>
+                  {Number.isFinite(n(monthAvgRow.solar_mean_pos))
+                    ? `${Math.round(n(monthAvgRow.solar_mean_pos))} W/m²`
+                    : "—"}
+                </td>
+                <td>
+                  {Number.isFinite(n(monthAvgRow.solar_max))
+                    ? `${Math.round(n(monthAvgRow.solar_max))} W/m²`
+                    : "—"}
+                </td>
               </tr>
             </tfoot>
           </table>
@@ -1541,19 +1903,86 @@ export default function MonthPage(props) {
             border: 1px solid #ececec;
             border-radius: 18px;
             background: rgba(255, 255, 255, 0.9);
-            box-shadow: 0 1px 0 rgba(0, 0, 0, 0.02), 0 12px 34px rgba(0, 0, 0, 0.04);
+            box-shadow:
+              0 1px 0 rgba(0, 0, 0, 0.02),
+              0 12px 34px rgba(0, 0, 0, 0.04);
             padding: 22px;
           }
 
-          .yearTopRow {
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-start;
-            gap: 18px;
-          }
-
+          .yearTopRow,
           .yearBlock {
             width: 100%;
+          }
+
+          .yearAndNav {
+            position: relative;
+            min-height: 132px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 100%;
+          }
+
+          .yearReturnWrap {
+            position: absolute;
+            left: 0;
+            top: 50%;
+            transform: translateY(-50%);
+            z-index: 2;
+          }
+
+          .yearReturnBox {
+            display: grid;
+            justify-items: center;
+            align-items: center;
+            min-width: 170px;
+            padding: 14px 26px;
+            border-radius: 18px;
+            text-decoration: none;
+            color: #0f172a;
+            background: transparent;
+            transition:
+              background 120ms ease,
+              transform 120ms ease,
+              box-shadow 120ms ease;
+          }
+
+          .yearReturnBox:hover {
+            background: rgba(248, 250, 252, 0.95);
+            transform: translateY(-1px);
+            box-shadow: 0 10px 24px rgba(15, 23, 42, 0.05);
+          }
+
+          .yearReturnKicker {
+            display: block;
+            font-size: 12px;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            opacity: 0.6;
+            margin-bottom: 8px;
+            text-align: center;
+          }
+
+          .yearReturnValue {
+            display: block;
+            font-size: 34px;
+            line-height: 1;
+            font-weight: 950;
+            letter-spacing: -0.035em;
+            color: #5f7897;
+            text-align: center;
+          }
+
+          .titleMain {
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
+            display: grid;
+            justify-items: center;
+            align-items: center;
+            text-align: center;
+            z-index: 1;
           }
 
           .kicker {
@@ -1562,21 +1991,15 @@ export default function MonthPage(props) {
             text-transform: uppercase;
             opacity: 0.6;
             margin-bottom: 8px;
+            text-align: center;
           }
 
-          .titleLine {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 22px;
-            flex-wrap: wrap;
-          }
-
-          .titleMain {
+          .yearLine {
             display: inline-flex;
             align-items: center;
-            gap: 16px;
-            flex-wrap: wrap;
+            justify-content: center;
+            gap: 14px;
+            width: max-content;
           }
 
           .year {
@@ -1584,58 +2007,60 @@ export default function MonthPage(props) {
             font-size: 68px;
             line-height: 1;
             letter-spacing: -0.04em;
-            flex: 0 0 auto;
+            text-align: center;
+            white-space: nowrap;
+            color: #111111;
           }
 
-          .titleActions {
-            display: inline-flex !important;
-            align-items: center !important;
-            gap: 12px !important;
-            flex: 0 0 auto;
-            margin-left: 6px;
-          }
-
-          .arrowCircle {
+          :global(.monthArrowButton) {
             display: inline-flex !important;
             align-items: center !important;
             justify-content: center !important;
-            width: 62px !important;
-            height: 62px !important;
-            min-width: 62px !important;
-            min-height: 62px !important;
+            width: 48px !important;
+            height: 48px !important;
+            min-width: 48px !important;
+            min-height: 48px !important;
             border-radius: 999px !important;
-            border: 2.2px solid #1f1f1f !important;
-            background: #ffffff !important;
-            color: #1f1f1f !important;
+            color: #475569 !important;
             text-decoration: none !important;
-            box-sizing: border-box !important;
-            transition: transform 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+            user-select: none !important;
+            flex: 0 0 auto !important;
+            opacity: 0.82 !important;
+            visibility: visible !important;
+            transition:
+              background 120ms ease,
+              transform 120ms ease,
+              opacity 120ms ease;
           }
 
-          .arrowCircle:hover {
-            background: #fafafa !important;
+          :global(.monthArrowButton:hover) {
+            background: rgba(15, 23, 42, 0.05) !important;
             transform: translateY(-1px);
-            box-shadow: 0 10px 18px rgba(0, 0, 0, 0.06);
+            opacity: 1 !important;
           }
 
-          .arrowCircle:active {
-            transform: scale(0.98);
+          :global(.monthArrowButton.disabled) {
+            opacity: 0.28 !important;
+            pointer-events: none !important;
           }
 
-          .arrowCircle.disabled {
-            opacity: 0.3;
-            pointer-events: none;
-          }
-
-          .arrowSvg {
-            width: 26px !important;
-            height: 26px !important;
+          :global(.monthArrowSvg) {
+            width: 32px !important;
+            height: 32px !important;
+            min-width: 32px !important;
+            min-height: 32px !important;
             display: block !important;
-            color: #1f1f1f !important;
-            flex: 0 0 auto;
+            overflow: visible !important;
+            color: #475569 !important;
+            stroke: currentColor !important;
           }
 
           .inlineCompareWrap {
+            position: absolute;
+            right: 0;
+            top: 50%;
+            transform: translateY(-50%);
+            z-index: 2;
             display: inline-flex;
             align-items: center;
             justify-content: flex-end;
@@ -1663,7 +2088,9 @@ export default function MonthPage(props) {
             border-radius: 999px;
             background: linear-gradient(180deg, #ffffff, #f8fafc);
             border: 1px solid #d8dee7;
-            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 4px 14px rgba(15, 23, 42, 0.04);
+            box-shadow:
+              inset 0 1px 0 rgba(255, 255, 255, 0.9),
+              0 4px 14px rgba(15, 23, 42, 0.04);
             font-weight: 900;
             font-size: 16px;
             color: #0f172a;
@@ -1674,38 +2101,16 @@ export default function MonthPage(props) {
 
           .compareSelectMini:focus {
             outline: none;
-            box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 4px 14px rgba(15, 23, 42, 0.05);
+            box-shadow:
+              0 0 0 2px rgba(37, 99, 235, 0.12),
+              inset 0 1px 0 rgba(255, 255, 255, 0.9),
+              0 4px 14px rgba(15, 23, 42, 0.05);
             border-color: #b9c5d6;
           }
 
-          .compareSelectMini option,
-          .compareSelectMini optgroup {
+          .compareSelectMini option {
             color: #111111;
             background: #ffffff;
-          }
-
-          .monthMeta {
-            margin-top: 16px;
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            flex-wrap: wrap;
-            font-size: 16px;
-            font-weight: 900;
-            color: #5f7897;
-          }
-
-          .subLink {
-            text-decoration: none;
-            color: #5f7897;
-            font-size: 16px;
-            font-weight: 900;
-            letter-spacing: -0.01em;
-          }
-
-          .subLink:hover {
-            text-decoration: underline;
-            color: #0f172a;
           }
 
           .monthsBar {
@@ -1746,7 +2151,8 @@ export default function MonthPage(props) {
             border-radius: 999px;
             background: linear-gradient(180deg, #ffffff, #f8fafc);
             border: 1px solid #d8dee7;
-            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9),
+            box-shadow:
+              inset 0 1px 0 rgba(255, 255, 255, 0.9),
               0 4px 14px rgba(15, 23, 42, 0.04);
             font-weight: 900;
             font-size: 15px;
@@ -1759,7 +2165,8 @@ export default function MonthPage(props) {
           .monthSelectMobile:focus {
             outline: none;
             border-color: #b9c5d6;
-            box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.12),
+            box-shadow:
+              0 0 0 2px rgba(37, 99, 235, 0.12),
               inset 0 1px 0 rgba(255, 255, 255, 0.9),
               0 4px 14px rgba(15, 23, 42, 0.05);
           }
@@ -1782,7 +2189,10 @@ export default function MonthPage(props) {
             line-height: 1.1;
             background: #fff;
             border: 1px solid #ececec;
-            transition: background 120ms ease, transform 120ms ease, box-shadow 120ms ease;
+            transition:
+              background 120ms ease,
+              transform 120ms ease,
+              box-shadow 120ms ease;
           }
 
           .monthText {
@@ -1819,27 +2229,38 @@ export default function MonthPage(props) {
           }
 
           .summaryHead {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 14px;
             margin-bottom: 16px;
+            text-align: center;
           }
 
-          .summaryHead.centered {
+          .summaryHead > div {
+            width: 100%;
+            max-width: 760px;
+            margin-left: auto;
+            margin-right: auto;
             text-align: center;
           }
 
           .summaryHead h2 {
             margin: 0;
-            font-size: 24px;
-            line-height: 1.1;
+            font-size: 22px;
+            line-height: 1.15;
             font-weight: 950;
-            letter-spacing: -0.03em;
+            letter-spacing: -0.02em;
+            text-align: center;
           }
 
           .summaryHead p {
-            margin: 6px 0 0;
+            margin: 6px auto 0;
             font-size: 13px;
             line-height: 1.4;
             color: #666;
             font-weight: 700;
+            text-align: center;
           }
 
           .summaryRows {
@@ -1849,13 +2270,13 @@ export default function MonthPage(props) {
 
           .summaryRow {
             display: grid;
-            grid-template-columns: 190px 1fr;
-            gap: 14px;
+            grid-template-columns: 160px 1fr;
+            gap: 10px;
             align-items: stretch;
             border: 1px solid #ececec;
             border-radius: 16px;
             background: #fcfcfc;
-            padding: 14px 16px;
+            padding: 12px 14px;
           }
 
           .summaryRow.dual {
@@ -1867,13 +2288,13 @@ export default function MonthPage(props) {
 
           .summaryHalf {
             display: grid;
-            grid-template-columns: 190px 1fr;
-            gap: 14px;
+            grid-template-columns: 160px 1fr;
+            gap: 10px;
             align-items: stretch;
             border: 1px solid #ececec;
             border-radius: 16px;
             background: #fcfcfc;
-            padding: 14px 16px;
+            padding: 12px 14px;
           }
 
           .summaryLabel {
@@ -1890,7 +2311,7 @@ export default function MonthPage(props) {
 
           .summaryMetrics {
             display: grid;
-            gap: 10px;
+            gap: 8px;
             align-items: center;
           }
 
@@ -1918,7 +2339,7 @@ export default function MonthPage(props) {
 
           .summaryMetric strong {
             display: block;
-            font-size: 19px;
+            font-size: 17px;
             line-height: 1.05;
             font-weight: 900;
             letter-spacing: -0.02em;
@@ -1952,7 +2373,7 @@ export default function MonthPage(props) {
           .overrideNote {
             margin-top: 10px;
             font-size: 12px;
-            line-height: 1.45;
+            line-height: 1.55;
             color: #64748b;
             font-weight: 700;
           }
@@ -2295,34 +2716,50 @@ export default function MonthPage(props) {
             box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.16);
           }
 
-          @media (max-width: 1220px) {
-            .titleLine {
-              align-items: flex-start;
+          @media (max-width: 1180px) {
+            .yearReturnBox {
+              min-width: 130px;
+              padding-left: 16px;
+              padding-right: 16px;
             }
 
-            .inlineCompareWrap {
-              justify-content: flex-start;
+            .yearReturnValue {
+              font-size: 30px;
+            }
+
+            .year {
+              font-size: 60px;
+            }
+
+            .inlineCompareLabel {
+              font-size: 13px;
             }
           }
 
           @media (max-width: 1100px) {
             .summaryRow {
-              grid-template-columns: 1fr;
+              grid-template-columns: 150px 1fr;
+              gap: 10px;
+              padding: 12px 14px;
             }
 
             .summaryHalf {
-              grid-template-columns: 1fr;
+              grid-template-columns: 150px 1fr;
+              gap: 10px;
+              padding: 12px 14px;
             }
 
             .summaryLabel {
-              border-right: 0;
-              border-bottom: 1px solid #ececec;
-              padding-right: 0;
-              padding-bottom: 10px;
+              border-right: 1px solid #ececec;
+              border-bottom: 0;
+              padding-right: 8px;
+              padding-bottom: 0;
+              font-size: 13px;
             }
 
             .summaryRow.dual {
-              grid-template-columns: 1fr;
+              grid-template-columns: 1fr 1fr;
+              gap: 10px;
             }
 
             .charts2 {
@@ -2335,57 +2772,103 @@ export default function MonthPage(props) {
           }
 
           @media (max-width: 980px) {
-            .callout {
-              display: none;
+            .yearAndNav {
+              min-height: 0;
+              display: grid;
+              grid-template-columns: 1fr;
+              justify-content: center;
+              align-items: center;
+              row-gap: 16px;
             }
 
-            .year {
-              font-size: 58px;
+            .yearReturnWrap {
+              position: static;
+              transform: none;
+              grid-column: 1;
+              grid-row: 1;
+              justify-self: center;
             }
 
-            .arrowCircle {
-              width: 56px !important;
-              height: 56px !important;
-              min-width: 56px !important;
-              min-height: 56px !important;
-            }
-          }
-
-          @media (max-width: 820px) {
-            .titleLine {
-              flex-direction: column;
-              align-items: flex-start;
+            .titleMain {
+              position: static;
+              transform: none;
+              width: auto;
+              grid-column: 1;
+              grid-row: 2;
             }
 
             .inlineCompareWrap {
-              width: 100%;
+              position: static;
+              transform: none;
+              justify-content: center;
+              grid-column: 1;
+              grid-row: 3;
+            }
+
+            .yearLine {
+              gap: 12px;
+            }
+
+            :global(.monthArrowButton) {
+              width: 44px !important;
+              height: 44px !important;
+              min-width: 44px !important;
+              min-height: 44px !important;
+            }
+
+            :global(.monthArrowSvg) {
+              width: 30px !important;
+              height: 30px !important;
+              min-width: 30px !important;
+              min-height: 30px !important;
+            }
+
+            .callout {
+              display: none;
             }
           }
 
           @media (max-width: 720px) {
-            .summaryMetrics.three,
+            .summaryMetrics.three {
+              grid-template-columns: repeat(3, minmax(0, 1fr));
+              gap: 8px;
+            }
+
             .summaryMetrics.two {
-              grid-template-columns: 1fr;
+              grid-template-columns: repeat(2, minmax(0, 1fr));
+              gap: 8px;
+            }
+
+            .summaryMetric strong {
+              font-size: 16px;
+            }
+
+            .summaryKey {
+              font-size: 9px;
+              margin-bottom: 4px;
             }
 
             .monthNav {
               gap: 8px;
             }
 
-            .titleMain {
-              align-items: flex-start;
-            }
-
             .inlineCompareWrap {
-              flex-direction: column;
-              align-items: stretch;
-              gap: 6px;
+              width: auto;
+              justify-content: center;
             }
 
             .compareSelectMini {
-              width: 100%;
-              min-width: 100%;
-              max-width: 100%;
+              width: 88px;
+              min-width: 88px;
+              max-width: 88px;
+              height: 42px;
+              padding: 0 10px;
+              font-size: 13px;
+              border-radius: 999px;
+            }
+
+            .inlineCompareLabel {
+              font-size: 12px;
             }
 
             .toolbar {
@@ -2403,25 +2886,52 @@ export default function MonthPage(props) {
           }
 
           @media (max-width: 520px) {
+            .hero {
+              padding: 14px;
+              border-radius: 16px;
+            }
+
+            .yearAndNav {
+              row-gap: 14px;
+              justify-content: center;
+              align-items: center;
+            }
+
+            .yearReturnBox {
+              min-width: 120px;
+              padding: 10px 16px;
+              border-radius: 16px;
+            }
+
+            .yearReturnKicker {
+              font-size: 11px;
+              margin-bottom: 6px;
+            }
+
+            .yearReturnValue {
+              font-size: 26px;
+            }
+
+            .yearLine {
+              gap: 6px;
+            }
+
             .year {
               font-size: 46px;
             }
 
-            .titleMain {
-              gap: 12px;
+            :global(.monthArrowButton) {
+              width: 36px !important;
+              height: 40px !important;
+              min-width: 36px !important;
+              min-height: 40px !important;
             }
 
-            .monthLink {
-              font-size: 14px;
-              padding: 7px 10px;
-            }
-
-            .summaryMetric strong {
-              font-size: 20px;
-            }
-
-            .dayNum {
-              font-size: 15px;
+            :global(.monthArrowSvg) {
+              width: 25px !important;
+              height: 25px !important;
+              min-width: 25px !important;
+              min-height: 25px !important;
             }
 
             .monthsBar {
@@ -2441,21 +2951,93 @@ export default function MonthPage(props) {
               display: none;
             }
 
-            .monthMeta,
-            .subLink {
+            .monthLink {
+              font-size: 14px;
+              padding: 7px 10px;
+            }
+
+            .summaryRows {
+              gap: 12px;
+            }
+
+            .summaryRow,
+            .summaryHalf {
+              display: block;
+              padding: 14px;
+            }
+
+            .summaryRow.dual {
+              display: grid;
+              grid-template-columns: 1fr;
+              gap: 12px;
+            }
+
+            .summaryLabel {
+              border-right: 0;
+              border-bottom: 1px solid #ececec;
+              padding-right: 0;
+              padding-bottom: 10px;
+              margin-bottom: 12px;
+              font-size: 14px;
+            }
+
+            .summaryMetrics.three,
+            .summaryMetrics.two {
+              grid-template-columns: 1fr;
+              gap: 12px;
+            }
+
+            .summaryMetric {
+              display: flex;
+              justify-content: space-between;
+              align-items: baseline;
+              gap: 12px;
+            }
+
+            .summaryKey {
+              font-size: 11px;
+              margin-bottom: 0;
+            }
+
+            .summaryMetric strong {
               font-size: 17px;
+              text-align: right;
             }
 
-            .arrowCircle {
-              width: 50px !important;
-              height: 50px !important;
-              min-width: 50px !important;
-              min-height: 50px !important;
+            .dayNum {
+              font-size: 15px;
             }
 
-            .arrowSvg {
+            .charts2 {
+              gap: 14px;
+            }
+
+            .chartBox {
+              padding: 6px;
+              border-radius: 14px;
+              overflow: hidden;
+            }
+          }
+
+          @media (max-width: 390px) {
+            .year {
+              font-size: 40px;
+            }
+
+            .yearLine {
+              gap: 4px;
+            }
+
+            :global(.monthArrowButton) {
+              width: 30px !important;
+              min-width: 30px !important;
+            }
+
+            :global(.monthArrowSvg) {
               width: 22px !important;
               height: 22px !important;
+              min-width: 22px !important;
+              min-height: 22px !important;
             }
           }
         `}</style>
@@ -2466,10 +3048,19 @@ export default function MonthPage(props) {
 
 function Th({ children, onClick, active, dir, className, title }) {
   return (
-    <th onClick={onClick} className={className} style={{ cursor: "pointer" }} title={title}>
+    <th
+      onClick={onClick}
+      className={className}
+      style={{ cursor: "pointer" }}
+      title={title}
+    >
       <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
         {children}
-        {active ? <span style={{ opacity: 0.6 }}>{dir === "asc" ? "▲" : "▼"}</span> : <span style={{ opacity: 0.25 }}>↕</span>}
+        {active ? (
+          <span style={{ opacity: 0.6 }}>{dir === "asc" ? "▲" : "▼"}</span>
+        ) : (
+          <span style={{ opacity: 0.25 }}>↕</span>
+        )}
       </span>
     </th>
   );

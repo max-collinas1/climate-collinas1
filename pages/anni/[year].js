@@ -449,7 +449,7 @@ function YearArrow({ href, direction, label, title, disabled = false }) {
         d={d}
         fill="none"
         stroke="currentColor"
-        strokeWidth="5"
+        strokeWidth="4.2"
         strokeLinecap="round"
         strokeLinejoin="round"
       />
@@ -476,7 +476,9 @@ export default function YearOverviewPage(props) {
 
   const year = props.year ?? "";
   const days = Array.isArray(props.days) ? props.days : [];
-  const monthsInYear = Array.isArray(props.monthsInYear) ? props.monthsInYear : [];
+  const monthsInYear = Array.isArray(props.monthsInYear)
+    ? props.monthsInYear
+    : [];
   const allYears = Array.isArray(props.allYears) ? props.allYears : [];
   const prevYear = props.prevYear ?? null;
   const nextYear = props.nextYear ?? null;
@@ -487,6 +489,7 @@ export default function YearOverviewPage(props) {
   const [mounted, setMounted] = useState(false);
   const [showRecords, setShowRecords] = useState(false);
   const [pickYear, setPickYear] = useState("");
+  const [pickMonth, setPickMonth] = useState("");
 
   useEffect(() => setMounted(true), []);
 
@@ -1469,6 +1472,31 @@ export default function YearOverviewPage(props) {
           <div className="yearTopRow">
             <div className="yearBlock">
               <div className="yearAndNav">
+                <div className="monthSelectHeaderWrap">
+                  <span className="headerSelectLabel">Seleziona mese</span>
+
+                  <select
+                    className="headerSelectPill monthHeaderSelect"
+                    value={pickMonth}
+                    onChange={(e) => {
+                      const nextMonth = e.target.value;
+                      setPickMonth(nextMonth);
+
+                      if (nextMonth) {
+                        const mm = monthNum(nextMonth);
+                        router.push(`/mesi/${year}/${mm}`);
+                      }
+                    }}
+                  >
+                    <option value="">Mese</option>
+                    {monthsInYear.map((ym) => (
+                      <option key={ym} value={ym}>
+                        {monthFull(ym)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
                 <div className="titleMain">
                   <div className="kicker">Anno</div>
 
@@ -1494,15 +1522,16 @@ export default function YearOverviewPage(props) {
                 </div>
 
                 <div className="inlineCompareWrap">
-                  <span className="inlineCompareLabel">Seleziona anno</span>
+                  <span className="headerSelectLabel">Seleziona anno</span>
 
                   <select
                     id="year-select"
-                    className="compareSelectMini"
+                    className="headerSelectPill yearHeaderSelect"
                     value={pickYear}
                     onChange={(e) => {
                       const nextValue = e.target.value;
                       setPickYear(nextValue);
+
                       if (nextValue && nextValue !== year) {
                         router.push(`/anni/${nextValue}`);
                       }
@@ -1531,48 +1560,6 @@ export default function YearOverviewPage(props) {
                 precipitazioni, umidità, vento, pressione, UV e radiazione.
               </p>
             </div>
-          </section>
-
-          <section className="monthsBar" aria-label="Seleziona mese">
-            <div className="monthsBarHead">Seleziona mese</div>
-
-            <select
-              className="monthSelectMobile"
-              defaultValue=""
-              onChange={(e) => {
-                const ym = e.target.value;
-                if (!ym) return;
-                const mm = monthNum(ym);
-                router.push(`/mesi/${year}/${mm}`);
-              }}
-            >
-              <option value="">Mese</option>
-              {monthsInYear.map((ym) => (
-                <option key={ym} value={ym}>
-                  {monthFull(ym)}
-                </option>
-              ))}
-            </select>
-
-            <nav className="monthNav">
-              {monthsInYear.map((ym) => {
-                const mm = monthNum(ym);
-                return (
-                  <Link
-                    key={ym}
-                    href={`/mesi/${year}/${mm}`}
-                    className="monthLink"
-                    title={`Apri ${monthFull(ym)}`}
-                    aria-label={`Apri ${monthFull(ym)}`}
-                  >
-                    <span className="ext" aria-hidden="true">
-                      ↗
-                    </span>
-                    <span className="monthText">{monthFull(ym)}</span>
-                  </Link>
-                );
-              })}
-            </nav>
           </section>
 
           <section className="summaryCompact">
@@ -1862,7 +1849,7 @@ export default function YearOverviewPage(props) {
         )}
 
         <section className="monthsTableHead">
-          <div className="monthsTableTitle">Seleziona mese</div>
+          <div className="monthsTableTitle">Riepilogo mensile</div>
         </section>
 
         <section className="tableWrap">
@@ -2122,15 +2109,13 @@ export default function YearOverviewPage(props) {
             border: 1px solid #ececec;
             border-radius: 18px;
             background: rgba(255, 255, 255, 0.9);
-            box-shadow: 0 1px 0 rgba(0, 0, 0, 0.02),
+            box-shadow:
+              0 1px 0 rgba(0, 0, 0, 0.02),
               0 12px 34px rgba(0, 0, 0, 0.04);
             padding: 22px;
           }
 
-          .yearTopRow {
-            width: 100%;
-          }
-
+          .yearTopRow,
           .yearBlock {
             width: 100%;
           }
@@ -2142,6 +2127,90 @@ export default function YearOverviewPage(props) {
             align-items: center;
             justify-content: center;
             width: 100%;
+          }
+
+          .monthSelectHeaderWrap {
+            position: absolute;
+            left: 0;
+            top: 50%;
+            transform: translateY(-50%);
+            z-index: 2;
+            display: grid;
+            justify-items: center;
+            align-items: center;
+            gap: 10px;
+            min-width: 170px;
+          }
+
+          .inlineCompareWrap {
+            position: absolute;
+            right: 0;
+            top: 50%;
+            transform: translateY(-50%);
+            z-index: 2;
+            display: grid;
+            justify-items: center;
+            align-items: center;
+            gap: 10px;
+            min-width: 170px;
+          }
+
+          .headerSelectLabel {
+            display: block;
+            font-size: 13px;
+            letter-spacing: 0.13em;
+            text-transform: uppercase;
+            color: #475569;
+            font-weight: 850;
+            line-height: 1.1;
+            text-align: center;
+            white-space: nowrap;
+          }
+
+          .headerSelectPill {
+            appearance: none;
+            -webkit-appearance: none;
+            -moz-appearance: none;
+            height: 54px;
+            padding: 0 16px;
+            border-radius: 999px;
+            background: linear-gradient(180deg, #ffffff, #f8fafc);
+            border: 1px solid #d8dee7;
+            box-shadow:
+              inset 0 1px 0 rgba(255, 255, 255, 0.9),
+              0 4px 14px rgba(15, 23, 42, 0.04);
+            font-weight: 900;
+            font-size: 16px;
+            color: #0f172a;
+            cursor: pointer;
+            color-scheme: light;
+            text-align: center;
+          }
+
+          .headerSelectPill:focus {
+            outline: none;
+            border-color: #b9c5d6;
+            box-shadow:
+              0 0 0 2px rgba(37, 99, 235, 0.12),
+              inset 0 1px 0 rgba(255, 255, 255, 0.9),
+              0 4px 14px rgba(15, 23, 42, 0.05);
+          }
+
+          .headerSelectPill option {
+            color: #111111;
+            background: #ffffff;
+          }
+
+          .monthHeaderSelect {
+            width: 132px;
+            min-width: 132px;
+            max-width: 132px;
+          }
+
+          .yearHeaderSelect {
+            width: 104px;
+            min-width: 104px;
+            max-width: 104px;
           }
 
           .titleMain {
@@ -2169,7 +2238,7 @@ export default function YearOverviewPage(props) {
             display: inline-flex;
             align-items: center;
             justify-content: center;
-            gap: 18px;
+            gap: 14px;
             width: max-content;
           }
 
@@ -2179,22 +2248,23 @@ export default function YearOverviewPage(props) {
             line-height: 1;
             letter-spacing: -0.04em;
             text-align: center;
+            color: #111111;
           }
 
           :global(.yearArrowButton) {
             display: inline-flex !important;
             align-items: center !important;
             justify-content: center !important;
-            width: 58px !important;
-            height: 58px !important;
-            min-width: 58px !important;
-            min-height: 58px !important;
+            width: 48px !important;
+            height: 48px !important;
+            min-width: 48px !important;
+            min-height: 48px !important;
             border-radius: 999px !important;
-            color: #111827 !important;
+            color: #475569 !important;
             text-decoration: none !important;
             user-select: none !important;
             flex: 0 0 auto !important;
-            opacity: 1 !important;
+            opacity: 0.82 !important;
             visibility: visible !important;
             transition:
               background 120ms ease,
@@ -2203,83 +2273,25 @@ export default function YearOverviewPage(props) {
           }
 
           :global(.yearArrowButton:hover) {
-            background: rgba(15, 23, 42, 0.06) !important;
+            background: rgba(15, 23, 42, 0.05) !important;
             transform: translateY(-1px);
+            opacity: 1 !important;
           }
 
           :global(.yearArrowButton.disabled) {
-            opacity: 0.34 !important;
+            opacity: 0.28 !important;
             pointer-events: none !important;
           }
 
           :global(.yearArrowSvg) {
-            width: 40px !important;
-            height: 40px !important;
-            min-width: 40px !important;
-            min-height: 40px !important;
+            width: 32px !important;
+            height: 32px !important;
+            min-width: 32px !important;
+            min-height: 32px !important;
             display: block !important;
             overflow: visible !important;
-            color: #111827 !important;
+            color: #475569 !important;
             stroke: currentColor !important;
-          }
-
-          .inlineCompareWrap {
-            position: absolute;
-            right: 0;
-            top: 50%;
-            transform: translateY(-50%);
-            z-index: 2;
-            display: inline-flex;
-            align-items: center;
-            justify-content: flex-end;
-            gap: 10px;
-            flex-wrap: nowrap;
-            min-width: 0;
-          }
-
-          .inlineCompareLabel {
-            font-size: 14px;
-            font-weight: 900;
-            color: #475569;
-            white-space: nowrap;
-          }
-
-          .compareSelectMini {
-            appearance: none;
-            -webkit-appearance: none;
-            -moz-appearance: none;
-            width: 104px;
-            min-width: 104px;
-            max-width: 104px;
-            height: 54px;
-            padding: 0 14px;
-            border-radius: 999px;
-            background: linear-gradient(180deg, #ffffff, #f8fafc);
-            border: 1px solid #d8dee7;
-            box-shadow:
-              inset 0 1px 0 rgba(255, 255, 255, 0.9),
-              0 4px 14px rgba(15, 23, 42, 0.04);
-            font-weight: 900;
-            font-size: 16px;
-            color: #0f172a;
-            cursor: pointer;
-            color-scheme: light;
-            text-align: center;
-          }
-
-          .compareSelectMini:focus {
-            outline: none;
-            box-shadow:
-              0 0 0 2px rgba(37, 99, 235, 0.12),
-              inset 0 1px 0 rgba(255, 255, 255, 0.9),
-              0 4px 14px rgba(15, 23, 42, 0.05);
-            border-color: #b9c5d6;
-          }
-
-          .compareSelectMini option,
-          .compareSelectMini optgroup {
-            color: #111111;
-            background: #ffffff;
           }
 
           .pageDescription {
@@ -2309,109 +2321,6 @@ export default function YearOverviewPage(props) {
             hyphens: none;
             -webkit-hyphens: none;
             overflow-wrap: break-word;
-          }
-
-          .monthsBar {
-            margin-top: 18px;
-            border: 1px solid #ececec;
-            border-radius: 16px;
-            background: #fcfcfc;
-            padding: 16px 16px 14px;
-          }
-
-          .monthsBarHead {
-            font-size: 13px;
-            letter-spacing: 0.12em;
-            text-transform: uppercase;
-            color: #374151;
-            font-weight: 900;
-            margin-bottom: 14px;
-            text-align: center;
-          }
-
-          .monthNav {
-            display: flex;
-            flex-wrap: wrap;
-            align-items: center;
-            justify-content: center;
-            gap: 10px;
-            text-align: center;
-          }
-
-          .monthSelectMobile {
-            display: none;
-            appearance: none;
-            -webkit-appearance: none;
-            -moz-appearance: none;
-            width: 100%;
-            height: 50px;
-            padding: 0 16px;
-            border-radius: 999px;
-            background: linear-gradient(180deg, #ffffff, #f8fafc);
-            border: 1px solid #d8dee7;
-            box-shadow:
-              inset 0 1px 0 rgba(255, 255, 255, 0.9),
-              0 4px 14px rgba(15, 23, 42, 0.04);
-            font-weight: 900;
-            font-size: 15px;
-            color: #0f172a;
-            cursor: pointer;
-            color-scheme: light;
-            text-align: center;
-          }
-
-          .monthSelectMobile:focus {
-            outline: none;
-            border-color: #b9c5d6;
-            box-shadow:
-              0 0 0 2px rgba(37, 99, 235, 0.12),
-              inset 0 1px 0 rgba(255, 255, 255, 0.9),
-              0 4px 14px rgba(15, 23, 42, 0.05);
-          }
-
-          .monthSelectMobile option {
-            color: #111111;
-            background: #ffffff;
-          }
-
-          .monthLink {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            padding: 8px 12px;
-            border-radius: 11px;
-            text-decoration: none;
-            color: #111;
-            font-weight: 900;
-            font-size: 15px;
-            line-height: 1.1;
-            background: #fff;
-            border: 1px solid #ececec;
-            transition:
-              background 120ms ease,
-              transform 120ms ease,
-              box-shadow 120ms ease;
-          }
-
-          .monthText {
-            font-weight: 900;
-          }
-
-          .monthLink:hover {
-            background: #f6f6f6;
-            transform: translateY(-1px);
-            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.06);
-          }
-
-          .monthLink:focus-visible {
-            outline: 2px solid #111;
-            outline-offset: 2px;
-          }
-
-          .ext {
-            font-size: 14px;
-            opacity: 0.65;
-            transform: translateY(-1px);
           }
 
           .summaryCompact {
@@ -2948,6 +2857,33 @@ export default function YearOverviewPage(props) {
             opacity: 0.85;
           }
 
+          @media (max-width: 1180px) {
+            .monthSelectHeaderWrap,
+            .inlineCompareWrap {
+              min-width: 145px;
+            }
+
+            .headerSelectLabel {
+              font-size: 12px;
+            }
+
+            .monthHeaderSelect {
+              width: 122px;
+              min-width: 122px;
+              max-width: 122px;
+            }
+
+            .yearHeaderSelect {
+              width: 94px;
+              min-width: 94px;
+              max-width: 94px;
+            }
+
+            .year {
+              font-size: 62px;
+            }
+          }
+
           @media (max-width: 1100px) {
             .summaryRow {
               grid-template-columns: 150px 1fr;
@@ -3001,30 +2937,38 @@ export default function YearOverviewPage(props) {
               grid-row: 1;
             }
 
+            .monthSelectHeaderWrap {
+              position: static;
+              transform: none;
+              grid-column: 1;
+              grid-row: 2;
+              justify-self: center;
+            }
+
             .inlineCompareWrap {
               position: static;
               transform: none;
-              justify-content: center;
               grid-column: 1;
-              grid-row: 2;
+              grid-row: 3;
+              justify-self: center;
             }
 
             .yearLine {
-              gap: 14px;
+              gap: 12px;
             }
 
             :global(.yearArrowButton) {
-              width: 52px !important;
-              height: 52px !important;
-              min-width: 52px !important;
-              min-height: 52px !important;
+              width: 44px !important;
+              height: 44px !important;
+              min-width: 44px !important;
+              min-height: 44px !important;
             }
 
             :global(.yearArrowSvg) {
-              width: 36px !important;
-              height: 36px !important;
-              min-width: 36px !important;
-              min-height: 36px !important;
+              width: 30px !important;
+              height: 30px !important;
+              min-width: 30px !important;
+              min-height: 30px !important;
             }
           }
 
@@ -3048,27 +2992,22 @@ export default function YearOverviewPage(props) {
               margin-bottom: 4px;
             }
 
-            .monthNav {
-              gap: 8px;
+            .headerSelectPill {
+              height: 42px;
+              padding: 0 12px;
+              font-size: 13px;
             }
 
-            .inlineCompareWrap {
-              width: auto;
-              justify-content: center;
+            .monthHeaderSelect {
+              width: 112px;
+              min-width: 112px;
+              max-width: 112px;
             }
 
-            .compareSelectMini {
+            .yearHeaderSelect {
               width: 88px;
               min-width: 88px;
               max-width: 88px;
-              height: 42px;
-              padding: 0 10px;
-              font-size: 13px;
-              border-radius: 999px;
-            }
-
-            .inlineCompareLabel {
-              font-size: 12px;
             }
           }
 
@@ -3085,7 +3024,7 @@ export default function YearOverviewPage(props) {
             }
 
             .yearLine {
-              gap: 8px;
+              gap: 6px;
             }
 
             .year {
@@ -3093,17 +3032,17 @@ export default function YearOverviewPage(props) {
             }
 
             :global(.yearArrowButton) {
-              width: 40px !important;
-              height: 44px !important;
-              min-width: 40px !important;
-              min-height: 44px !important;
+              width: 36px !important;
+              height: 40px !important;
+              min-width: 36px !important;
+              min-height: 40px !important;
             }
 
             :global(.yearArrowSvg) {
-              width: 30px !important;
-              height: 30px !important;
-              min-width: 30px !important;
-              min-height: 30px !important;
+              width: 25px !important;
+              height: 25px !important;
+              min-width: 25px !important;
+              min-height: 25px !important;
             }
 
             .pageDescription {
@@ -3121,28 +3060,6 @@ export default function YearOverviewPage(props) {
               font-weight: 800;
               text-align: justify;
               text-align-last: left;
-            }
-
-            .monthsBar {
-              padding: 14px;
-            }
-
-            .monthsBarHead {
-              margin-bottom: 10px;
-              font-size: 12px;
-            }
-
-            .monthSelectMobile {
-              display: block;
-            }
-
-            .monthNav {
-              display: none;
-            }
-
-            .monthLink {
-              font-size: 14px;
-              padding: 7px 10px;
             }
 
             .summaryRows {
@@ -3205,6 +3122,28 @@ export default function YearOverviewPage(props) {
               padding: 6px;
               border-radius: 14px;
               overflow: hidden;
+            }
+          }
+
+          @media (max-width: 390px) {
+            .year {
+              font-size: 46px;
+            }
+
+            .yearLine {
+              gap: 4px;
+            }
+
+            :global(.yearArrowButton) {
+              width: 30px !important;
+              min-width: 30px !important;
+            }
+
+            :global(.yearArrowSvg) {
+              width: 22px !important;
+              height: 22px !important;
+              min-width: 22px !important;
+              min-height: 22px !important;
             }
           }
         `}</style>
