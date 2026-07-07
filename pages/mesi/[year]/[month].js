@@ -268,10 +268,6 @@ function monthFullFromYm(ym) {
   return MONTHS_IT_FULL[mm - 1] || String(ym).slice(5, 7);
 }
 
-function monthNum(ym) {
-  return String(ym).slice(5, 7);
-}
-
 function dayOfMonthLabel(dateStr) {
   if (!dateStr || String(dateStr).length < 10) return "—";
   const dd = Number(String(dateStr).slice(8, 10));
@@ -375,6 +371,85 @@ function axisTooltipFormatter(params, specs) {
   return lines.join("<br/>");
 }
 
+function buildMonthStats(days, rainOverride) {
+  const rawRainMonthSum = sumFinite(days.map((d) => d.rain_total));
+  const resolvedRainMonth = applyRainMonthOverride(rawRainMonthSum, rainOverride);
+
+  return {
+    tmaxMean: avgFinite(days.map((d) => d.tmax)),
+    tmean: avgFinite(days.map((d) => d.tmean)),
+    tminMean: avgFinite(days.map((d) => d.tmin)),
+    tmaxAbs: maxFinite(days.map((d) => d.tmax)),
+    tmeanMax: maxFinite(days.map((d) => d.tmean)),
+    tminAbs: minFinite(days.map((d) => d.tmin)),
+
+    rainSum: resolvedRainMonth.value,
+    rainIsOverride: resolvedRainMonth.isOverride,
+    rainLabel: resolvedRainMonth.label,
+    rainSource: resolvedRainMonth.source,
+    rainNote: resolvedRainMonth.note,
+    rainyDays: days
+      .map((d) => n(d.rain_total))
+      .filter((x) => Number.isFinite(x) && x > 1).length,
+    rainDayMax: maxFinite(days.map((d) => d.rain_total)),
+    rainrateMax: maxFinite(days.map((d) => d.rainrate_max)),
+
+    rhMaxMean: avgFinite(days.map((d) => getRhMax(d))),
+    rhMean: avgFinite(days.map((d) => getRhMean(d))),
+    rhMinMean: avgFinite(days.map((d) => getRhMin(d))),
+    rhMaxAbs: maxFinite(days.map((d) => getRhMax(d))),
+    rhMeanMax: maxFinite(days.map((d) => getRhMean(d))),
+    rhMinAbs: minFinite(days.map((d) => getRhMin(d))),
+
+    windMean: avgFinite(days.map((d) => d.wind_avg)),
+    gustMean: avgFinite(days.map((d) => d.gust_max)),
+    windMaxMean: maxFinite(days.map((d) => d.wind_avg)),
+    gustMax: maxFinite(days.map((d) => d.gust_max)),
+    windDirMean: circMeanDeg(days.map((d) => d.wind_dir_mean_deg)),
+
+    pressMaxMean: avgFinite(days.map((d) => d.press_max)),
+    pressMean: avgFinite(days.map((d) => d.press_avg)),
+    pressMinMean: avgFinite(days.map((d) => d.press_min)),
+    pressMaxAbs: maxFinite(days.map((d) => d.press_max)),
+    pressMeanMax: maxFinite(days.map((d) => d.press_avg)),
+    pressMinAbs: minFinite(days.map((d) => d.press_min)),
+
+    uvMean: avgFinite(days.map((d) => d.uv_mean_pos)),
+    uvMax: maxFinite(days.map((d) => d.uv_max)),
+    uvMaxMean: avgFinite(days.map((d) => d.uv_max)),
+
+    solarMean: avgFinite(days.map((d) => d.solar_mean_pos)),
+    solarMax: maxFinite(days.map((d) => d.solar_max)),
+    solarMaxMean: avgFinite(days.map((d) => d.solar_max)),
+  };
+}
+
+function SummaryMetric({
+  label,
+  value,
+  tone = "neutral",
+  extremeLabel = "",
+  extremeValue = "",
+  extremeTone = "neutral",
+}) {
+  return (
+    <div className={`summaryMetric summaryMetric-${tone}`}>
+      <span className="summaryKey">{label}</span>
+
+      <div className="summaryValueLine">
+        <strong className={`summaryValue summaryValue-${tone}`}>{value}</strong>
+      </div>
+
+      {extremeLabel ? (
+        <div className={`summaryExtreme summaryExtreme-${extremeTone}`}>
+          <span>{extremeLabel}</span>
+          <b>{extremeValue}</b>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function MonthArrow({ href, direction, label, title, disabled = false }) {
   const d =
     direction === "prev"
@@ -463,6 +538,16 @@ export default function MonthPage(props) {
     }
   }
 
+  function onMonthSelect(e) {
+    const itemYm = e.target.value;
+    if (!itemYm) return;
+
+    const yy = String(itemYm).slice(0, 4);
+    const mm = String(itemYm).slice(5, 7);
+
+    router.push(`/mesi/${yy}/${mm}`);
+  }
+
   const filtered = useMemo(() => {
     const qq = q.trim().toLowerCase();
     if (!qq) return days;
@@ -505,50 +590,7 @@ export default function MonthPage(props) {
     return [...days].sort((a, b) => String(a.date).localeCompare(String(b.date)));
   }, [days]);
 
-  const summary = useMemo(() => {
-    const rawRainMonthSum = sumFinite(days.map((d) => d.rain_total));
-    const resolvedRainMonth = applyRainMonthOverride(
-      rawRainMonthSum,
-      rainOverride
-    );
-
-    return {
-      minT: minFinite(days.map((d) => d.tmin)),
-      maxT: maxFinite(days.map((d) => d.tmax)),
-      meanT: avgFinite(days.map((d) => d.tmean)),
-
-      rainSum: resolvedRainMonth.value,
-      rainIsOverride: resolvedRainMonth.isOverride,
-      rainLabel: resolvedRainMonth.label,
-      rainSource: resolvedRainMonth.source,
-      rainNote: resolvedRainMonth.note,
-      rainyDays: days
-        .map((d) => n(d.rain_total))
-        .filter((x) => Number.isFinite(x) && x > 1).length,
-      rainrateMax: maxFinite(days.map((d) => d.rainrate_max)),
-
-      rhMean: avgFinite(days.map((d) => getRhMean(d))),
-      rhMinMean: avgFinite(days.map((d) => getRhMin(d))),
-      rhMaxMean: avgFinite(days.map((d) => getRhMax(d))),
-
-      windMean: avgFinite(days.map((d) => d.wind_avg)),
-      gustMean: avgFinite(days.map((d) => d.gust_max)),
-      gustMax: maxFinite(days.map((d) => d.gust_max)),
-      windDirMean: circMeanDeg(days.map((d) => d.wind_dir_mean_deg)),
-
-      pressMean: avgFinite(days.map((d) => d.press_avg)),
-      pressMinMean: avgFinite(days.map((d) => d.press_min)),
-      pressMaxMean: avgFinite(days.map((d) => d.press_max)),
-
-      uvMean: avgFinite(days.map((d) => d.uv_mean_pos)),
-      uvMax: maxFinite(days.map((d) => d.uv_max)),
-      uvMaxMean: avgFinite(days.map((d) => d.uv_max)),
-
-      solarMean: avgFinite(days.map((d) => d.solar_mean_pos)),
-      solarMax: maxFinite(days.map((d) => d.solar_max)),
-      solarMaxMean: avgFinite(days.map((d) => d.solar_max)),
-    };
-  }, [days, rainOverride]);
+  const summary = useMemo(() => buildMonthStats(days, rainOverride), [days, rainOverride]);
 
   const monthAvgRow = useMemo(() => {
     return {
@@ -1181,16 +1223,21 @@ export default function MonthPage(props) {
           <div className="yearTopRow">
             <div className="yearBlock">
               <div className="yearAndNav">
-                <div className="yearReturnWrap">
-                  <Link
-                    href={`/anni/${year}`}
-                    className="yearReturnBox"
-                    aria-label={`Torna all'anno ${year}`}
-                    title={`Torna all'anno ${year}`}
+                <div className="topMonthSelectWrap">
+                  <span className="selectorLabel">Seleziona mese</span>
+
+                  <select
+                    className="selectorPill monthTopSelect"
+                    value={ym}
+                    onChange={onMonthSelect}
+                    aria-label={`Seleziona mese ${year}`}
                   >
-                    <span className="yearReturnKicker">Anno</span>
-                    <span className="yearReturnValue">{year}</span>
-                  </Link>
+                    {monthsInYear.map((itemYm) => (
+                      <option key={itemYm} value={itemYm}>
+                        {monthFullFromYm(itemYm)}
+                      </option>
+                    ))}
+                  </select>
                 </div>
 
                 <div className="titleMain">
@@ -1215,17 +1262,25 @@ export default function MonthPage(props) {
                       disabled={!nextMonth}
                     />
                   </div>
+
+                  <Link
+                    href={`/anni/${year}`}
+                    className="yearInlineLink"
+                    aria-label={`Torna all'anno ${year}`}
+                    title={`Torna all'anno ${year}`}
+                  >
+                    <span>Anno</span>
+                    <b>{year}</b>
+                  </Link>
                 </div>
 
                 {compareAvailable.length > 0 && (
                   <div className="inlineCompareWrap">
-                    <span className="inlineCompareLabel">
-                      Mese in anni precedenti
-                    </span>
+                    <span className="selectorLabel">Seleziona anno</span>
 
                     <select
                       id="compare-month-select"
-                      className="compareSelectMini"
+                      className="selectorPill"
                       value={comparePick}
                       onChange={onCompareChange}
                     >
@@ -1242,50 +1297,6 @@ export default function MonthPage(props) {
             </div>
           </div>
 
-          <section className="monthsBar" aria-label={`Seleziona mese ${year}`}>
-            <div className="monthsBarHead">Seleziona mese {year}</div>
-
-            <select
-              className="monthSelectMobile"
-              value={ym}
-              onChange={(e) => {
-                const itemYm = e.target.value;
-                if (!itemYm) return;
-
-                const mm = monthNum(itemYm);
-                router.push(`/mesi/${year}/${mm}`);
-              }}
-            >
-              {monthsInYear.map((itemYm) => (
-                <option key={itemYm} value={itemYm}>
-                  {monthFullFromYm(itemYm)}
-                </option>
-              ))}
-            </select>
-
-            <nav className="monthNav">
-              {monthsInYear.map((itemYm) => {
-                const mm = monthNum(itemYm);
-                const isActive = String(itemYm) === String(ym);
-
-                return (
-                  <Link
-                    key={itemYm}
-                    href={`/mesi/${year}/${mm}`}
-                    className={`monthLink ${isActive ? "active" : ""}`}
-                    title={`Apri ${monthFullFromYm(itemYm)}`}
-                    aria-label={`Apri ${monthFullFromYm(itemYm)}`}
-                  >
-                    <span className="ext" aria-hidden="true">
-                      ↗
-                    </span>
-                    <span className="monthText">{monthFullFromYm(itemYm)}</span>
-                  </Link>
-                );
-              })}
-            </nav>
-          </section>
-
           <section className="summaryCompact">
             <div className="summaryHead">
               <div>
@@ -1299,83 +1310,133 @@ export default function MonthPage(props) {
                 <div className="summaryLabel">Temperature</div>
 
                 <div className="summaryMetrics three">
-                  <div className="summaryMetric">
-                    <span className="summaryKey">Max mese</span>
-                    <strong>{fmt(summary.maxT, 1)} °C</strong>
-                  </div>
+                  <SummaryMetric
+                    label="Massima media"
+                    value={`${fmt(summary.tmaxMean, 1)} °C`}
+                    tone="high"
+                    extremeLabel="Massima assoluta"
+                    extremeValue={`${fmt(summary.tmaxAbs, 1)} °C`}
+                    extremeTone="high"
+                  />
 
-                  <div className="summaryMetric">
-                    <span className="summaryKey">Media</span>
-                    <strong>{fmt(summary.meanT, 1)} °C</strong>
-                  </div>
+                  <SummaryMetric
+                    label="Media assoluta"
+                    value={`${fmt(summary.tmean, 1)} °C`}
+                    tone="neutral"
+                    extremeLabel="Media giornaliera max"
+                    extremeValue={`${fmt(summary.tmeanMax, 1)} °C`}
+                    extremeTone="high"
+                  />
 
-                  <div className="summaryMetric">
-                    <span className="summaryKey">Min mese</span>
-                    <strong>{fmt(summary.minT, 1)} °C</strong>
-                  </div>
+                  <SummaryMetric
+                    label="Minima media"
+                    value={`${fmt(summary.tminMean, 1)} °C`}
+                    tone="low"
+                    extremeLabel="Minima assoluta"
+                    extremeValue={`${fmt(summary.tminAbs, 1)} °C`}
+                    extremeTone="low"
+                  />
                 </div>
               </div>
 
               <div className="summaryRow">
                 <div className="summaryLabel">Precipitazioni</div>
 
-                <div className="summaryMetrics two">
-                  <div className="summaryMetric">
-                    <span className="summaryKey">Totale</span>
-                    <strong
-                      className={summary.rainIsOverride ? "rainOverrideValue" : ""}
-                      title={summary.rainIsOverride ? "Dato rivisto ARPAS" : ""}
-                    >
-                      {fmt(summary.rainSum, 1)} mm
-                    </strong>
-                  </div>
+                <div className="summaryMetrics four">
+                  <SummaryMetric
+                    label="Totale mensile"
+                    value={`${fmt(summary.rainSum, 1)} mm`}
+                    tone="high"
+                  />
 
-                  <div className="summaryMetric">
-                    <span className="summaryKey">Giorni &gt; 1 mm</span>
-                    <strong>{fmtInt(summary.rainyDays)}</strong>
-                  </div>
+                  <SummaryMetric
+                    label="Giorni > 1 mm"
+                    value={fmtInt(summary.rainyDays)}
+                    tone="high"
+                  />
+
+                  <SummaryMetric
+                    label="Giorno più piovoso"
+                    value={`${fmt(summary.rainDayMax, 1)} mm`}
+                    tone="high"
+                  />
+
+                  <SummaryMetric
+                    label="Rain rate più alto"
+                    value={`${fmt(summary.rainrateMax, 1)} mm/h`}
+                    tone="high"
+                  />
                 </div>
+
+                {summary.rainIsOverride && summary.rainNote ? (
+                  <div className="overrideNote">{summary.rainNote}</div>
+                ) : null}
               </div>
 
               <div className="summaryRow">
                 <div className="summaryLabel">Umidità</div>
 
                 <div className="summaryMetrics three">
-                  <div className="summaryMetric">
-                    <span className="summaryKey">Max media</span>
-                    <strong>{fmtInt(summary.rhMaxMean)} %</strong>
-                  </div>
+                  <SummaryMetric
+                    label="Massima media"
+                    value={`${fmtInt(summary.rhMaxMean)} %`}
+                    tone="high"
+                    extremeLabel="Massima assoluta"
+                    extremeValue={`${fmtInt(summary.rhMaxAbs)} %`}
+                    extremeTone="high"
+                  />
 
-                  <div className="summaryMetric">
-                    <span className="summaryKey">Media</span>
-                    <strong>{fmtInt(summary.rhMean)} %</strong>
-                  </div>
+                  <SummaryMetric
+                    label="Media assoluta"
+                    value={`${fmtInt(summary.rhMean)} %`}
+                    tone="neutral"
+                    extremeLabel="Media giornaliera max"
+                    extremeValue={`${fmtInt(summary.rhMeanMax)} %`}
+                    extremeTone="high"
+                  />
 
-                  <div className="summaryMetric">
-                    <span className="summaryKey">Min media</span>
-                    <strong>{fmtInt(summary.rhMinMean)} %</strong>
-                  </div>
+                  <SummaryMetric
+                    label="Minima media"
+                    value={`${fmtInt(summary.rhMinMean)} %`}
+                    tone="low"
+                    extremeLabel="Minima assoluta"
+                    extremeValue={`${fmtInt(summary.rhMinAbs)} %`}
+                    extremeTone="low"
+                  />
                 </div>
               </div>
 
               <div className="summaryRow">
                 <div className="summaryLabel">Vento</div>
 
-                <div className="summaryMetrics three">
-                  <div className="summaryMetric">
-                    <span className="summaryKey">Medio</span>
-                    <strong>{fmt(summary.windMean, 1)} km/h</strong>
-                  </div>
+                <div className="summaryMetrics four">
+                  <SummaryMetric
+                    label="Media assoluta"
+                    value={`${fmt(summary.windMean, 1)} km/h`}
+                    tone="neutral"
+                  />
 
-                  <div className="summaryMetric">
-                    <span className="summaryKey">Raffica media</span>
-                    <strong>{fmt(summary.gustMean, 1)} km/h</strong>
-                  </div>
+                  <SummaryMetric
+                    label="Media raffiche"
+                    value={`${fmt(summary.gustMean, 1)} km/h`}
+                    tone="high"
+                  />
 
-                  <div className="summaryMetric">
-                    <span className="summaryKey">Direzione media</span>
-                    <strong>{currentDirTxt}</strong>
-                  </div>
+                  <SummaryMetric
+                    label="Media massima"
+                    value={`${fmt(summary.windMaxMean, 1)} km/h`}
+                    tone="high"
+                  />
+
+                  <SummaryMetric
+                    label="Raffica massima"
+                    value={`${fmt(summary.gustMax, 1)} km/h`}
+                    tone="high"
+                  />
+                </div>
+
+                <div className="summarySmallNote">
+                  Direzione media: <b>{currentDirTxt}</b>
                 </div>
               </div>
 
@@ -1383,20 +1444,32 @@ export default function MonthPage(props) {
                 <div className="summaryLabel">Pressione</div>
 
                 <div className="summaryMetrics three">
-                  <div className="summaryMetric">
-                    <span className="summaryKey">Max media</span>
-                    <strong>{fmt(summary.pressMaxMean, 1)} hPa</strong>
-                  </div>
+                  <SummaryMetric
+                    label="Massima media"
+                    value={`${fmt(summary.pressMaxMean, 1)} hPa`}
+                    tone="high"
+                    extremeLabel="Massima assoluta"
+                    extremeValue={`${fmt(summary.pressMaxAbs, 1)} hPa`}
+                    extremeTone="high"
+                  />
 
-                  <div className="summaryMetric">
-                    <span className="summaryKey">Media</span>
-                    <strong>{fmt(summary.pressMean, 1)} hPa</strong>
-                  </div>
+                  <SummaryMetric
+                    label="Media assoluta"
+                    value={`${fmt(summary.pressMean, 1)} hPa`}
+                    tone="neutral"
+                    extremeLabel="Media giornaliera max"
+                    extremeValue={`${fmt(summary.pressMeanMax, 1)} hPa`}
+                    extremeTone="high"
+                  />
 
-                  <div className="summaryMetric">
-                    <span className="summaryKey">Min media</span>
-                    <strong>{fmt(summary.pressMinMean, 1)} hPa</strong>
-                  </div>
+                  <SummaryMetric
+                    label="Minima media"
+                    value={`${fmt(summary.pressMinMean, 1)} hPa`}
+                    tone="low"
+                    extremeLabel="Minima assoluta"
+                    extremeValue={`${fmt(summary.pressMinAbs, 1)} hPa`}
+                    extremeTone="low"
+                  />
                 </div>
               </div>
 
@@ -1405,15 +1478,17 @@ export default function MonthPage(props) {
                   <div className="summaryLabel">UV</div>
 
                   <div className="summaryMetrics two">
-                    <div className="summaryMetric">
-                      <span className="summaryKey">UV medio</span>
-                      <strong>{fmt(summary.uvMean, 1)}</strong>
-                    </div>
+                    <SummaryMetric
+                      label="UV medio"
+                      value={fmt(summary.uvMean, 1)}
+                      tone="neutral"
+                    />
 
-                    <div className="summaryMetric">
-                      <span className="summaryKey">UV max medio</span>
-                      <strong>{fmt(summary.uvMaxMean, 1)}</strong>
-                    </div>
+                    <SummaryMetric
+                      label="UV max medio"
+                      value={fmt(summary.uvMaxMean, 1)}
+                      tone="high"
+                    />
                   </div>
                 </div>
 
@@ -1421,31 +1496,29 @@ export default function MonthPage(props) {
                   <div className="summaryLabel">Radiazione</div>
 
                   <div className="summaryMetrics two">
-                    <div className="summaryMetric">
-                      <span className="summaryKey">Rad media</span>
-                      <strong>
-                        {Number.isFinite(n(summary.solarMean))
+                    <SummaryMetric
+                      label="Rad media"
+                      value={
+                        Number.isFinite(n(summary.solarMean))
                           ? `${Math.round(n(summary.solarMean))} W/m²`
-                          : "—"}
-                      </strong>
-                    </div>
+                          : "—"
+                      }
+                      tone="neutral"
+                    />
 
-                    <div className="summaryMetric">
-                      <span className="summaryKey">Rad max media</span>
-                      <strong>
-                        {Number.isFinite(n(summary.solarMaxMean))
+                    <SummaryMetric
+                      label="Rad max media"
+                      value={
+                        Number.isFinite(n(summary.solarMaxMean))
                           ? `${Math.round(n(summary.solarMaxMean))} W/m²`
-                          : "—"}
-                      </strong>
-                    </div>
+                          : "—"
+                      }
+                      tone="high"
+                    />
                   </div>
                 </div>
               </div>
             </div>
-
-            {summary.rainIsOverride && summary.rainNote ? (
-              <div className="overrideNote">{summary.rainNote}</div>
-            ) : null}
           </section>
         </header>
 
@@ -1582,142 +1655,64 @@ export default function MonthPage(props) {
                   {"\u00A0"}
                 </Th>
 
-                <Th
-                  onClick={() => toggleSort("tmin")}
-                  active={sortKey === "tmin"}
-                  dir={sortDir}
-                >
+                <Th onClick={() => toggleSort("tmin")} active={sortKey === "tmin"} dir={sortDir}>
                   Min
                 </Th>
-                <Th
-                  onClick={() => toggleSort("tmean")}
-                  active={sortKey === "tmean"}
-                  dir={sortDir}
-                >
+                <Th onClick={() => toggleSort("tmean")} active={sortKey === "tmean"} dir={sortDir}>
                   Media
                 </Th>
-                <Th
-                  onClick={() => toggleSort("tmax")}
-                  active={sortKey === "tmax"}
-                  dir={sortDir}
-                  className="bR"
-                >
+                <Th onClick={() => toggleSort("tmax")} active={sortKey === "tmax"} dir={sortDir} className="bR">
                   Max
                 </Th>
 
-                <Th
-                  onClick={() => toggleSort("rain_total")}
-                  active={sortKey === "rain_total"}
-                  dir={sortDir}
-                >
+                <Th onClick={() => toggleSort("rain_total")} active={sortKey === "rain_total"} dir={sortDir}>
                   Pioggia
                 </Th>
-                <Th
-                  onClick={() => toggleSort("rainrate_max")}
-                  active={sortKey === "rainrate_max"}
-                  dir={sortDir}
-                  className="bR"
-                >
+                <Th onClick={() => toggleSort("rainrate_max")} active={sortKey === "rainrate_max"} dir={sortDir} className="bR">
                   Rate max
                 </Th>
 
-                <Th
-                  onClick={() => toggleSort("rh_min")}
-                  active={sortKey === "rh_min"}
-                  dir={sortDir}
-                >
+                <Th onClick={() => toggleSort("rh_min")} active={sortKey === "rh_min"} dir={sortDir}>
                   Min
                 </Th>
-                <Th
-                  onClick={() => toggleSort("rh_mean")}
-                  active={sortKey === "rh_mean"}
-                  dir={sortDir}
-                >
+                <Th onClick={() => toggleSort("rh_mean")} active={sortKey === "rh_mean"} dir={sortDir}>
                   Media
                 </Th>
-                <Th
-                  onClick={() => toggleSort("rh_max")}
-                  active={sortKey === "rh_max"}
-                  dir={sortDir}
-                  className="bR"
-                >
+                <Th onClick={() => toggleSort("rh_max")} active={sortKey === "rh_max"} dir={sortDir} className="bR">
                   Max
                 </Th>
 
-                <Th
-                  onClick={() => toggleSort("wind_avg")}
-                  active={sortKey === "wind_avg"}
-                  dir={sortDir}
-                >
+                <Th onClick={() => toggleSort("wind_avg")} active={sortKey === "wind_avg"} dir={sortDir}>
                   Medio
                 </Th>
-                <Th
-                  onClick={() => toggleSort("gust_max")}
-                  active={sortKey === "gust_max"}
-                  dir={sortDir}
-                >
+                <Th onClick={() => toggleSort("gust_max")} active={sortKey === "gust_max"} dir={sortDir}>
                   Raffica
                 </Th>
-                <Th
-                  onClick={() => toggleSort("wind_dir_mean_deg")}
-                  active={sortKey === "wind_dir_mean_deg"}
-                  dir={sortDir}
-                  className="bR"
-                >
+                <Th onClick={() => toggleSort("wind_dir_mean_deg")} active={sortKey === "wind_dir_mean_deg"} dir={sortDir} className="bR">
                   Dir media
                 </Th>
 
-                <Th
-                  onClick={() => toggleSort("press_min")}
-                  active={sortKey === "press_min"}
-                  dir={sortDir}
-                >
+                <Th onClick={() => toggleSort("press_min")} active={sortKey === "press_min"} dir={sortDir}>
                   Min
                 </Th>
-                <Th
-                  onClick={() => toggleSort("press_avg")}
-                  active={sortKey === "press_avg"}
-                  dir={sortDir}
-                >
+                <Th onClick={() => toggleSort("press_avg")} active={sortKey === "press_avg"} dir={sortDir}>
                   Media
                 </Th>
-                <Th
-                  onClick={() => toggleSort("press_max")}
-                  active={sortKey === "press_max"}
-                  dir={sortDir}
-                  className="bR"
-                >
+                <Th onClick={() => toggleSort("press_max")} active={sortKey === "press_max"} dir={sortDir} className="bR">
                   Max
                 </Th>
 
-                <Th
-                  onClick={() => toggleSort("uv_mean_pos")}
-                  active={sortKey === "uv_mean_pos"}
-                  dir={sortDir}
-                >
+                <Th onClick={() => toggleSort("uv_mean_pos")} active={sortKey === "uv_mean_pos"} dir={sortDir}>
                   UV medio
                 </Th>
-                <Th
-                  onClick={() => toggleSort("uv_max")}
-                  active={sortKey === "uv_max"}
-                  dir={sortDir}
-                  className="bR"
-                >
+                <Th onClick={() => toggleSort("uv_max")} active={sortKey === "uv_max"} dir={sortDir} className="bR">
                   UV max
                 </Th>
 
-                <Th
-                  onClick={() => toggleSort("solar_mean_pos")}
-                  active={sortKey === "solar_mean_pos"}
-                  dir={sortDir}
-                >
+                <Th onClick={() => toggleSort("solar_mean_pos")} active={sortKey === "solar_mean_pos"} dir={sortDir}>
                   Rad media
                 </Th>
-                <Th
-                  onClick={() => toggleSort("solar_max")}
-                  active={sortKey === "solar_max"}
-                  dir={sortDir}
-                >
+                <Th onClick={() => toggleSort("solar_max")} active={sortKey === "solar_max"} dir={sortDir}>
                   Rad max
                 </Th>
               </tr>
@@ -1827,7 +1822,7 @@ export default function MonthPage(props) {
             <tfoot>
               <tr className="summaryRowTable">
                 <td className="sticky bR summaryLabelTable">
-                  <span className="sumTag">RIEPILOGO MESE</span>
+                  <span className="sumTag">Riepilogo mese</span>
                 </td>
 
                 <td>{fmt(monthAvgRow.tmin, 1)} °C</td>
@@ -1902,7 +1897,7 @@ export default function MonthPage(props) {
           .hero {
             border: 1px solid #ececec;
             border-radius: 18px;
-            background: rgba(255, 255, 255, 0.9);
+            background: rgba(255, 255, 255, 0.94);
             box-shadow:
               0 1px 0 rgba(0, 0, 0, 0.02),
               0 12px 34px rgba(0, 0, 0, 0.04);
@@ -1915,74 +1910,90 @@ export default function MonthPage(props) {
           }
 
           .yearAndNav {
-            position: relative;
-            min-height: 132px;
-            display: flex;
+            display: grid;
+            grid-template-columns: minmax(190px, 260px) minmax(360px, 1fr) minmax(190px, 260px);
+            gap: 22px;
             align-items: center;
-            justify-content: center;
             width: 100%;
+            min-height: 160px;
           }
 
-          .yearReturnWrap {
-            position: absolute;
-            left: 0;
-            top: 50%;
-            transform: translateY(-50%);
-            z-index: 2;
-          }
-
-          .yearReturnBox {
+          .topMonthSelectWrap,
+          .inlineCompareWrap {
             display: grid;
             justify-items: center;
             align-items: center;
-            min-width: 170px;
-            padding: 14px 26px;
-            border-radius: 18px;
-            text-decoration: none;
-            color: #0f172a;
-            background: transparent;
-            transition:
-              background 120ms ease,
-              transform 120ms ease,
-              box-shadow 120ms ease;
+            gap: 10px;
+            min-width: 0;
           }
 
-          .yearReturnBox:hover {
-            background: rgba(248, 250, 252, 0.95);
-            transform: translateY(-1px);
-            box-shadow: 0 10px 24px rgba(15, 23, 42, 0.05);
+          .topMonthSelectWrap {
+            justify-self: start;
           }
 
-          .yearReturnKicker {
-            display: block;
-            font-size: 12px;
-            letter-spacing: 0.14em;
-            text-transform: uppercase;
-            opacity: 0.6;
-            margin-bottom: 8px;
-            text-align: center;
+          .inlineCompareWrap {
+            justify-self: end;
           }
 
-          .yearReturnValue {
-            display: block;
-            font-size: 34px;
-            line-height: 1;
+          .selectorLabel {
+            font-size: 13px;
             font-weight: 950;
-            letter-spacing: -0.035em;
-            color: #5f7897;
+            color: #475569;
+            white-space: nowrap;
+            letter-spacing: 0.13em;
+            text-transform: uppercase;
             text-align: center;
+          }
+
+          .selectorPill {
+            appearance: none;
+            -webkit-appearance: none;
+            -moz-appearance: none;
+            width: 132px;
+            min-width: 132px;
+            max-width: 132px;
+            height: 54px;
+            padding: 0 18px;
+            border-radius: 999px;
+            background: linear-gradient(180deg, #ffffff, #f8fafc);
+            border: 1px solid #d8dee7;
+            box-shadow:
+              inset 0 1px 0 rgba(255, 255, 255, 0.9),
+              0 4px 14px rgba(15, 23, 42, 0.04);
+            font-weight: 950;
+            font-size: 15px;
+            color: #0f172a;
+            cursor: pointer;
+            color-scheme: light;
+            text-align: center;
+          }
+
+          .monthTopSelect {
+            width: 160px;
+            min-width: 160px;
+            max-width: 160px;
+          }
+
+          .selectorPill:focus {
+            outline: none;
+            box-shadow:
+              0 0 0 2px rgba(37, 99, 235, 0.12),
+              inset 0 1px 0 rgba(255, 255, 255, 0.9),
+              0 4px 14px rgba(15, 23, 42, 0.05);
+            border-color: #b9c5d6;
+          }
+
+          .selectorPill option {
+            color: #111111;
+            background: #ffffff;
           }
 
           .titleMain {
-            position: absolute;
-            left: 50%;
-            top: 50%;
-            transform: translate(-50%, -50%);
             display: grid;
             justify-items: center;
             align-items: center;
             text-align: center;
-            z-index: 1;
+            min-width: 0;
           }
 
           .kicker {
@@ -2000,6 +2011,7 @@ export default function MonthPage(props) {
             justify-content: center;
             gap: 14px;
             width: max-content;
+            max-width: 100%;
           }
 
           .year {
@@ -2010,6 +2022,49 @@ export default function MonthPage(props) {
             text-align: center;
             white-space: nowrap;
             color: #111111;
+          }
+
+          .yearInlineLink {
+            margin-top: 12px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            padding: 8px 16px;
+            border-radius: 999px;
+            border: 1px solid #d8dee7;
+            background: linear-gradient(180deg, #ffffff, #f8fafc);
+            text-decoration: none;
+            color: #475569;
+            box-shadow:
+              inset 0 1px 0 rgba(255, 255, 255, 0.9),
+              0 4px 14px rgba(15, 23, 42, 0.035);
+            transition:
+              background 120ms ease,
+              transform 120ms ease,
+              box-shadow 120ms ease;
+          }
+
+          .yearInlineLink:hover {
+            background: rgba(248, 250, 252, 0.95);
+            transform: translateY(-1px);
+            box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
+          }
+
+          .yearInlineLink span {
+            font-size: 11px;
+            font-weight: 950;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            opacity: 0.75;
+          }
+
+          .yearInlineLink b {
+            font-size: 18px;
+            line-height: 1;
+            font-weight: 950;
+            color: #5f7897;
+            letter-spacing: -0.02em;
           }
 
           :global(.monthArrowButton) {
@@ -2055,177 +2110,10 @@ export default function MonthPage(props) {
             stroke: currentColor !important;
           }
 
-          .inlineCompareWrap {
-            position: absolute;
-            right: 0;
-            top: 50%;
-            transform: translateY(-50%);
-            z-index: 2;
-            display: inline-flex;
-            align-items: center;
-            justify-content: flex-end;
-            gap: 10px;
-            flex-wrap: nowrap;
-            min-width: 0;
-          }
-
-          .inlineCompareLabel {
-            font-size: 14px;
-            font-weight: 900;
-            color: #475569;
-            white-space: nowrap;
-          }
-
-          .compareSelectMini {
-            appearance: none;
-            -webkit-appearance: none;
-            -moz-appearance: none;
-            width: 104px;
-            min-width: 104px;
-            max-width: 104px;
-            height: 54px;
-            padding: 0 14px;
-            border-radius: 999px;
-            background: linear-gradient(180deg, #ffffff, #f8fafc);
-            border: 1px solid #d8dee7;
-            box-shadow:
-              inset 0 1px 0 rgba(255, 255, 255, 0.9),
-              0 4px 14px rgba(15, 23, 42, 0.04);
-            font-weight: 900;
-            font-size: 16px;
-            color: #0f172a;
-            cursor: pointer;
-            color-scheme: light;
-            text-align: center;
-          }
-
-          .compareSelectMini:focus {
-            outline: none;
-            box-shadow:
-              0 0 0 2px rgba(37, 99, 235, 0.12),
-              inset 0 1px 0 rgba(255, 255, 255, 0.9),
-              0 4px 14px rgba(15, 23, 42, 0.05);
-            border-color: #b9c5d6;
-          }
-
-          .compareSelectMini option {
-            color: #111111;
-            background: #ffffff;
-          }
-
-          .monthsBar {
-            margin-top: 18px;
-            border: 1px solid #ececec;
-            border-radius: 16px;
-            background: #fcfcfc;
-            padding: 16px 16px 14px;
-          }
-
-          .monthsBarHead {
-            font-size: 13px;
-            letter-spacing: 0.12em;
-            text-transform: uppercase;
-            color: #374151;
-            font-weight: 900;
-            margin-bottom: 14px;
-            text-align: center;
-          }
-
-          .monthNav {
-            display: flex;
-            flex-wrap: wrap;
-            align-items: center;
-            justify-content: center;
-            gap: 10px;
-            text-align: center;
-          }
-
-          .monthSelectMobile {
-            display: none;
-            appearance: none;
-            -webkit-appearance: none;
-            -moz-appearance: none;
-            width: 100%;
-            height: 50px;
-            padding: 0 16px;
-            border-radius: 999px;
-            background: linear-gradient(180deg, #ffffff, #f8fafc);
-            border: 1px solid #d8dee7;
-            box-shadow:
-              inset 0 1px 0 rgba(255, 255, 255, 0.9),
-              0 4px 14px rgba(15, 23, 42, 0.04);
-            font-weight: 900;
-            font-size: 15px;
-            color: #0f172a;
-            cursor: pointer;
-            color-scheme: light;
-            text-align: center;
-          }
-
-          .monthSelectMobile:focus {
-            outline: none;
-            border-color: #b9c5d6;
-            box-shadow:
-              0 0 0 2px rgba(37, 99, 235, 0.12),
-              inset 0 1px 0 rgba(255, 255, 255, 0.9),
-              0 4px 14px rgba(15, 23, 42, 0.05);
-          }
-
-          .monthSelectMobile option {
-            color: #111111;
-            background: #ffffff;
-          }
-
-          .monthLink {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            padding: 8px 12px;
-            border-radius: 11px;
-            text-decoration: none;
-            color: #111;
-            font-weight: 900;
-            font-size: 15px;
-            line-height: 1.1;
-            background: #fff;
-            border: 1px solid #ececec;
-            transition:
-              background 120ms ease,
-              transform 120ms ease,
-              box-shadow 120ms ease;
-          }
-
-          .monthText {
-            font-weight: 900;
-          }
-
-          .monthLink:hover {
-            background: #f6f6f6;
-            transform: translateY(-1px);
-            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.06);
-          }
-
-          .monthLink.active {
-            background: #f5f8ff;
-            border-color: #d8dbe2;
-            box-shadow: 0 8px 20px rgba(12, 25, 56, 0.06);
-          }
-
-          .monthLink:focus-visible {
-            outline: 2px solid #111;
-            outline-offset: 2px;
-          }
-
-          .ext {
-            font-size: 14px;
-            opacity: 0.65;
-            transform: translateY(-1px);
-          }
-
           .summaryCompact {
             margin-top: 18px;
             border-top: 1px solid #efefef;
-            padding-top: 18px;
+            padding-top: 22px;
           }
 
           .summaryHead {
@@ -2233,13 +2121,13 @@ export default function MonthPage(props) {
             align-items: center;
             justify-content: center;
             gap: 14px;
-            margin-bottom: 16px;
+            margin-bottom: 18px;
             text-align: center;
           }
 
           .summaryHead > div {
             width: 100%;
-            max-width: 760px;
+            max-width: 900px;
             margin-left: auto;
             margin-right: auto;
             text-align: center;
@@ -2247,7 +2135,7 @@ export default function MonthPage(props) {
 
           .summaryHead h2 {
             margin: 0;
-            font-size: 22px;
+            font-size: 24px;
             line-height: 1.15;
             font-weight: 950;
             letter-spacing: -0.02em;
@@ -2257,26 +2145,27 @@ export default function MonthPage(props) {
           .summaryHead p {
             margin: 6px auto 0;
             font-size: 13px;
-            line-height: 1.4;
-            color: #666;
-            font-weight: 700;
+            line-height: 1.45;
+            color: #64748b;
+            font-weight: 800;
             text-align: center;
           }
 
           .summaryRows {
             display: grid;
-            gap: 10px;
+            gap: 12px;
           }
 
           .summaryRow {
             display: grid;
-            grid-template-columns: 160px 1fr;
-            gap: 10px;
+            grid-template-columns: 190px 1fr;
+            gap: 14px;
             align-items: stretch;
-            border: 1px solid #ececec;
-            border-radius: 16px;
-            background: #fcfcfc;
-            padding: 12px 14px;
+            border: 1px solid #e7e7e7;
+            border-radius: 18px;
+            background: linear-gradient(180deg, #ffffff, #fcfcfc);
+            padding: 14px 16px;
+            box-shadow: 0 8px 24px rgba(15, 23, 42, 0.025);
           }
 
           .summaryRow.dual {
@@ -2284,35 +2173,41 @@ export default function MonthPage(props) {
             padding: 0;
             border: 0;
             background: transparent;
+            box-shadow: none;
           }
 
           .summaryHalf {
             display: grid;
-            grid-template-columns: 160px 1fr;
-            gap: 10px;
+            grid-template-columns: 170px 1fr;
+            gap: 14px;
             align-items: stretch;
-            border: 1px solid #ececec;
-            border-radius: 16px;
-            background: #fcfcfc;
-            padding: 12px 14px;
+            border: 1px solid #e7e7e7;
+            border-radius: 18px;
+            background: linear-gradient(180deg, #ffffff, #fcfcfc);
+            padding: 14px 16px;
+            box-shadow: 0 8px 24px rgba(15, 23, 42, 0.025);
           }
 
           .summaryLabel {
             display: flex;
             align-items: center;
-            font-size: 15px;
-            letter-spacing: 0.12em;
+            font-size: 16px;
+            letter-spacing: 0.13em;
             text-transform: uppercase;
-            color: #4b5563;
-            font-weight: 900;
-            padding-right: 8px;
-            border-right: 1px solid #ececec;
+            color: #41546d;
+            font-weight: 950;
+            padding-right: 12px;
+            border-right: 1px solid #e7e7e7;
           }
 
           .summaryMetrics {
             display: grid;
-            gap: 8px;
-            align-items: center;
+            gap: 10px;
+            align-items: stretch;
+          }
+
+          .summaryMetrics.four {
+            grid-template-columns: repeat(4, minmax(0, 1fr));
           }
 
           .summaryMetrics.three {
@@ -2323,59 +2218,124 @@ export default function MonthPage(props) {
             grid-template-columns: repeat(2, minmax(0, 1fr));
           }
 
-          .summaryMetric {
+          :global(.summaryMetric) {
+            min-width: 0;
+            display: grid;
+            align-content: start;
+            gap: 6px;
+            padding: 11px 12px;
+            border-radius: 15px;
+            background: rgba(255, 255, 255, 0.92);
+            border: 1px solid rgba(226, 232, 240, 0.95);
+            box-shadow:
+              inset 0 1px 0 rgba(255, 255, 255, 0.9),
+              0 5px 14px rgba(15, 23, 42, 0.025);
+          }
+
+          :global(.summaryMetric-high) {
+            border-color: rgba(242, 140, 40, 0.25);
+            background: linear-gradient(180deg, #fff, rgba(255, 247, 237, 0.72));
+          }
+
+          :global(.summaryMetric-low) {
+            border-color: rgba(79, 70, 229, 0.22);
+            background: linear-gradient(180deg, #fff, rgba(238, 242, 255, 0.74));
+          }
+
+          :global(.summaryKey) {
+            display: block;
+            font-size: 10px;
+            line-height: 1.2;
+            color: #64748b;
+            font-weight: 950;
+            text-transform: uppercase;
+            letter-spacing: 0.07em;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+          }
+
+          :global(.summaryValueLine) {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 9px;
             min-width: 0;
           }
 
-          .summaryKey {
+          :global(.summaryValue) {
             display: block;
+            min-width: 0;
+            font-size: 21px;
+            line-height: 1.05;
+            font-weight: 950;
+            letter-spacing: -0.035em;
+            color: #0f172a;
+            white-space: nowrap;
+          }
+
+          :global(.summaryValue-high) {
+            color: #c2410c !important;
+          }
+
+          :global(.summaryValue-low) {
+            color: #3730a3 !important;
+          }
+
+          :global(.summaryExtreme) {
+            margin-top: 4px;
+            padding-top: 7px;
+            border-top: 1px solid rgba(226, 232, 240, 0.95);
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 8px;
+            color: #64748b;
+            font-weight: 850;
+            min-width: 0;
+          }
+
+          :global(.summaryExtreme span) {
             font-size: 10px;
-            color: #6b7280;
-            font-weight: 800;
-            margin-bottom: 5px;
+            line-height: 1.2;
             text-transform: uppercase;
             letter-spacing: 0.05em;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
           }
 
-          .summaryMetric strong {
-            display: block;
-            font-size: 17px;
-            line-height: 1.05;
-            font-weight: 900;
-            letter-spacing: -0.02em;
+          :global(.summaryExtreme b) {
+            font-size: 13px;
+            line-height: 1.1;
+            font-weight: 950;
             color: #0f172a;
+            white-space: nowrap;
           }
 
-          .rainOverrideValue {
-            position: relative;
-            color: #111827;
-            text-decoration: underline;
-            text-decoration-color: #dc2626;
-            text-decoration-thickness: 2px;
-            text-underline-offset: 3px;
-            cursor: help;
-            padding-left: 16px;
+          :global(.summaryExtreme-high b) {
+            color: #c2410c;
           }
 
-          .rainOverrideValue::before {
-            content: "";
-            position: absolute;
-            left: 0;
-            top: 50%;
-            transform: translateY(-50%);
-            width: 8px;
-            height: 8px;
-            border-radius: 999px;
-            background: #dc2626;
-            box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.16);
+          :global(.summaryExtreme-low b) {
+            color: #3730a3;
+          }
+
+          .summarySmallNote {
+            grid-column: 2 / -1;
+            margin-top: 2px;
+            font-size: 12px;
+            color: #64748b;
+            font-weight: 850;
           }
 
           .overrideNote {
-            margin-top: 10px;
+            grid-column: 2 / -1;
+            margin-top: 2px;
             font-size: 12px;
             line-height: 1.55;
             color: #64748b;
-            font-weight: 700;
+            font-weight: 750;
           }
 
           .charts2 {
@@ -2716,50 +2676,63 @@ export default function MonthPage(props) {
             box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.16);
           }
 
-          @media (max-width: 1180px) {
-            .yearReturnBox {
-              min-width: 130px;
-              padding-left: 16px;
-              padding-right: 16px;
-            }
-
-            .yearReturnValue {
-              font-size: 30px;
+          @media (max-width: 1280px) {
+            .yearAndNav {
+              grid-template-columns: minmax(170px, 220px) minmax(300px, 1fr) minmax(170px, 220px);
+              gap: 18px;
             }
 
             .year {
               font-size: 60px;
             }
 
-            .inlineCompareLabel {
-              font-size: 13px;
+            .monthTopSelect {
+              width: 145px;
+              min-width: 145px;
+              max-width: 145px;
+            }
+
+            .selectorPill {
+              width: 118px;
+              min-width: 118px;
+              max-width: 118px;
+            }
+
+            .selectorLabel {
+              font-size: 12px;
             }
           }
 
           @media (max-width: 1100px) {
-            .summaryRow {
-              grid-template-columns: 150px 1fr;
-              gap: 10px;
-              padding: 12px 14px;
+            .yearAndNav {
+              grid-template-columns: 1fr 1fr;
+              grid-template-areas:
+                "monthSelect compareYear"
+                "title title";
+              row-gap: 18px;
             }
 
-            .summaryHalf {
-              grid-template-columns: 150px 1fr;
-              gap: 10px;
-              padding: 12px 14px;
+            .topMonthSelectWrap {
+              grid-area: monthSelect;
+              justify-self: center;
             }
 
-            .summaryLabel {
-              border-right: 1px solid #ececec;
-              border-bottom: 0;
-              padding-right: 8px;
-              padding-bottom: 0;
-              font-size: 13px;
+            .inlineCompareWrap {
+              grid-area: compareYear;
+              justify-self: center;
+            }
+
+            .titleMain {
+              grid-area: title;
+            }
+
+            .summaryMetrics.four {
+              grid-template-columns: repeat(2, minmax(0, 1fr));
             }
 
             .summaryRow.dual {
-              grid-template-columns: 1fr 1fr;
-              gap: 10px;
+              grid-template-columns: 1fr;
+              gap: 12px;
             }
 
             .charts2 {
@@ -2771,104 +2744,64 @@ export default function MonthPage(props) {
             }
           }
 
-          @media (max-width: 980px) {
+          @media (max-width: 760px) {
             .yearAndNav {
-              min-height: 0;
-              display: grid;
               grid-template-columns: 1fr;
-              justify-content: center;
-              align-items: center;
+              grid-template-areas:
+                "monthSelect"
+                "title"
+                "compareYear";
               row-gap: 16px;
             }
 
-            .yearReturnWrap {
-              position: static;
-              transform: none;
-              grid-column: 1;
-              grid-row: 1;
-              justify-self: center;
-            }
-
-            .titleMain {
-              position: static;
-              transform: none;
-              width: auto;
-              grid-column: 1;
-              grid-row: 2;
-            }
-
-            .inlineCompareWrap {
-              position: static;
-              transform: none;
-              justify-content: center;
-              grid-column: 1;
-              grid-row: 3;
-            }
-
             .yearLine {
-              gap: 12px;
+              gap: 10px;
+            }
+
+            .year {
+              font-size: 52px;
             }
 
             :global(.monthArrowButton) {
-              width: 44px !important;
-              height: 44px !important;
-              min-width: 44px !important;
-              min-height: 44px !important;
+              width: 42px !important;
+              height: 42px !important;
+              min-width: 42px !important;
+              min-height: 42px !important;
             }
 
             :global(.monthArrowSvg) {
-              width: 30px !important;
-              height: 30px !important;
-              min-width: 30px !important;
-              min-height: 30px !important;
+              width: 28px !important;
+              height: 28px !important;
+              min-width: 28px !important;
+              min-height: 28px !important;
             }
 
-            .callout {
-              display: none;
-            }
-          }
-
-          @media (max-width: 720px) {
-            .summaryMetrics.three {
-              grid-template-columns: repeat(3, minmax(0, 1fr));
-              gap: 8px;
+            .summaryRow,
+            .summaryHalf {
+              display: block;
+              padding: 14px;
             }
 
-            .summaryMetrics.two {
-              grid-template-columns: repeat(2, minmax(0, 1fr));
-              gap: 8px;
+            .summaryLabel {
+              border-right: 0;
+              border-bottom: 1px solid #ececec;
+              padding-right: 0;
+              padding-bottom: 10px;
+              margin-bottom: 12px;
+              font-size: 14px;
             }
 
-            .summaryMetric strong {
-              font-size: 16px;
+            .summaryMetrics.three,
+            .summaryMetrics.two,
+            .summaryMetrics.four {
+              grid-template-columns: 1fr;
+              gap: 10px;
             }
 
-            .summaryKey {
-              font-size: 9px;
-              margin-bottom: 4px;
-            }
-
-            .monthNav {
-              gap: 8px;
-            }
-
-            .inlineCompareWrap {
-              width: auto;
-              justify-content: center;
-            }
-
-            .compareSelectMini {
-              width: 88px;
-              min-width: 88px;
-              max-width: 88px;
-              height: 42px;
-              padding: 0 10px;
-              font-size: 13px;
-              border-radius: 999px;
-            }
-
-            .inlineCompareLabel {
-              font-size: 12px;
+            .summarySmallNote,
+            .overrideNote {
+              grid-column: auto;
+              margin-top: 10px;
             }
 
             .toolbar {
@@ -2883,6 +2816,10 @@ export default function MonthPage(props) {
             .tools {
               justify-content: stretch;
             }
+
+            .callout {
+              display: none;
+            }
           }
 
           @media (max-width: 520px) {
@@ -2891,25 +2828,11 @@ export default function MonthPage(props) {
               border-radius: 16px;
             }
 
-            .yearAndNav {
-              row-gap: 14px;
-              justify-content: center;
-              align-items: center;
-            }
-
-            .yearReturnBox {
-              min-width: 120px;
-              padding: 10px 16px;
-              border-radius: 16px;
-            }
-
-            .yearReturnKicker {
-              font-size: 11px;
-              margin-bottom: 6px;
-            }
-
-            .yearReturnValue {
-              font-size: 26px;
+            .selectorPill,
+            .monthTopSelect {
+              width: 100%;
+              min-width: 0;
+              max-width: none;
             }
 
             .yearLine {
@@ -2917,91 +2840,55 @@ export default function MonthPage(props) {
             }
 
             .year {
-              font-size: 46px;
+              font-size: 44px;
+            }
+
+            .yearInlineLink {
+              padding: 7px 14px;
+            }
+
+            .yearInlineLink b {
+              font-size: 17px;
             }
 
             :global(.monthArrowButton) {
-              width: 36px !important;
-              height: 40px !important;
-              min-width: 36px !important;
-              min-height: 40px !important;
+              width: 34px !important;
+              height: 38px !important;
+              min-width: 34px !important;
+              min-height: 38px !important;
             }
 
             :global(.monthArrowSvg) {
-              width: 25px !important;
-              height: 25px !important;
-              min-width: 25px !important;
-              min-height: 25px !important;
+              width: 24px !important;
+              height: 24px !important;
+              min-width: 24px !important;
+              min-height: 24px !important;
             }
 
-            .monthsBar {
-              padding: 14px;
-            }
-
-            .monthsBarHead {
-              margin-bottom: 10px;
-              font-size: 12px;
-            }
-
-            .monthSelectMobile {
-              display: block;
-            }
-
-            .monthNav {
-              display: none;
-            }
-
-            .monthLink {
-              font-size: 14px;
-              padding: 7px 10px;
+            .summaryHead h2 {
+              font-size: 22px;
             }
 
             .summaryRows {
               gap: 12px;
             }
 
-            .summaryRow,
-            .summaryHalf {
-              display: block;
-              padding: 14px;
+            :global(.summaryMetric) {
+              padding: 11px;
             }
 
-            .summaryRow.dual {
-              display: grid;
-              grid-template-columns: 1fr;
-              gap: 12px;
-            }
-
-            .summaryLabel {
-              border-right: 0;
-              border-bottom: 1px solid #ececec;
-              padding-right: 0;
-              padding-bottom: 10px;
-              margin-bottom: 12px;
-              font-size: 14px;
-            }
-
-            .summaryMetrics.three,
-            .summaryMetrics.two {
-              grid-template-columns: 1fr;
-              gap: 12px;
-            }
-
-            .summaryMetric {
-              display: flex;
+            :global(.summaryValueLine) {
               justify-content: space-between;
-              align-items: baseline;
-              gap: 12px;
+              width: 100%;
             }
 
-            .summaryKey {
-              font-size: 11px;
-              margin-bottom: 0;
+            :global(.summaryKey) {
+              font-size: 10px;
+              margin-bottom: 2px;
             }
 
-            .summaryMetric strong {
-              font-size: 17px;
-              text-align: right;
+            :global(.summaryValue) {
+              font-size: 19px;
             }
 
             .dayNum {
@@ -3021,7 +2908,7 @@ export default function MonthPage(props) {
 
           @media (max-width: 390px) {
             .year {
-              font-size: 40px;
+              font-size: 38px;
             }
 
             .yearLine {
