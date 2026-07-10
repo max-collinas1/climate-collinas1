@@ -1,0 +1,68 @@
+name: Aggiorna dati Weather Underground
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Esecuzione due volte ogni ora: ai minuti 07 e 37.
+    - cron: "7,37 * * * *"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-wunderground-data
+  cancel-in-progress: false
+
+jobs:
+  update-data:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Scarica il repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configura Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Installa le dipendenze
+        shell: bash
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
+          fi
+
+      - name: Recupera i dati Weather Underground
+        env:
+          WU_API_KEY: ${{ secrets.WU_API_KEY }}
+          WU_STATION_ID: ICOLLI48
+          WU_START_DATE: "2026-07-10"
+        run: node scripts/update-wunderground.mjs
+
+      - name: Rigenera daily.json e i file intraday
+        run: node scripts/build-data.js
+
+      - name: Salva i dati aggiornati su GitHub
+        shell: bash
+        run: |
+          if [ -z "$(git status --porcelain -- data_raw/clean/auto data/daily.json public/data/intraday)" ]; then
+            echo "Nessuna modifica da salvare."
+            exit 0
+          fi
+
+          LAST_AUTHOR_NAME="$(git log -1 --pretty=format:'%an')"
+          LAST_AUTHOR_EMAIL="$(git log -1 --pretty=format:'%ae')"
+
+          git config user.name "$LAST_AUTHOR_NAME"
+          git config user.email "$LAST_AUTHOR_EMAIL"
+
+          git add data_raw/clean/auto data/daily.json public/data/intraday
+          git commit -m "Aggiornamento automatico dati meteo"
+          git pull --rebase origin main
+          git push origin HEAD:main
