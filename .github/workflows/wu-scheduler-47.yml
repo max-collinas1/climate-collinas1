@@ -1,0 +1,14 @@
+name: WU Scheduler minuto 47
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "47 * * * *"
+
+permissions:
+  contents: write
+
+jobs:
+  aggiorna-dati:
+    uses: ./.github/workflows/update-wunderground.yml
+    secrets: inherit
