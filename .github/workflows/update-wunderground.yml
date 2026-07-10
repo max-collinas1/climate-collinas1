@@ -2,10 +2,7 @@ name: Aggiorna dati Weather Underground
 
 on:
   workflow_dispatch:
-  schedule:
-    # Tre controlli ogni ora: ai minuti 07, 27 e 47.
-    # I dati archiviati mantengono comunque il passo di 15 minuti.
-    - cron: "7,27,47 * * * *"
+  workflow_call:
 
 permissions:
   contents: write
