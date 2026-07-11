@@ -26,9 +26,14 @@ const START_DATE = String(
 ).trim();
 
 /*
- * L'API può fornire osservazioni ogni 5 minuti.
- * Per ogni quarto d'ora scegliamo l'osservazione più vicina,
- * purché non disti più di 8 minuti.
+ * Weather Underground può fornire osservazioni ogni 5 minuti.
+ *
+ * Per ogni quarto d'ora viene scelta l'osservazione più vicina,
+ * purché la distanza non superi 8 minuti.
+ *
+ * Uno slot futuro non viene mai creato in anticipo.
+ * Per esempio, se l'ultima osservazione disponibile è alle 11:07,
+ * può essere completato lo slot delle 11:00, ma non quello delle 11:15.
  */
 const MAX_DISTANCE_SECONDS = 8 * 60;
 
@@ -270,6 +275,12 @@ function normalizeObservation(observation) {
       metric.precipRateAvg
     ),
 
+    /*
+     * Accumulo progressivo giornaliero Weather Underground.
+     *
+     * La conversione dei valori WU ai passi pluviometrici da 0,2 mm
+     * resta affidata a build-data.js e non viene modificata qui.
+     */
     rain_acc_mm: finite(
       metric.precipTotal,
       metric.precipTotalToday
@@ -325,8 +336,31 @@ function selectQuarterHourRows(
   ) {
     dayObservations.sort(
       (a, b) =>
-        a.seconds - b.seconds
+        a.seconds - b.seconds ||
+        a.epoch - b.epoch
     );
+
+    /*
+     * Questo limite impedisce di creare uno slot che non è ancora
+     * realmente trascorso.
+     */
+    const latestObservationSeconds =
+      dayObservations.reduce(
+        (maximum, observation) =>
+          Math.max(
+            maximum,
+            observation.seconds
+          ),
+        -Infinity
+      );
+
+    if (
+      !Number.isFinite(
+        latestObservationSeconds
+      )
+    ) {
+      continue;
+    }
 
     const used = new Set();
     const rows = [];
@@ -336,6 +370,21 @@ function selectQuarterHourRows(
       targetSeconds < 24 * 3600;
       targetSeconds += 15 * 60
     ) {
+      /*
+       * Non viene generato in anticipo uno slot futuro.
+       *
+       * Esempio:
+       * ultima osservazione 23:37
+       * target 23:45
+       * lo slot viene lasciato in attesa della corsa successiva.
+       */
+      if (
+        targetSeconds >
+        latestObservationSeconds
+      ) {
+        break;
+      }
+
       let bestIndex = -1;
       let bestDistance = Infinity;
 
@@ -348,8 +397,11 @@ function selectQuarterHourRows(
           continue;
         }
 
+        const candidate =
+          dayObservations[index];
+
         const distance = Math.abs(
-          dayObservations[index].seconds -
+          candidate.seconds -
             targetSeconds
         );
 
@@ -360,7 +412,30 @@ function selectQuarterHourRows(
           continue;
         }
 
-        if (distance < bestDistance) {
+        const candidateIsAfter =
+          candidate.seconds >=
+          targetSeconds;
+
+        const currentBestIsAfter =
+          bestIndex >= 0
+            ? dayObservations[
+                bestIndex
+              ].seconds >= targetSeconds
+            : false;
+
+        /*
+         * Viene preferita:
+         * 1. l'osservazione più vicina;
+         * 2. a parità di distanza, quella successiva allo slot.
+         */
+        if (
+          distance < bestDistance ||
+          (
+            distance === bestDistance &&
+            candidateIsAfter &&
+            !currentBestIsAfter
+          )
+        ) {
           bestDistance = distance;
           bestIndex = index;
         }
@@ -549,6 +624,49 @@ function readExistingCsv(filePath) {
   return rows;
 }
 
+function isPresentValue(value) {
+  return !(
+    value === null ||
+    value === undefined ||
+    value === ""
+  );
+}
+
+/*
+ * Se uno slot esiste già, i nuovi valori disponibili lo aggiornano.
+ * Un valore nuovo mancante non cancella un valore già archiviato.
+ */
+function mergeCsvRows(
+  existingRow,
+  newRow
+) {
+  if (!existingRow) {
+    return {
+      ...newRow,
+    };
+  }
+
+  const merged = {
+    ...existingRow,
+  };
+
+  for (const column of CSV_COLUMNS) {
+    const newValue =
+      newRow[column];
+
+    if (
+      column === "date" ||
+      column === "time" ||
+      isPresentValue(newValue)
+    ) {
+      merged[column] =
+        newValue;
+    }
+  }
+
+  return merged;
+}
+
 function csvCell(value) {
   if (
     value === null ||
@@ -618,10 +736,19 @@ function mergeAndWriteDate(
     );
   }
 
-  for (const row of newRows) {
+  for (const newRow of newRows) {
+    const key =
+      `${newRow.date} ${newRow.time}`;
+
+    const existingRow =
+      merged.get(key);
+
     merged.set(
-      `${row.date} ${row.time}`,
-      row
+      key,
+      mergeCsvRows(
+        existingRow,
+        newRow
+      )
     );
   }
 
@@ -822,6 +949,13 @@ async function main() {
     `[WU] Osservazioni ricevute: ${observations.length}`
   );
 
+  /*
+   * L'endpoint delle ultime 24 ore comprende normalmente anche
+   * la parte finale del giorno precedente.
+   *
+   * Di conseguenza, una corsa dopo mezzanotte può completare
+   * gli slot delle 23:45 rimasti temporaneamente mancanti.
+   */
   const rowsByDate =
     selectQuarterHourRows(
       observations
