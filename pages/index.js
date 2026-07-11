@@ -1,26 +1,52 @@
 import fs from "fs";
 import path from "path";
-import Link from "next/link";
 import dynamic from "next/dynamic";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/router";
 import SiteLayout from "../components/SiteLayout";
 
 const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
 
-// -------------------- data load (SSG) --------------------
+// -------------------- caricamento dati (SSG) --------------------
 function readDaily() {
   const filePath = path.join(process.cwd(), "data", "daily.json");
   if (!fs.existsSync(filePath)) return [];
-  const raw = JSON.parse(fs.readFileSync(filePath, "utf8"));
-  return Array.isArray(raw) ? raw : [];
+
+  try {
+    const raw = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    return Array.isArray(raw) ? raw : [];
+  } catch {
+    return [];
+  }
 }
 
 function readMonthlyOverrides() {
   const filePath = path.join(process.cwd(), "data", "monthly_overrides.json");
   if (!fs.existsSync(filePath)) return [];
-  const raw = JSON.parse(fs.readFileSync(filePath, "utf8"));
-  return Array.isArray(raw) ? raw : [];
+
+  try {
+    const raw = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    return Array.isArray(raw) ? raw : [];
+  } catch {
+    return [];
+  }
+}
+
+function readIntradayDates() {
+  const dirPath = path.join(process.cwd(), "public", "data", "intraday");
+  if (!fs.existsSync(dirPath)) return [];
+
+  try {
+    return fs
+      .readdirSync(dirPath, { withFileTypes: true })
+      .filter((entry) => entry.isFile())
+      .map((entry) => entry.name)
+      .filter((name) => /^\d{4}-\d{2}-\d{2}\.json$/.test(name))
+      .map((name) => name.replace(/\.json$/, ""))
+      .sort();
+  } catch {
+    return [];
+  }
 }
 
 function findMonthlyOverride(overrides, ym, field) {
@@ -29,23 +55,16 @@ function findMonthlyOverride(overrides, ym, field) {
       (o) =>
         String(o?.scope ?? "") === "month" &&
         String(o?.ym ?? "") === String(ym) &&
-        String(o?.field ?? "") === String(field)
+        String(o?.field ?? "") === String(field),
     ) || null
   );
 }
 
+// -------------------- helper numerici --------------------
 function n(x) {
   if (x === null || x === undefined || x === "") return NaN;
   const v = Number(x);
   return Number.isFinite(v) ? v : NaN;
-}
-
-function sum(arr) {
-  return arr.reduce((s, x) => s + x, 0);
-}
-
-function avg(arr) {
-  return arr.length ? sum(arr) / arr.length : NaN;
 }
 
 function fmt(x, d = 1) {
@@ -68,6 +87,7 @@ function fmt1(x, fallback = "—") {
 function sumFinite(arr) {
   let s = 0;
   let ok = false;
+
   for (const x of arr) {
     const v = n(x);
     if (Number.isFinite(v)) {
@@ -75,25 +95,29 @@ function sumFinite(arr) {
       ok = true;
     }
   }
+
   return ok ? s : NaN;
 }
 
 function avgFinite(arr) {
   let s = 0;
   let c = 0;
+
   for (const x of arr) {
     const v = n(x);
     if (Number.isFinite(v)) {
       s += v;
-      c++;
+      c += 1;
     }
   }
+
   return c ? s / c : NaN;
 }
 
 function minFinite(arr) {
   let m = Infinity;
   let ok = false;
+
   for (const x of arr) {
     const v = n(x);
     if (Number.isFinite(v)) {
@@ -101,12 +125,14 @@ function minFinite(arr) {
       ok = true;
     }
   }
+
   return ok ? m : NaN;
 }
 
 function maxFinite(arr) {
   let m = -Infinity;
   let ok = false;
+
   for (const x of arr) {
     const v = n(x);
     if (Number.isFinite(v)) {
@@ -114,7 +140,13 @@ function maxFinite(arr) {
       ok = true;
     }
   }
+
   return ok ? m : NaN;
+}
+
+function clamp01(x) {
+  if (!Number.isFinite(x)) return 0;
+  return Math.max(0, Math.min(1, x));
 }
 
 function applyRainMonthOverride(rawValue, override) {
@@ -139,6 +171,7 @@ function applyRainMonthOverride(rawValue, override) {
   };
 }
 
+// -------------------- helper date --------------------
 const MONTHS_IT_FULL = [
   "Gennaio",
   "Febbraio",
@@ -154,14 +187,21 @@ const MONTHS_IT_FULL = [
   "Dicembre",
 ];
 
+const MONTHS_IT_LOWER = MONTHS_IT_FULL.map((x) => x.toLowerCase());
+
+const WEEKDAYS_IT = [
+  "domenica",
+  "lunedì",
+  "martedì",
+  "mercoledì",
+  "giovedì",
+  "venerdì",
+  "sabato",
+];
+
 function monthFull(ym) {
   const mm = Number(String(ym).slice(5, 7));
   return MONTHS_IT_FULL[mm - 1] || String(ym);
-}
-
-function clamp01(x) {
-  if (!Number.isFinite(x)) return 0;
-  return Math.max(0, Math.min(1, x));
 }
 
 function pad2(x) {
@@ -172,9 +212,198 @@ function dateToISO(d) {
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 }
 
+function isoToLocalDate(iso, hour = 12) {
+  const m = String(iso || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), hour, 0, 0, 0);
+}
+
+function addDaysISO(iso, amount) {
+  const d = isoToLocalDate(iso);
+  if (!d) return iso;
+  d.setDate(d.getDate() + amount);
+  return dateToISO(d);
+}
+
+function addMonthsISO(iso, amount) {
+  const d = isoToLocalDate(iso);
+  if (!d) return iso;
+
+  const originalDay = d.getDate();
+  d.setDate(1);
+  d.setMonth(d.getMonth() + amount);
+
+  const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0, 12).getDate();
+  d.setDate(Math.min(originalDay, lastDay));
+
+  return dateToISO(d);
+}
+
+function dateRangeISO(startISO, endISO) {
+  const start = isoToLocalDate(startISO);
+  const end = isoToLocalDate(endISO);
+  if (!start || !end || start > end) return [];
+
+  const out = [];
+  const cursor = new Date(start);
+
+  while (cursor <= end) {
+    out.push(dateToISO(cursor));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+
+  return out;
+}
+
+function getPeriodBounds(mode, selectedDate) {
+  if (!selectedDate) return { startISO: null, endISO: null };
+
+  if (mode === "day") {
+    return { startISO: selectedDate, endISO: selectedDate };
+  }
+
+  if (mode === "week") {
+    return {
+      startISO: addDaysISO(selectedDate, -6),
+      endISO: selectedDate,
+    };
+  }
+
+  const d = isoToLocalDate(selectedDate);
+  if (!d) return { startISO: selectedDate, endISO: selectedDate };
+
+  const start = new Date(d.getFullYear(), d.getMonth(), 1, 12);
+  const end = new Date(d.getFullYear(), d.getMonth() + 1, 0, 12);
+
+  return {
+    startISO: dateToISO(start),
+    endISO: dateToISO(end),
+  };
+}
+
+function formatLongDate(iso) {
+  const d = isoToLocalDate(iso);
+  if (!d) return iso || "—";
+
+  return `${WEEKDAYS_IT[d.getDay()]} ${d.getDate()} ${MONTHS_IT_LOWER[d.getMonth()]} ${d.getFullYear()}`;
+}
+
+function formatCompactDate(iso) {
+  const d = isoToLocalDate(iso);
+  if (!d) return iso || "—";
+  return `${pad2(d.getDate())}/${pad2(d.getMonth() + 1)}/${d.getFullYear()}`;
+}
+
+function formatPeriodLabel(mode, selectedDate) {
+  const bounds = getPeriodBounds(mode, selectedDate);
+
+  if (mode === "day") return formatLongDate(selectedDate);
+
+  if (mode === "week") {
+    return `${formatCompactDate(bounds.startISO)} – ${formatCompactDate(bounds.endISO)}`;
+  }
+
+  const d = isoToLocalDate(selectedDate);
+  if (!d) return selectedDate || "—";
+  return `${MONTHS_IT_FULL[d.getMonth()]} ${d.getFullYear()}`;
+}
+
+function nearestAvailableDate(dates, targetISO, direction = 0) {
+  if (!Array.isArray(dates) || !dates.length) return targetISO || null;
+  const sorted = dates;
+
+  if (sorted.includes(targetISO)) return targetISO;
+
+  if (direction < 0) {
+    for (let i = sorted.length - 1; i >= 0; i -= 1) {
+      if (sorted[i] <= targetISO) return sorted[i];
+    }
+    return sorted[0];
+  }
+
+  if (direction > 0) {
+    for (let i = 0; i < sorted.length; i += 1) {
+      if (sorted[i] >= targetISO) return sorted[i];
+    }
+    return sorted[sorted.length - 1];
+  }
+
+  const target = isoToLocalDate(targetISO)?.getTime();
+  if (!Number.isFinite(target)) return sorted[sorted.length - 1];
+
+  let best = sorted[0];
+  let bestDistance = Infinity;
+
+  for (const iso of sorted) {
+    const t = isoToLocalDate(iso)?.getTime();
+    const distance = Number.isFinite(t) ? Math.abs(t - target) : Infinity;
+
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = iso;
+    }
+  }
+
+  return best;
+}
+
+function moveSelectedDate(dates, selectedDate, mode, direction) {
+  if (!dates.length || !selectedDate) return selectedDate;
+
+  if (mode === "day") {
+    const current = nearestAvailableDate(dates, selectedDate, direction);
+    const index = Math.max(0, dates.indexOf(current));
+    const nextIndex = Math.max(
+      0,
+      Math.min(dates.length - 1, index + direction),
+    );
+    return dates[nextIndex];
+  }
+
+  if (mode === "week") {
+    const target = addDaysISO(selectedDate, direction * 7);
+    return nearestAvailableDate(dates, target, direction);
+  }
+
+  const target = addMonthsISO(selectedDate, direction);
+  const targetMonth = target.slice(0, 7);
+  const monthDates = dates.filter((iso) => iso.startsWith(targetMonth));
+
+  if (monthDates.length) {
+    return nearestAvailableDate(monthDates, target, direction);
+  }
+
+  return nearestAvailableDate(dates, target, direction);
+}
+
+function navigationDisabled(dates, selectedDate, mode, direction) {
+  if (!dates.length || !selectedDate) return true;
+
+  if (mode === "day") {
+    const current = nearestAvailableDate(dates, selectedDate, direction);
+    const index = dates.indexOf(current);
+    return direction < 0 ? index <= 0 : index >= dates.length - 1;
+  }
+
+  const first = dates[0];
+  const last = dates[dates.length - 1];
+
+  if (mode === "week") {
+    return direction < 0 ? selectedDate <= first : selectedDate >= last;
+  }
+
+  const selectedMonth = selectedDate.slice(0, 7);
+  return direction < 0
+    ? selectedMonth <= first.slice(0, 7)
+    : selectedMonth >= last.slice(0, 7);
+}
+
+// -------------------- helper grafici --------------------
 function degToCardinal8(v) {
   const nn = Number(v);
   if (!Number.isFinite(nn)) return "";
+
   const d = ((nn % 360) + 360) % 360;
   const ix = Math.round(d / 45) % 8;
   return ["N", "NE", "E", "SE", "S", "SW", "W", "NW"][ix];
@@ -182,6 +411,7 @@ function degToCardinal8(v) {
 
 function niceStep(range, targetTicks = 6) {
   if (!Number.isFinite(range) || range <= 0) return 1;
+
   const rough = range / targetTicks;
   const pow10 = Math.pow(10, Math.floor(Math.log10(rough)));
   const r = rough / pow10;
@@ -200,14 +430,85 @@ function axisNice(min, max, targetTicks = 6) {
   if (!Number.isFinite(min) || !Number.isFinite(max) || min === max) {
     return { min: 0, max: 1, interval: 0.2 };
   }
+
   const range = max - min;
   const interval = niceStep(range, targetTicks);
   const niceMin = Math.floor(min / interval) * interval;
   const niceMax = Math.ceil(max / interval) * interval;
+
   return { min: niceMin, max: niceMax, interval };
 }
 
-function makeWeekDataZoom() {
+function lastNonNullPoint(pairs) {
+  if (!Array.isArray(pairs)) return null;
+
+  for (let i = pairs.length - 1; i >= 0; i -= 1) {
+    const point = pairs[i];
+    const x = point?.[0];
+    const y = point?.[1];
+
+    if (x !== null && x !== undefined && Number.isFinite(Number(y))) {
+      return [Number(x), Number(y)];
+    }
+  }
+
+  return null;
+}
+
+function pointAtOrBeforeTimestamp(pairs, timestamp) {
+  if (!Array.isArray(pairs) || !Number.isFinite(Number(timestamp))) return null;
+
+  const limit = Number(timestamp);
+
+  for (let i = pairs.length - 1; i >= 0; i -= 1) {
+    const point = pairs[i];
+    const x = Number(point?.[0]);
+    const y = Number(point?.[1]);
+
+    if (Number.isFinite(x) && x <= limit && Number.isFinite(y)) {
+      return [x, y];
+    }
+  }
+
+  return null;
+}
+
+function makeRealtimePulseSeries(dataPairs, timestamp, yAxisIndex = 0) {
+  const point = pointAtOrBeforeTimestamp(dataPairs, timestamp);
+  if (!point) return null;
+
+  return {
+    name: "Dato live",
+    type: "effectScatter",
+    data: [point],
+    yAxisIndex,
+    coordinateSystem: "cartesian2d",
+    symbol: "circle",
+    symbolSize: 11,
+    showEffectOn: "render",
+    animation: true,
+    rippleEffect: {
+      brushType: "stroke",
+      scale: 4.5,
+      period: 1.8,
+      number: 3,
+    },
+    itemStyle: {
+      color: "#ef4444",
+      borderColor: "#ffffff",
+      borderWidth: 2,
+      shadowBlur: 14,
+      shadowColor: "rgba(239, 68, 68, 0.65)",
+    },
+    emphasis: { scale: false },
+    tooltip: { show: false },
+    silent: true,
+    zlevel: 10,
+    z: 100,
+  };
+}
+
+function makePeriodDataZoom(mode, isMobile = false) {
   return [
     {
       type: "inside",
@@ -222,44 +523,40 @@ function makeWeekDataZoom() {
       xAxisIndex: 0,
       start: 0,
       end: 100,
-      bottom: 8,
-      height: 22,
+      bottom: isMobile ? 6 : 8,
+      height: isMobile ? 18 : 22,
       showDetail: false,
+      brushSelect: mode !== "day",
     },
   ];
 }
 
-function findLast7ConsecutiveISO(datesSet, lastDateISO) {
-  if (!lastDateISO) return [];
+function makePeriodTimeline(startISO, endISO, stepMinutes = 60) {
+  const start = isoToLocalDate(startISO, 0);
+  const endExclusive = isoToLocalDate(addDaysISO(endISO, 1), 0);
 
-  let cursor = new Date(`${lastDateISO}T12:00:00`);
+  if (!start || !endExclusive || start >= endExclusive) return [];
 
-  for (let tries = 0; tries < 260; tries++) {
-    const end = new Date(cursor);
-    const start = new Date(cursor);
-    start.setDate(start.getDate() - 6);
+  const out = [];
+  let cursor = new Date(start);
+  let safety = 0;
+  const maxSteps = Math.max(1, Math.ceil(((endExclusive - start) / 60000) / Math.max(1, stepMinutes)) + 4);
 
-    const week = [];
-    let ok = true;
+  while (cursor < endExclusive && safety < maxSteps) {
+    out.push(cursor.getTime());
+    const next = new Date(cursor);
+    next.setMinutes(next.getMinutes() + stepMinutes, 0, 0);
 
-    for (let i = 0; i < 7; i++) {
-      const d = new Date(start);
-      d.setDate(start.getDate() + i);
-      const iso = dateToISO(d);
-      week.push(iso);
-      if (!datesSet.has(iso)) ok = false;
-    }
+    if (next.getTime() <= cursor.getTime()) break;
 
-    if (ok) return week;
-
-    cursor = new Date(end);
-    cursor.setDate(cursor.getDate() - 1);
+    cursor = next;
+    safety += 1;
   }
 
-  return [];
+  return out;
 }
 
-// -------------------- helpers per dati daily --------------------
+// -------------------- helper dati giornalieri --------------------
 function dailyTempField(row, field) {
   const v = n(row?.[field]);
   if (!Number.isFinite(v)) return NaN;
@@ -272,7 +569,6 @@ function dailyTempField(row, field) {
   if (!tempVals.length) return NaN;
 
   const hasSomeNonZeroTemp = tempVals.some((x) => Math.abs(x) > 0.001);
-
   if (!hasSomeNonZeroTemp && Math.abs(v) <= 0.001) return NaN;
 
   return v;
@@ -327,7 +623,7 @@ export async function getStaticProps() {
   const overrides = readMonthlyOverrides();
 
   const years = Array.from(
-    new Set(rows.map((r) => String(r?.date || "").slice(0, 4)).filter(Boolean))
+    new Set(rows.map((r) => String(r?.date || "").slice(0, 4)).filter(Boolean)),
   ).sort((a, b) => b.localeCompare(a));
 
   const start = rows.length ? rows[0].date : null;
@@ -374,7 +670,7 @@ export async function getStaticProps() {
 
     const tmin = minFinite(d.map((x) => dailyTmin(x)));
     const tmax = maxFinite(d.map((x) => dailyTmax(x)));
-    const tmean = avgFinite(d.map((x) => n(x?.tmean)));
+    const tmean = avgFinite(d.map((x) => dailyTmean(x)));
     const rainSum = sumFinite(monthly.map((m) => m.rainSum));
     const gustMax = maxFinite(d.map((x) => dailyGust(x)));
 
@@ -404,27 +700,23 @@ export async function getStaticProps() {
   const tmeanMin = tmeanVals.length ? Math.min(...tmeanVals) : 0;
   const tmeanMax = tmeanVals.length ? Math.max(...tmeanVals) : 0;
 
-  const dateSet = new Set(
-    rows.map((r) => String(r?.date || "").slice(0, 10)).filter(Boolean)
-  );
+  const dailyDates = rows
+    .map((r) => String(r?.date || "").slice(0, 10))
+    .filter((iso) => /^\d{4}-\d{2}-\d{2}$/.test(iso));
 
-  const lastDateISO = rows.length
-    ? String(rows[rows.length - 1]?.date || "").slice(0, 10)
-    : null;
+  const diskIntradayDates = readIntradayDates();
+  const intradayDates = diskIntradayDates.length
+    ? diskIntradayDates
+    : Array.from(new Set(dailyDates)).sort();
 
-  let weekDates = findLast7ConsecutiveISO(dateSet, lastDateISO);
+  const dailyRainByDate = {};
+  for (const row of rows) {
+    const iso = String(row?.date || "").slice(0, 10);
+    const rain = dailyRain(row);
 
-  if (!weekDates.length) {
-    const uniqSorted = Array.from(dateSet).sort();
-    weekDates = uniqSorted.slice(-7);
-  }
-
-  const weekDailyRain = {};
-  for (const d of weekDates) {
-    const row = rows.find((r) => String(r?.date || "").slice(0, 10) === d);
-    weekDailyRain[d] = Number.isFinite(dailyRain(row))
-      ? round1(dailyRain(row))
-      : null;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) {
+      dailyRainByDate[iso] = Number.isFinite(rain) ? round1(rain) : null;
+    }
   }
 
   return {
@@ -433,20 +725,21 @@ export async function getStaticProps() {
       end,
       yearStats,
       norm: { rainMin, rainMax, tmeanMin, tmeanMax },
-      weekDates,
-      weekDailyRain,
+      intradayDates,
+      dailyRainByDate,
     },
     revalidate: 300,
   };
 }
 
+// -------------------- homepage --------------------
 export default function Home({
   yearStats = [],
   start = null,
   end = null,
   norm = { rainMin: 0, rainMax: 0, tmeanMin: 0, tmeanMax: 0 },
-  weekDates = [],
-  weekDailyRain = {},
+  intradayDates = [],
+  dailyRainByDate = {},
 }) {
   const [q, setQ] = useState("");
 
@@ -455,15 +748,6 @@ export default function Home({
     if (!s) return yearStats;
     return yearStats.filter((y) => String(y.year).includes(s));
   }, [q, yearStats]);
-
-  const weekLabel = useMemo(() => {
-    if (!Array.isArray(weekDates) || weekDates.length < 2) {
-      return "Ultimi giorni disponibili";
-    }
-    const a = weekDates[0];
-    const b = weekDates[weekDates.length - 1];
-    return `${a} → ${b}`;
-  }, [weekDates]);
 
   return (
     <SiteLayout
@@ -477,11 +761,10 @@ export default function Home({
         currentPath: "/",
       }}
     >
-      <div className="weekWrap">
-        <WeekChart
-          weekDates={weekDates}
-          weekLabel={weekLabel}
-          weekDailyRain={weekDailyRain}
+      <div className="chartWrap">
+        <PeriodChart
+          intradayDates={intradayDates}
+          dailyRainByDate={dailyRainByDate}
         />
       </div>
 
@@ -490,23 +773,21 @@ export default function Home({
           <div className="sectionText">
             <h2>Seleziona un anno</h2>
             <div className="hint">
-              Clicca una scheda per entrare nell’anno. Gli anni sono ordinati dal
-              più recente al meno recente.
+              Apri una scheda per consultare mesi, statistiche e dati
+              giornalieri.
             </div>
           </div>
 
-          <div className="tools">
-            <label className="searchWrap" aria-label="Filtra anni">
-              <span className="searchLabel">Filtro</span>
-              <input
-                className="search"
-                placeholder="es. 2025"
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-                inputMode="numeric"
-              />
-            </label>
-          </div>
+          <label className="searchWrap" aria-label="Filtra anni">
+            <span className="searchLabel">Filtro</span>
+            <input
+              className="search"
+              placeholder="es. 2025"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              inputMode="numeric"
+            />
+          </label>
         </div>
 
         <div className="grid">
@@ -516,8 +797,9 @@ export default function Home({
 
           {!yearStats.length && (
             <div className="empty">
-              Nessun dato ancora. Metti i CSV in <code>data_raw/clean/AAAA</code>{" "}
-              e lancia <code>node ./scripts/build-data.js</code>.
+              Nessun dato ancora. Metti i CSV in{" "}
+              <code>data_raw/clean/AAAA</code> e lancia{" "}
+              <code>node ./scripts/build-data.js</code>.
             </div>
           )}
 
@@ -530,93 +812,78 @@ export default function Home({
       </section>
 
       <style jsx>{`
-        .weekWrap {
+        .chartWrap {
           margin-top: 18px;
         }
 
         .section {
-          margin: 18px auto 0;
+          margin: 22px auto 0;
         }
 
         .sectionHead {
-          position: relative;
-          min-height: 74px;
-          display: flex;
+          min-height: 60px;
+          display: grid;
+          grid-template-columns: 1fr auto 1fr;
           align-items: center;
-          justify-content: flex-end;
-          gap: 12px;
-          margin: 16px 0 10px;
+          gap: 16px;
+          margin: 8px 0 12px;
         }
 
         .sectionText {
-          position: absolute;
-          left: 50%;
-          top: 50%;
-          width: min(760px, calc(100% - 360px));
-          transform: translate(-50%, -50%);
+          grid-column: 2;
           text-align: center;
-          pointer-events: none;
         }
 
         h2 {
           margin: 0;
           font-size: 22px;
           font-weight: 950;
-          letter-spacing: -0.01em;
+          letter-spacing: -0.02em;
           color: #0f172a;
-          text-align: center;
         }
 
         .hint {
           margin-top: 4px;
           font-size: 12px;
-          color: rgba(15, 23, 42, 0.66);
-          max-width: 720px;
-          margin-left: auto;
-          margin-right: auto;
-          text-align: center;
-        }
-
-        .tools {
-          position: relative;
-          z-index: 2;
-          display: flex;
-          align-items: center;
-          gap: 10px;
-          flex-wrap: wrap;
-          justify-content: flex-end;
+          color: rgba(15, 23, 42, 0.62);
         }
 
         .searchWrap {
+          grid-column: 3;
+          justify-self: end;
           display: flex;
           align-items: center;
           gap: 8px;
-          border: 1px solid #e7e7e7;
-          background: rgba(255, 255, 255, 0.95);
-          padding: 9px 10px;
-          border-radius: 16px;
-          box-shadow: 0 1px 0 rgba(0, 0, 0, 0.02);
+          min-width: 190px;
+          border: 1px solid #e5e7eb;
+          background: rgba(255, 255, 255, 0.96);
+          padding: 9px 11px;
+          border-radius: 14px;
+          box-shadow: 0 4px 14px rgba(15, 23, 42, 0.035);
         }
 
         .searchLabel {
-          font-size: 12px;
+          font-size: 11px;
           font-weight: 950;
-          color: rgba(15, 23, 42, 0.7);
+          color: rgba(15, 23, 42, 0.62);
+          text-transform: uppercase;
+          letter-spacing: 0.04em;
         }
 
         .search {
-          width: 110px;
+          min-width: 0;
+          width: 100px;
           border: none;
           outline: none;
           background: transparent;
           font-size: 13px;
-          font-weight: 950;
+          font-weight: 900;
           color: #0f172a;
         }
 
         .grid {
           display: grid;
-          grid-template-columns: repeat(3, 1fr);
+          grid-template-columns: repeat(4, minmax(0, 1fr));
           gap: 12px;
         }
 
@@ -637,27 +904,43 @@ export default function Home({
           font-size: 12px;
         }
 
-        @media (max-width: 1080px) {
+        @media (max-width: 1320px) {
+          .grid {
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+          }
+        }
+
+        @media (max-width: 980px) {
           .sectionHead {
-            min-height: 0;
-            flex-direction: column;
-            align-items: stretch;
-            justify-content: flex-start;
+            grid-template-columns: 1fr;
           }
 
-          .sectionText {
-            position: static;
-            width: 100%;
-            transform: none;
-            pointer-events: auto;
+          .sectionText,
+          .searchWrap {
+            grid-column: 1;
           }
 
-          .tools {
-            justify-content: center;
+          .searchWrap {
+            justify-self: center;
           }
 
           .grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+          }
+        }
+
+        @media (max-width: 640px) {
+          .grid {
             grid-template-columns: 1fr;
+          }
+
+          .searchWrap {
+            width: 100%;
+            box-sizing: border-box;
+          }
+
+          .search {
+            width: 100%;
           }
         }
       `}</style>
@@ -665,7 +948,7 @@ export default function Home({
   );
 }
 
-// -------------------- YearCard --------------------
+// -------------------- scheda anno compatta --------------------
 function YearCard({ y, norm }) {
   const router = useRouter();
   const href = `/anni/${y.year}`;
@@ -714,18 +997,15 @@ function YearCard({ y, norm }) {
     >
       <div className="top">
         <div className="yr">{y.year}</div>
-
-        <div className="chips" aria-label="Sintesi anno">
-          <span className="chip">
-            <b>{Number.isFinite(n(y.ndays)) ? y.ndays : "—"}</b> giorni
-          </span>
-        </div>
+        <span className="chip">
+          <b>{Number.isFinite(n(y.ndays)) ? y.ndays : "—"}</b> giorni
+        </span>
       </div>
 
       <div className="mainStats">
         <div className="metric">
           <div className="mTop">
-            <span className="mLabel">Temperatura media annua</span>
+            <span className="mLabel">Temperatura media</span>
             <span className="mValue">{fmt(y.tmean, 1)} °C</span>
           </div>
           <div className="track" aria-hidden="true">
@@ -738,7 +1018,7 @@ function YearCard({ y, norm }) {
 
         <div className="metric">
           <div className="mTop">
-            <span className="mLabel">Precipitazione totale annua</span>
+            <span className="mLabel">Precipitazione totale</span>
             <span
               className={`mValue ${y.rainHasOverride ? "rainOverrideValue" : ""}`}
               title={
@@ -760,114 +1040,118 @@ function YearCard({ y, norm }) {
       </div>
 
       <div className="details">
-        <div className="row">
-          <span>Minima assoluta giornaliera</span>
+        <div className="detail">
+          <span>Minima</span>
           <b>{fmt(y.tmin, 1)} °C</b>
         </div>
 
-        <div className="row">
-          <span>Massima assoluta giornaliera</span>
+        <div className="detail">
+          <span>Massima</span>
           <b>{fmt(y.tmax, 1)} °C</b>
         </div>
 
-        <div className="row">
-          <span>Giorni con pioggia &gt; 1 mm</span>
+        <div className="detail">
+          <span>Giorni piovosi</span>
           <b>{Number.isFinite(n(y.rainyDays)) ? y.rainyDays : "—"}</b>
         </div>
 
-        <div className="row">
-          <span>Raffica massima giornaliera</span>
+        <div className="detail">
+          <span>Raffica massima</span>
           <b>{fmt(y.gustMax, 1)} km/h</b>
         </div>
       </div>
 
       <style jsx>{`
         .card {
-          border: 1px solid #e9e9e9;
-          border-radius: 22px;
-          padding: 14px;
-          background: rgba(255, 255, 255, 0.96);
-          box-shadow: 0 6px 20px rgba(15, 23, 42, 0.05);
+          min-width: 0;
+          border: 1px solid #e6e8ec;
+          border-radius: 18px;
+          padding: 13px;
+          background: rgba(255, 255, 255, 0.97);
+          box-shadow: 0 5px 18px rgba(15, 23, 42, 0.045);
           cursor: pointer;
           transition:
             transform 140ms ease,
             border-color 140ms ease,
-            background 140ms ease;
+            box-shadow 140ms ease;
           outline: none;
         }
 
         .card:hover {
-          transform: translateY(-1px);
-          border-color: #d6d6d6;
-          background: rgba(255, 255, 255, 0.99);
+          transform: translateY(-2px);
+          border-color: #cfd5dd;
+          box-shadow: 0 9px 22px rgba(15, 23, 42, 0.07);
         }
 
         .card:focus-visible {
           box-shadow:
-            0 0 0 3px rgba(2, 132, 199, 0.22),
-            0 10px 22px rgba(15, 23, 42, 0.08);
+            0 0 0 3px rgba(2, 132, 199, 0.2),
+            0 9px 22px rgba(15, 23, 42, 0.07);
         }
 
         .top {
-          display: grid;
-          gap: 8px;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
         }
 
         .yr {
-          font-size: 34px;
+          font-size: 29px;
           font-weight: 950;
-          letter-spacing: -0.01em;
+          letter-spacing: -0.035em;
           color: #0f172a;
           line-height: 1;
         }
 
-        .chips {
-          display: flex;
-          flex-wrap: wrap;
-          gap: 8px;
-        }
-
         .chip {
-          border: 1px solid #ececec;
-          background: rgba(248, 250, 252, 0.92);
-          padding: 6px 10px;
+          flex: 0 0 auto;
+          border: 1px solid #e7e9ed;
+          background: #f8fafc;
+          padding: 5px 8px;
           border-radius: 999px;
-          font-size: 11px;
-          font-weight: 900;
-          color: rgba(15, 23, 42, 0.78);
+          font-size: 10px;
+          font-weight: 850;
+          color: rgba(15, 23, 42, 0.7);
           white-space: nowrap;
         }
 
         .mainStats {
-          margin-top: 12px;
-          border-top: 1px solid #f1f1f1;
-          padding-top: 12px;
+          margin-top: 11px;
+          padding-top: 10px;
+          border-top: 1px solid #eef0f3;
           display: grid;
-          gap: 12px;
+          gap: 10px;
         }
 
         .metric {
           display: grid;
-          gap: 7px;
+          gap: 6px;
         }
 
         .mTop {
+          min-width: 0;
           display: flex;
           justify-content: space-between;
-          gap: 10px;
           align-items: baseline;
+          gap: 8px;
         }
 
         .mLabel {
-          font-size: 13px;
-          font-weight: 950;
-          color: rgba(15, 23, 42, 0.72);
+          min-width: 0;
+          font-size: 11px;
+          font-weight: 850;
+          color: rgba(15, 23, 42, 0.65);
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
         }
 
         .mValue {
-          font-size: 13px;
+          flex: 0 0 auto;
+          font-size: 12px;
           font-weight: 950;
-          color: rgba(15, 23, 42, 0.9);
+          color: #0f172a;
           white-space: nowrap;
         }
 
@@ -877,7 +1161,7 @@ function YearCard({ y, norm }) {
           text-decoration-color: #dc2626;
           text-decoration-thickness: 2px;
           text-underline-offset: 3px;
-          padding-left: 14px;
+          padding-left: 11px;
           cursor: help;
         }
 
@@ -887,54 +1171,65 @@ function YearCard({ y, norm }) {
           left: 0;
           top: 50%;
           transform: translateY(-50%);
-          width: 7px;
-          height: 7px;
-          border-radius: 999px;
+          width: 6px;
+          height: 6px;
+          border-radius: 50%;
           background: #dc2626;
-          box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.16);
+          box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.14);
         }
 
         .track {
-          height: 12px;
+          height: 6px;
           border-radius: 999px;
-          background: #f1f5f9;
-          border: 1px solid #e5e7eb;
+          background: #eef2f6;
           overflow: hidden;
         }
 
         .fill {
           height: 100%;
-          border-radius: 999px;
-          background: rgba(15, 23, 42, 0.85);
+          min-width: 3px;
+          border-radius: inherit;
+          background: rgba(15, 23, 42, 0.82);
         }
 
         .details {
-          margin-top: 12px;
-          border-top: 1px solid #f1f1f1;
-          padding-top: 8px;
+          margin-top: 11px;
+          padding-top: 10px;
+          border-top: 1px solid #eef0f3;
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 7px;
         }
 
-        .row {
-          display: flex;
-          justify-content: space-between;
-          gap: 10px;
-          padding: 8px 0;
-          border-top: 1px solid #f5f5f5;
-          font-size: 13px;
+        .detail {
+          min-width: 0;
+          padding: 7px 8px;
+          border: 1px solid #edf0f3;
+          border-radius: 11px;
+          background: #fafbfc;
+          display: grid;
+          gap: 2px;
         }
 
-        .row:first-child {
-          border-top: none;
+        .detail span {
+          min-width: 0;
+          font-size: 9px;
+          font-weight: 850;
+          color: rgba(15, 23, 42, 0.56);
+          text-transform: uppercase;
+          letter-spacing: 0.025em;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
         }
 
-        .row span {
-          color: rgba(15, 23, 42, 0.68);
-          font-weight: 800;
-        }
-
-        .row b {
+        .detail b {
+          min-width: 0;
+          font-size: 11px;
           font-weight: 950;
           color: #0f172a;
+          overflow: hidden;
+          text-overflow: ellipsis;
           white-space: nowrap;
         }
       `}</style>
@@ -942,59 +1237,390 @@ function YearCard({ y, norm }) {
   );
 }
 
-// -------------------- WeekChart (orario, aggregato) --------------------
-function WeekChart({
-  weekDates = [],
-  weekLabel = "Ultimi giorni disponibili",
-  weekDailyRain = {},
-}) {
+// -------------------- menu a tendina personalizzato --------------------
+function CustomSelect({ value, options = [], onChange, ariaLabel }) {
+  const [open, setOpen] = useState(false);
+  const wrapperRef = useRef(null);
+
+  const selectedLabel =
+    options.find((option) => option.key === value)?.label || "";
+
+  useEffect(() => {
+    if (!open) return undefined;
+
+    const closeFromOutside = (event) => {
+      if (!wrapperRef.current?.contains(event.target)) {
+        setOpen(false);
+      }
+    };
+
+    const closeWithEscape = (event) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+
+    document.addEventListener("mousedown", closeFromOutside);
+    document.addEventListener("touchstart", closeFromOutside, {
+      passive: true,
+    });
+    document.addEventListener("keydown", closeWithEscape);
+
+    return () => {
+      document.removeEventListener("mousedown", closeFromOutside);
+      document.removeEventListener("touchstart", closeFromOutside);
+      document.removeEventListener("keydown", closeWithEscape);
+    };
+  }, [open]);
+
+  const choose = (nextValue) => {
+    onChange(nextValue);
+    setOpen(false);
+  };
+
+  return (
+    <div
+      ref={wrapperRef}
+      className={`customSelect ${open ? "isOpen" : ""}`}
+    >
+      <button
+        type="button"
+        className="selectButton"
+        aria-label={ariaLabel}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <span className="selectedValue">{selectedLabel}</span>
+        <span className="chevron" aria-hidden="true">
+         ⌄
+        </span>
+      </button>
+
+      {open && (
+        <div className="options" role="listbox" aria-label={ariaLabel}>
+          {options.map((option) => {
+            const active = option.key === value;
+
+            return (
+              <button
+                key={option.key}
+                type="button"
+                role="option"
+                aria-selected={active}
+                className={`option ${active ? "active" : ""}`}
+                onClick={() => choose(option.key)}
+              >
+                {option.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      <style jsx>{`
+        .customSelect {
+          position: relative;
+          width: 100%;
+        }
+
+        .selectButton {
+          position: relative;
+          width: 100%;
+          min-height: 42px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          border: 1px solid #dde2e8;
+          border-radius: 13px;
+          padding: 10px 42px;
+          background: #fff;
+          color: #0f172a;
+          font-size: 12px;
+          font-weight: 900;
+          line-height: 1.2;
+          text-align: center;
+          outline: none;
+          cursor: pointer;
+        }
+
+        .selectButton:hover {
+          border-color: #c4ccd6;
+        }
+
+        .selectButton:focus-visible,
+        .isOpen .selectButton {
+          border-color: #aab5c3;
+          box-shadow: 0 0 0 3px rgba(15, 23, 42, 0.06);
+        }
+
+        .selectedValue {
+          width: 100%;
+          display: block;
+          overflow: hidden;
+          text-align: center;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .chevron {
+          position: absolute;
+          right: 14px;
+          top: 50%;
+          transform: translateY(-54%);
+          color: #0f172a;
+          font-size: 18px;
+          font-weight: 900;
+          line-height: 1;
+          pointer-events: none;
+          transition: transform 140ms ease;
+        }
+
+        .isOpen .chevron {
+          transform: translateY(-46%) rotate(180deg);
+        }
+
+        .options {
+          position: absolute;
+          z-index: 2000;
+          top: calc(100% + 4px);
+          left: 0;
+          right: 0;
+          max-height: 270px;
+          overflow-y: auto;
+          border: 1px solid #b8c0ca;
+          border-radius: 10px;
+          background: #fff;
+          box-shadow: 0 12px 28px rgba(15, 23, 42, 0.16);
+        }
+
+        .option {
+          width: 100%;
+          min-height: 34px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          border: 0;
+          border-bottom: 1px solid #eef1f4;
+          padding: 8px 12px;
+          background: #fff;
+          color: #0f172a;
+          font-family: inherit;
+          font-size: 12px;
+          font-weight: 500;
+          line-height: 1.25;
+          text-align: center;
+          cursor: pointer;
+        }
+
+        .option:last-child {
+          border-bottom: 0;
+        }
+
+        .option:hover,
+        .option:focus-visible {
+          background: #eef4ff;
+          outline: none;
+        }
+
+        .option.active {
+          background: #2563eb;
+          color: #fff;
+          font-weight: 700;
+        }
+
+        @media (max-width: 720px) {
+          .selectButton {
+            min-height: 44px;
+            padding-left: 34px;
+            padding-right: 34px;
+            font-size: 11.5px;
+          }
+
+          .selectedValue {
+            min-width: 0;
+          }
+
+          .chevron {
+            right: 12px;
+          }
+
+          .options {
+            max-height: 240px;
+          }
+
+          .option {
+            min-height: 38px;
+            padding: 9px 10px;
+            font-size: 11.5px;
+          }
+        }
+      `}</style>
+    </div>
+  );
+}
+
+// -------------------- grafico giorno / settimana / mese --------------------
+function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
   const GROUPS = useMemo(
     () => [
-      { key: "temp", label: "Temperatura + Punto di rugiada" },
+      { key: "temp", label: "Temperatura e Punto di rugiada" },
       { key: "rain", label: "Precipitazioni" },
       { key: "rh", label: "Umidità" },
       { key: "wind", label: "Vento" },
       { key: "press", label: "Pressione" },
       { key: "uv", label: "UV + Radiazione" },
     ],
-    []
+    [],
   );
 
+  const PERIODS = useMemo(
+    () => [
+      { key: "day", label: "Giornaliero" },
+      { key: "week", label: "Settimanale" },
+      { key: "month", label: "Mensile" },
+    ],
+    [],
+  );
+
+  const availableDates = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          (Array.isArray(intradayDates) ? intradayDates : []).filter((iso) =>
+            /^\d{4}-\d{2}-\d{2}$/.test(String(iso)),
+          ),
+        ),
+      ).sort(),
+    [intradayDates],
+  );
+
+  const [mode, setMode] = useState("day");
   const [groupKey, setGroupKey] = useState("temp");
+  const [selectedDate, setSelectedDate] = useState(
+    availableDates.length ? availableDates[availableDates.length - 1] : null,
+  );
+  const [refreshTick, setRefreshTick] = useState(0);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
   const [data, setData] = useState(null);
+  const [viewportWidth, setViewportWidth] = useState(1280);
+
+  useEffect(() => {
+    const updateViewportWidth = () => setViewportWidth(window.innerWidth);
+
+    updateViewportWidth();
+    window.addEventListener("resize", updateViewportWidth, { passive: true });
+
+    return () => window.removeEventListener("resize", updateViewportWidth);
+  }, []);
+
+  useEffect(() => {
+    if (!availableDates.length) {
+      setSelectedDate(null);
+      return;
+    }
+
+    setSelectedDate((current) => {
+      if (current && availableDates.includes(current)) return current;
+      return availableDates[availableDates.length - 1];
+    });
+  }, [availableDates]);
+
+  useEffect(() => {
+    const timer = window.setInterval(
+      () => {
+        setRefreshTick((x) => x + 1);
+      },
+      5 * 60 * 1000,
+    );
+
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const bounds = useMemo(
+    () => getPeriodBounds(mode, selectedDate),
+    [mode, selectedDate],
+  );
+
+  const periodTitle = useMemo(() => {
+    if (mode === "week") return "Grafico settimanale";
+    if (mode === "month") return "Grafico mensile";
+    return "Grafico giornaliero";
+  }, [mode]);
+
+  const periodLabel = useMemo(
+    () => formatPeriodLabel(mode, selectedDate),
+    [mode, selectedDate],
+  );
+
+  const isMobileChart = viewportWidth <= 720;
+  const isVeryNarrowChart = viewportWidth <= 430;
+
+  const showRealtimePulse =
+    mode === "day" &&
+    selectedDate === availableDates[availableDates.length - 1];
+
+  const canGoBack = !navigationDisabled(availableDates, selectedDate, mode, -1);
+
+  const canGoForward = !navigationDisabled(
+    availableDates,
+    selectedDate,
+    mode,
+    1,
+  );
+
+  const latestAvailableDate = availableDates.length
+    ? availableDates[availableDates.length - 1]
+    : null;
+
+  const isTodayView =
+    mode === "day" &&
+    Boolean(latestAvailableDate) &&
+    selectedDate === latestAvailableDate;
+
+  const goToToday = () => {
+    if (!latestAvailableDate) return;
+    setMode("day");
+    setSelectedDate(latestAvailableDate);
+    setRefreshTick((current) => current + 1);
+  };
+
+  const changePeriod = (direction) => {
+    setSelectedDate((current) =>
+      moveSelectedDate(availableDates, current, mode, direction),
+    );
+  };
 
   useEffect(() => {
     let alive = true;
 
     async function run() {
       setErr("");
-      setLoading(true);
       setData(null);
 
-      try {
-        const dates = Array.isArray(weekDates) ? weekDates.filter(Boolean) : [];
+      if (!selectedDate || !bounds.startISO || !bounds.endISO) {
+        setLoading(false);
+        setErr("Nessun file intraday disponibile.");
+        return;
+      }
 
-        if (dates.length !== 7) {
-          setErr(
-            "Periodo non disponibile (servono 7 giorni consecutivi presenti nel daily)."
-          );
+      setLoading(true);
+
+      try {
+        const datesSet = new Set(availableDates);
+        const allPeriodDates = dateRangeISO(bounds.startISO, bounds.endISO);
+        const datesToFetch = allPeriodDates.filter((iso) => datesSet.has(iso));
+        const stepMinutes = mode === "day" ? 15 : 60;
+        const timeline = makePeriodTimeline(bounds.startISO, bounds.endISO, stepMinutes);
+
+        if (!timeline.length || !datesToFetch.length) {
+          if (!alive) return;
+          setErr("Non sono presenti dati intraday nel periodo selezionato.");
           return;
         }
 
-        const startLocal = new Date(`${dates[0]}T00:00:00`);
-        const hrs = [];
-
-        for (let i = 0; i < 168; i++) {
-          const d = new Date(startLocal);
-          d.setHours(d.getHours() + i, 0, 0, 0);
-          hrs.push(d.getTime());
-        }
-
         const buckets = new Map();
-        for (const h of hrs) {
-          buckets.set(h, {
+        for (const hourMs of timeline) {
+          buckets.set(hourMs, {
             temp_sum: 0,
             temp_cnt: 0,
             dew_sum: 0,
@@ -1010,109 +1636,170 @@ function WeekChart({
             solar_sum: 0,
             solar_cnt: 0,
             gust_max: -Infinity,
-            rain_hour_sum: 0,
             dir_sin: 0,
             dir_cos: 0,
             dir_cnt: 0,
+            observed: false,
           });
         }
 
         const dailyHourMap = new Map();
+        let loadedDays = 0;
+        let latestObservedTimestamp = null;
+        const latestAvailableDate = availableDates[availableDates.length - 1];
+        const futureToleranceMs = 5 * 60 * 1000;
 
-        for (const dISO of dates) {
-          const url = `/data/intraday/${dISO}.json`;
-          const res = await fetch(url, { cache: "no-store" });
-          if (!res.ok) continue;
+        await Promise.all(
+          datesToFetch.map(async (dISO) => {
+            try {
+              const res = await fetch(`/data/intraday/${dISO}.json`, {
+                cache: "no-store",
+              });
 
-          const arr = await res.json();
-          if (!Array.isArray(arr)) continue;
+              if (!res.ok) return;
 
-          const hourTotals = new Map();
+              const arr = await res.json();
+              if (!Array.isArray(arr)) return;
 
-          for (const r of arr) {
-            const tt = r?.t ? String(r.t) : "";
-            if (!tt) continue;
+              loadedDays += 1;
+              const bucketTotals = new Map();
 
-            const m = tt.match(
-              /^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})$/
-            );
-            if (!m) continue;
+              for (const r of arr) {
+                const tt = r?.t ? String(r.t) : "";
+                if (!tt) continue;
 
-            const y = Number(m[1]);
-            const mo = Number(m[2]);
-            const da = Number(m[3]);
-            const hh = Number(m[4]);
-            const mi = Number(m[5]);
+                const match = tt.match(
+                  /^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})$/,
+                );
+                if (!match) continue;
 
-            const t = new Date(y, mo - 1, da, hh, mi, 0, 0);
-            t.setMinutes(0, 0, 0);
-            const hourMs = t.getTime();
+                const y = Number(match[1]);
+                const mo = Number(match[2]);
+                const da = Number(match[3]);
+                const hh = Number(match[4]);
+                const mi = Number(match[5]);
 
-            const b = buckets.get(hourMs);
-            if (!b) continue;
+                const recordDate = new Date(y, mo - 1, da, hh, mi, 0, 0);
+                const recordTimestamp = recordDate.getTime();
 
-            const addMean = (keyBase, val) => {
-              const vv = Number(val);
-              if (!Number.isFinite(vv)) return;
-              b[`${keyBase}_sum`] += vv;
-              b[`${keyBase}_cnt`] += 1;
-            };
+                // L'ultimo file può contenere intervalli predisposti fino a fine
+                // giornata. Nel giorno live vengono ignorati i timestamp futuri.
+                if (
+                  dISO === latestAvailableDate &&
+                  recordTimestamp > Date.now() + futureToleranceMs
+                ) {
+                  continue;
+                }
 
-            addMean("temp", r?.temp_c);
-            addMean("dew", r?.dewpoint_c);
-            addMean("rh", r?.rh_pct);
-            addMean("press", r?.press_hpa);
-            addMean("wind", r?.wind_kmh);
-            addMean("uv", r?.uv);
-            addMean("solar", r?.solar_wm2);
+                const bucketDate = new Date(recordDate);
 
-            const gust = Number(r?.gust_kmh);
-            if (Number.isFinite(gust)) b.gust_max = Math.max(b.gust_max, gust);
+                if (mode === "day") {
+                  const normalizedMinutes = Math.floor(mi / 15) * 15;
+                  bucketDate.setMinutes(normalizedMinutes, 0, 0);
+                } else {
+                  bucketDate.setMinutes(0, 0, 0);
+                }
 
-            const r15 = Number(r?.rain_15m_mm);
-            if (Number.isFinite(r15)) {
-              b.rain_hour_sum += r15;
-              hourTotals.set(hourMs, (hourTotals.get(hourMs) || 0) + r15);
+                const hourMs = bucketDate.getTime();
+
+                const bucket = buckets.get(hourMs);
+                if (!bucket) continue;
+
+                bucket.observed = true;
+
+                if (
+                  dISO === latestAvailableDate &&
+                  (!Number.isFinite(latestObservedTimestamp) ||
+                    hourMs > latestObservedTimestamp)
+                ) {
+                  latestObservedTimestamp = hourMs;
+                }
+
+                const addMean = (keyBase, val) => {
+                  const vv = Number(val);
+                  if (!Number.isFinite(vv)) return;
+                  bucket[`${keyBase}_sum`] += vv;
+                  bucket[`${keyBase}_cnt`] += 1;
+                };
+
+                addMean("temp", r?.temp_c);
+                addMean("dew", r?.dewpoint_c);
+                addMean("rh", r?.rh_pct);
+                addMean("press", r?.press_hpa);
+                addMean("wind", r?.wind_kmh);
+                addMean("uv", r?.uv);
+                addMean("solar", r?.solar_wm2);
+
+                const gust = Number(r?.gust_kmh);
+                if (Number.isFinite(gust)) {
+                  bucket.gust_max = Math.max(bucket.gust_max, gust);
+                }
+
+                const rain15 = Number(r?.rain_15m_mm);
+                if (Number.isFinite(rain15)) {
+                  bucketTotals.set(
+                    hourMs,
+                    (bucketTotals.get(hourMs) || 0) + rain15,
+                  );
+                }
+
+                const direction = Number(r?.wind_dir_deg);
+                if (Number.isFinite(direction)) {
+                  const radians = (direction * Math.PI) / 180;
+                  bucket.dir_cos += Math.cos(radians);
+                  bucket.dir_sin += Math.sin(radians);
+                  bucket.dir_cnt += 1;
+                }
+              }
+
+              dailyHourMap.set(dISO, bucketTotals);
+            } catch {
+              // Il grafico continua a usare gli altri giorni disponibili.
             }
+          }),
+        );
 
-            const dir = Number(r?.wind_dir_deg);
-            if (Number.isFinite(dir)) {
-              const rad = (dir * Math.PI) / 180;
-              b.dir_cos += Math.cos(rad);
-              b.dir_sin += Math.sin(rad);
-              b.dir_cnt += 1;
-            }
-          }
-
-          dailyHourMap.set(dISO, hourTotals);
+        if (!loadedDays) {
+          if (!alive) return;
+          setErr("Non è stato possibile leggere i dati intraday del periodo.");
+          return;
         }
 
         const adjustedRainHours = new Map();
 
-        for (const dISO of dates) {
+        for (const dISO of datesToFetch) {
           const hourTotals = dailyHourMap.get(dISO) || new Map();
           const rawTotal = Array.from(hourTotals.values()).reduce(
-            (a, b) => a + b,
-            0
+            (acc, value) => acc + value,
+            0,
           );
-          const ovrTotal = Number.isFinite(n(weekDailyRain?.[dISO]))
-            ? Number(weekDailyRain[dISO])
-            : null;
 
-          const targetTotal = ovrTotal !== null ? ovrTotal : rawTotal;
+          const dailyValue = n(dailyRainByDate?.[dISO]);
+          const isLatestAvailableDay =
+            dISO === availableDates[availableDates.length - 1];
+          const dailyZeroLooksStale =
+            isLatestAvailableDay && dailyValue === 0 && rawTotal > 0;
+          const targetTotal =
+            Number.isFinite(dailyValue) && !dailyZeroLooksStale
+              ? dailyValue
+              : rawTotal;
 
           if (rawTotal > 0) {
             const ratio = targetTotal / rawTotal;
-            for (const [hourMs, val] of hourTotals.entries()) {
-              adjustedRainHours.set(hourMs, round1(val * ratio) ?? 0);
+
+            for (const [hourMs, value] of hourTotals.entries()) {
+              adjustedRainHours.set(hourMs, value * ratio);
             }
           } else if (targetTotal > 0) {
-            const endHour = new Date(`${dISO}T23:00:00`).getTime();
-            adjustedRainHours.set(endHour, round1(targetTotal) ?? 0);
+            const endHour = isoToLocalDate(dISO, 23)?.getTime();
+            if (Number.isFinite(endHour)) {
+              adjustedRainHours.set(endHour, targetTotal);
+            }
           }
         }
 
-        const mean = (sumV, cntV) => (cntV > 0 ? sumV / cntV : null);
+        const mean = (sumValue, countValue) =>
+          countValue > 0 ? sumValue / countValue : null;
 
         const temp = [];
         const dew = [];
@@ -1126,56 +1813,55 @@ function WeekChart({
         const uv = [];
         const solar = [];
 
-        let cum = 0;
+        let cumulativeRain = 0;
 
-        for (const h of hrs) {
-          const b = buckets.get(h);
+        for (const hourMs of timeline) {
+          const bucket = buckets.get(hourMs);
 
-          const tempV = mean(b.temp_sum, b.temp_cnt);
-          const dewV = mean(b.dew_sum, b.dew_cnt);
-          const rhV = mean(b.rh_sum, b.rh_cnt);
-          const pressV = mean(b.press_sum, b.press_cnt);
-          const windV = mean(b.wind_sum, b.wind_cnt);
-          const uvV = mean(b.uv_sum, b.uv_cnt);
-          const solarV = mean(b.solar_sum, b.solar_cnt);
+          const tempValue = mean(bucket.temp_sum, bucket.temp_cnt);
+          const dewValue = mean(bucket.dew_sum, bucket.dew_cnt);
+          const rhValue = mean(bucket.rh_sum, bucket.rh_cnt);
+          const pressValue = mean(bucket.press_sum, bucket.press_cnt);
+          const windValue = mean(bucket.wind_sum, bucket.wind_cnt);
+          const uvValue = mean(bucket.uv_sum, bucket.uv_cnt);
+          const solarValue = mean(bucket.solar_sum, bucket.solar_cnt);
+          const gustValue = Number.isFinite(bucket.gust_max)
+            ? bucket.gust_max
+            : null;
 
-          const gustV = Number.isFinite(b.gust_max) ? b.gust_max : null;
-
-          let dirV = null;
-          if (b.dir_cnt > 0) {
-            const meanRad = Math.atan2(
-              b.dir_sin / b.dir_cnt,
-              b.dir_cos / b.dir_cnt
+          let directionValue = null;
+          if (bucket.dir_cnt > 0) {
+            const meanRadians = Math.atan2(
+              bucket.dir_sin / bucket.dir_cnt,
+              bucket.dir_cos / bucket.dir_cnt,
             );
-            let deg = (meanRad * 180) / Math.PI;
-            if (deg < 0) deg += 360;
-            dirV = deg;
+            directionValue = (meanRadians * 180) / Math.PI;
+            if (directionValue < 0) directionValue += 360;
           }
 
-          const rainHourAdj = Number(adjustedRainHours.get(h) || 0);
-          cum += rainHourAdj;
+          const hasObservation = Boolean(bucket.observed);
+          const rainHour = Number(adjustedRainHours.get(hourMs) || 0);
 
-          temp.push([h, tempV === null ? null : round1(tempV)]);
-          dew.push([h, dewV === null ? null : round1(dewV)]);
-          rh.push([h, rhV === null ? null : round1(rhV)]);
-          press.push([h, pressV === null ? null : round1(pressV)]);
-          wind.push([h, windV === null ? null : round1(windV)]);
-          gust.push([h, gustV === null ? null : round1(gustV)]);
-          dirMean.push([h, dirV === null ? null : round1(dirV)]);
-          rainH.push([h, round1(rainHourAdj)]);
-          rainCum.push([h, round1(cum)]);
-          uv.push([h, uvV === null ? null : round1(uvV)]);
-          solar.push([h, solarV === null ? null : round1(solarV)]);
+          if (hasObservation) cumulativeRain += rainHour;
+
+          temp.push([hourMs, tempValue === null ? null : round1(tempValue)]);
+          dew.push([hourMs, dewValue === null ? null : round1(dewValue)]);
+          rh.push([hourMs, rhValue === null ? null : round1(rhValue)]);
+          press.push([hourMs, pressValue === null ? null : round1(pressValue)]);
+          wind.push([hourMs, windValue === null ? null : round1(windValue)]);
+          gust.push([hourMs, gustValue === null ? null : round1(gustValue)]);
+          dirMean.push([
+            hourMs,
+            directionValue === null ? null : round1(directionValue),
+          ]);
+          rainH.push([hourMs, hasObservation ? round1(rainHour) : null]);
+          rainCum.push([
+            hourMs,
+            hasObservation ? round1(cumulativeRain) : null,
+          ]);
+          uv.push([hourMs, uvValue === null ? null : round1(uvValue)]);
+          solar.push([hourMs, solarValue === null ? null : round1(solarValue)]);
         }
-
-        const rainTotalWeek = round1(
-          dates.reduce((acc, d) => {
-            const vv = Number.isFinite(n(weekDailyRain?.[d]))
-              ? Number(weekDailyRain[d])
-              : 0;
-            return acc + vv;
-          }, 0)
-        );
 
         if (!alive) return;
 
@@ -1189,13 +1875,18 @@ function WeekChart({
           dirMean,
           rainH,
           rainCum,
-          rainTotalWeek,
+          rainTotal: round1(cumulativeRain),
           uv,
           solar,
+          loadedDays,
+          requestedDays: datesToFetch.length,
+          latestTimestamp: Number.isFinite(latestObservedTimestamp)
+            ? latestObservedTimestamp
+            : null,
         });
-      } catch (e) {
+      } catch {
         if (!alive) return;
-        setErr("Errore nel caricamento/lettura dei JSON intraday.");
+        setErr("Errore nel caricamento o nella lettura dei JSON intraday.");
       } finally {
         if (alive) setLoading(false);
       }
@@ -1206,42 +1897,78 @@ function WeekChart({
     return () => {
       alive = false;
     };
-  }, [weekDates, weekDailyRain]);
+  }, [
+    selectedDate,
+    bounds.startISO,
+    bounds.endISO,
+    availableDates,
+    dailyRainByDate,
+    refreshTick,
+  ]);
 
   const option = useMemo(() => {
     if (!data) return null;
 
     const baseLegend = {
-      bottom: 36,
+      bottom: isMobileChart ? 34 : 36,
       left: "center",
-      itemGap: 18,
+      orient: isMobileChart ? "vertical" : "horizontal",
+      itemGap: isMobileChart ? 7 : 18,
       textStyle: {
+        fontSize: isMobileChart ? 11 : 12,
         fontWeight: 700,
         color: "rgba(15, 23, 42, 0.7)",
       },
     };
 
-    const gridNoLegend = { left: 70, right: 32, top: 82, bottom: 100 };
-    const gridWithLegend = { left: 70, right: 70, top: 105, bottom: 100 };
+    const gridNoLegend = isMobileChart
+      ? { left: 50, right: 22, top: 88, bottom: 74, containLabel: false }
+      : { left: 70, right: 34, top: 78, bottom: 92 };
+
+    const gridWithLegend = isMobileChart
+      ? { left: 50, right: 50, top: 96, bottom: 142, containLabel: false }
+      : { left: 70, right: 70, top: 92, bottom: 100 };
 
     const toolboxZoom = {
       feature: {
         dataZoom: { yAxisIndex: "none" },
         restore: {},
       },
-      right: 12,
-      top: 42,
+      right: isMobileChart ? 6 : 12,
+      top: isMobileChart ? 46 : 38,
+      itemSize: isMobileChart ? 16 : 18,
+      itemGap: isMobileChart ? 8 : 10,
     };
+
+    const chartTitle = (text) => ({
+      text,
+      left: "center",
+      top: isMobileChart ? 7 : 8,
+      textStyle: {
+        fontSize: isVeryNarrowChart ? 16 : isMobileChart ? 17 : 18,
+        fontWeight: 700,
+        lineHeight: isMobileChart ? 20 : 22,
+        color: "#3f3f46",
+      },
+    });
 
     const xAxis = {
       type: "time",
+      min: isoToLocalDate(bounds.startISO, 0)?.getTime(),
+      max: isoToLocalDate(addDaysISO(bounds.endISO, 1), 0)?.getTime(),
       axisLabel: {
         hideOverlap: true,
-        formatter: (val) => {
-          const d = new Date(val);
+        fontSize: isMobileChart ? 10 : 12,
+        margin: isMobileChart ? 8 : 10,
+        formatter: (value) => {
+          const d = new Date(value);
           const dd = pad2(d.getDate());
           const mm = pad2(d.getMonth() + 1);
           const hh = pad2(d.getHours());
+          const mi = pad2(d.getMinutes());
+
+          if (mode === "day") return `${hh}:${mi}`;
+          if (mode === "month") return `${dd}/${mm}`;
           return `${dd}/${mm} ${hh}`;
         },
       },
@@ -1249,9 +1976,11 @@ function WeekChart({
 
     const tooltipCommon = {
       trigger: "axis",
-      valueFormatter: (v) => {
-        if (v === null || v === undefined) return "—";
-        const vv = Number(v);
+      confine: true,
+      axisPointer: { type: "none" },
+      valueFormatter: (value) => {
+        if (value === null || value === undefined) return "—";
+        const vv = Number(value);
         return Number.isFinite(vv) ? vv.toFixed(1) : "—";
       },
     };
@@ -1261,8 +1990,12 @@ function WeekChart({
       name,
       nameLocation: "middle",
       nameRotate: 90,
-      nameGap: 42,
-      axisLabel: { formatter: (v) => Number(v).toFixed(1) },
+      nameGap: isMobileChart ? 34 : 43,
+      nameTextStyle: { fontSize: isMobileChart ? 10 : 12 },
+      axisLabel: {
+        fontSize: isMobileChart ? 10 : 12,
+        formatter: (value) => Number(value).toFixed(1),
+      },
       splitLine: { show: true },
       splitNumber: 6,
       ...extra,
@@ -1274,45 +2007,65 @@ function WeekChart({
       position: "right",
       nameLocation: "middle",
       nameRotate: -90,
-      nameGap: 42,
-      axisLabel: { formatter: (v) => Number(v).toFixed(1) },
+      nameGap: isMobileChart ? 34 : 43,
+      nameTextStyle: { fontSize: isMobileChart ? 10 : 12 },
+      axisLabel: {
+        fontSize: isMobileChart ? 10 : 12,
+        formatter: (value) => Number(value).toFixed(1),
+      },
       splitLine: { show: false },
       splitNumber: 6,
       ...extra,
     });
 
     const minMaxFrom = (pairs) => {
-      const ys = (pairs || [])
-        .map((p) => p?.[1])
+      const values = (pairs || [])
+        .map((pair) => pair?.[1])
         .filter(
-          (v) => v !== null && v !== undefined && Number.isFinite(Number(v))
+          (value) =>
+            value !== null &&
+            value !== undefined &&
+            Number.isFinite(Number(value)),
         )
-        .map((v) => Number(v));
+        .map((value) => Number(value));
 
-      if (!ys.length) return null;
-      return { min: Math.min(...ys), max: Math.max(...ys) };
+      if (!values.length) return null;
+      return { min: Math.min(...values), max: Math.max(...values) };
+    };
+
+    const common = {
+      animation: true,
+      animationDuration: 250,
+      animationDurationUpdate: 250,
+      toolbox: toolboxZoom,
+      dataZoom: makePeriodDataZoom(mode, isMobileChart),
+      xAxis,
     };
 
     if (groupKey === "temp") {
       const mm = minMaxFrom([...data.temp, ...data.dew]) || { min: 0, max: 1 };
-      const ax = axisNice(mm.min - 1, mm.max + 1, 6);
+      const axis = axisNice(mm.min - 1, mm.max + 1, 6);
+
+      const pulseTemp = showRealtimePulse
+        ? makeRealtimePulseSeries(data.temp, data.latestTimestamp, 0)
+        : null;
+      const pulseDew = showRealtimePulse
+        ? makeRealtimePulseSeries(data.dew, data.latestTimestamp, 0)
+        : null;
 
       return {
-        title: {
-          text: "Temperatura e Punto di rugiada (orario)",
-          left: "center",
-          top: 10,
-        },
+        ...common,
+        title: chartTitle("Temperatura e Punto di rugiada"),
         grid: gridWithLegend,
-        toolbox: toolboxZoom,
-        dataZoom: makeWeekDataZoom(),
         tooltip: tooltipCommon,
-        legend: baseLegend,
-        xAxis,
+        legend: {
+          ...baseLegend,
+          data: ["Temperatura (°C)", "Punto di rugiada (°C)"],
+        },
         yAxis: leftAxis("°C", {
-          min: ax.min,
-          max: ax.max,
-          interval: ax.interval,
+          min: axis.min,
+          max: axis.max,
+          interval: axis.interval,
         }),
         series: [
           {
@@ -1322,6 +2075,7 @@ function WeekChart({
             showSymbol: false,
             connectNulls: false,
             smooth: false,
+            sampling: "lttb",
             lineStyle: { width: 2 },
           },
           {
@@ -1331,34 +2085,46 @@ function WeekChart({
             showSymbol: false,
             connectNulls: false,
             smooth: false,
+            sampling: "lttb",
             lineStyle: { width: 2 },
           },
+          ...(pulseTemp ? [pulseTemp] : []),
+          ...(pulseDew ? [pulseDew] : []),
         ],
       };
     }
 
     if (groupKey === "rain") {
-      const tWeek = data.rainTotalWeek;
+      const pulseRain = showRealtimePulse
+        ? makeRealtimePulseSeries(data.rainH, data.latestTimestamp, 0)
+        : null;
+      const pulseCum = showRealtimePulse
+        ? makeRealtimePulseSeries(data.rainCum, data.latestTimestamp, 1)
+        : null;
+      const rainStepLabel = mode === "day" ? "Pioggia 15 min (mm)" : "Pioggia oraria (mm)";
+      const rainAxisLabel = mode === "day" ? "mm/15m" : "mm/h";
 
       return {
-        title: {
-          text: `Precipitazioni (oraria + cumulata) • Totale: ${fmt1(tWeek)} mm`,
-          left: "center",
-          top: 10,
-        },
+        ...common,
+        title: chartTitle(
+          isMobileChart
+            ? `Precipitazioni • ${fmt1(data.rainTotal)} mm`
+            : `Precipitazioni • Totale periodo: ${fmt1(data.rainTotal)} mm`,
+        ),
         grid: gridWithLegend,
-        toolbox: toolboxZoom,
-        dataZoom: makeWeekDataZoom(),
         tooltip: tooltipCommon,
-        legend: baseLegend,
-        xAxis,
-        yAxis: [leftAxis("mm/h"), rightAxis("mm cum.")],
+        legend: {
+          ...baseLegend,
+          data: [rainStepLabel, "Cumulata (mm)"],
+        },
+        yAxis: [leftAxis(rainAxisLabel), rightAxis("mm cum.")],
         series: [
           {
-            name: "Pioggia oraria (mm)",
+            name: rainStepLabel,
             type: "bar",
             data: data.rainH,
             yAxisIndex: 0,
+            barMaxWidth: mode === "day" ? 12 : 10,
           },
           {
             name: "Cumulata (mm)",
@@ -1368,25 +2134,26 @@ function WeekChart({
             showSymbol: false,
             connectNulls: false,
             smooth: false,
+            sampling: "lttb",
             lineStyle: { width: 2 },
           },
+          ...(pulseRain ? [pulseRain] : []),
+          ...(pulseCum ? [pulseCum] : []),
         ],
       };
     }
 
     if (groupKey === "rh") {
+      const pulseRh = showRealtimePulse
+        ? makeRealtimePulseSeries(data.rh, data.latestTimestamp, 0)
+        : null;
+
       return {
-        title: { text: "Umidità (media oraria)", left: "center", top: 10 },
+        ...common,
+        title: chartTitle("Umidità"),
         grid: gridNoLegend,
-        toolbox: toolboxZoom,
-        dataZoom: makeWeekDataZoom(),
         tooltip: tooltipCommon,
-        legend: baseLegend,
-        xAxis,
-        yAxis: leftAxis("% RH", {
-          min: 0,
-          max: 100,
-        }),
+        yAxis: leftAxis("% RH", { min: 0, max: 100 }),
         series: [
           {
             name: "Umidità (%)",
@@ -1395,41 +2162,55 @@ function WeekChart({
             showSymbol: false,
             connectNulls: false,
             smooth: false,
+            sampling: "lttb",
             lineStyle: { width: 2 },
           },
+          ...(pulseRh ? [pulseRh] : []),
         ],
       };
     }
 
     if (groupKey === "wind") {
+      const pulseWind = showRealtimePulse
+        ? makeRealtimePulseSeries(data.wind, data.latestTimestamp, 0)
+        : null;
+      const pulseGust = showRealtimePulse
+        ? makeRealtimePulseSeries(data.gust, data.latestTimestamp, 0)
+        : null;
+      const pulseDir = showRealtimePulse
+        ? makeRealtimePulseSeries(data.dirMean, data.latestTimestamp, 1)
+        : null;
+
       return {
-        title: {
-          text: "Vento (medio + raffiche + direzione) • orario",
-          left: "center",
-          top: 10,
-        },
+        ...common,
+        title: chartTitle(
+          isMobileChart
+            ? "Vento, raffiche e direzione"
+            : "Vento medio, raffiche e direzione",
+        ),
         grid: gridWithLegend,
-        toolbox: toolboxZoom,
-        dataZoom: makeWeekDataZoom(),
         tooltip: {
           trigger: "axis",
+          confine: true,
+          axisPointer: { type: "none" },
           formatter: (params) => {
             const time = params?.[0]?.axisValueLabel ?? "";
             const lines = [time];
 
             for (const p of params || []) {
-              const v = p.data?.[1];
+              const value = p.data?.[1];
+
               if (p.seriesName === "Direzione") {
                 lines.push(
                   `${p.marker}${p.seriesName}: ${
-                    v == null ? "—" : degToCardinal8(v)
-                  }`
+                    value == null ? "—" : degToCardinal8(value)
+                  }`,
                 );
               } else {
                 lines.push(
                   `${p.marker}${p.seriesName}: ${
-                    v == null ? "—" : Number(v).toFixed(1)
-                  }`
+                    value == null ? "—" : Number(value).toFixed(1)
+                  }`,
                 );
               }
             }
@@ -1437,8 +2218,10 @@ function WeekChart({
             return lines.join("<br/>");
           },
         },
-        legend: baseLegend,
-        xAxis,
+        legend: {
+          ...baseLegend,
+          data: ["Vento medio (km/h)", "Raffiche (km/h)", "Direzione"],
+        },
         yAxis: [
           leftAxis("km/h"),
           {
@@ -1446,7 +2229,10 @@ function WeekChart({
             min: 0,
             max: 360,
             interval: 45,
-            axisLabel: { formatter: (v) => degToCardinal8(v) },
+            axisLabel: {
+              fontSize: isMobileChart ? 10 : 12,
+              formatter: (value) => degToCardinal8(value),
+            },
           },
         ],
         series: [
@@ -1457,6 +2243,7 @@ function WeekChart({
             showSymbol: false,
             connectNulls: false,
             smooth: false,
+            sampling: "lttb",
             yAxisIndex: 0,
             lineStyle: { width: 2 },
           },
@@ -1467,6 +2254,7 @@ function WeekChart({
             showSymbol: false,
             connectNulls: false,
             smooth: false,
+            sampling: "lttb",
             yAxisIndex: 0,
             lineStyle: { width: 2 },
           },
@@ -1475,28 +2263,32 @@ function WeekChart({
             type: "scatter",
             data: data.dirMean,
             yAxisIndex: 1,
-            symbolSize: 5,
+            symbolSize: mode === "month" ? 3 : 5,
           },
+          ...(pulseWind ? [pulseWind] : []),
+          ...(pulseGust ? [pulseGust] : []),
+          ...(pulseDir ? [pulseDir] : []),
         ],
       };
     }
 
     if (groupKey === "press") {
       const mm = minMaxFrom(data.press) || { min: 1010, max: 1020 };
-      const ax = axisNice(mm.min - 1.5, mm.max + 1.5, 6);
+      const axis = axisNice(mm.min - 1.5, mm.max + 1.5, 6);
+
+      const pulsePress = showRealtimePulse
+        ? makeRealtimePulseSeries(data.press, data.latestTimestamp, 0)
+        : null;
 
       return {
-        title: { text: "Pressione (media oraria)", left: "center", top: 10 },
+        ...common,
+        title: chartTitle("Pressione"),
         grid: gridNoLegend,
-        toolbox: toolboxZoom,
-        dataZoom: makeWeekDataZoom(),
         tooltip: tooltipCommon,
-        legend: baseLegend,
-        xAxis,
         yAxis: leftAxis("hPa", {
-          min: ax.min,
-          max: ax.max,
-          interval: ax.interval,
+          min: axis.min,
+          max: axis.max,
+          interval: axis.interval,
         }),
         series: [
           {
@@ -1506,28 +2298,31 @@ function WeekChart({
             showSymbol: false,
             connectNulls: false,
             smooth: false,
+            sampling: "lttb",
             lineStyle: { width: 2 },
           },
+          ...(pulsePress ? [pulsePress] : []),
         ],
       };
     }
 
+    const pulseUv = showRealtimePulse
+      ? makeRealtimePulseSeries(data.uv, data.latestTimestamp, 0)
+      : null;
+    const pulseSolar = showRealtimePulse
+      ? makeRealtimePulseSeries(data.solar, data.latestTimestamp, 1)
+      : null;
+
     return {
-      title: { text: "UV + Radiazione (media oraria)", left: "center", top: 10 },
+      ...common,
+      title: chartTitle("UV e Radiazione"),
       grid: gridWithLegend,
-      toolbox: toolboxZoom,
-      dataZoom: makeWeekDataZoom(),
       tooltip: tooltipCommon,
-      legend: baseLegend,
-      xAxis,
-      yAxis: [
-        leftAxis("UV", {
-          min: 0,
-        }),
-        rightAxis("W/m²", {
-          min: 0,
-        }),
-      ],
+      legend: {
+        ...baseLegend,
+        data: ["UV", "Radiazione (W/m²)"],
+      },
+      yAxis: [leftAxis("UV", { min: 0 }), rightAxis("W/m²", { min: 0 })],
       series: [
         {
           name: "UV",
@@ -1536,6 +2331,7 @@ function WeekChart({
           showSymbol: false,
           connectNulls: false,
           smooth: false,
+          sampling: "lttb",
           yAxisIndex: 0,
           lineStyle: { width: 2 },
         },
@@ -1546,46 +2342,116 @@ function WeekChart({
           showSymbol: false,
           connectNulls: false,
           smooth: false,
+          sampling: "lttb",
           yAxisIndex: 1,
           lineStyle: { width: 2 },
         },
+        ...(pulseUv ? [pulseUv] : []),
+        ...(pulseSolar ? [pulseSolar] : []),
       ],
     };
-  }, [data, groupKey]);
+  }, [
+    data,
+    groupKey,
+    mode,
+    bounds.startISO,
+    bounds.endISO,
+    showRealtimePulse,
+    isMobileChart,
+    isVeryNarrowChart,
+    viewportWidth,
+  ]);
+
+  const chartHeight = isMobileChart
+    ? groupKey === "wind"
+      ? 540
+      : 500
+    : 420;
 
   return (
-    <div className="weekCard" aria-label="Grafico ultima settimana disponibile">
-      <div className="weekHead">
-        <div className="weekText">
-          <div className="weekTitle">Ultima settimana disponibile</div>
-          <div className="weekSub">
-            {weekLabel}. Valori <b>orari</b> aggregati dai dati intraday.
+    <div className="periodCard" aria-label={periodTitle}>
+      <div className="periodHead">
+        <div className="leftControls">
+          <div className="menu leftMenu">
+            <span className="menuLabel">Tipo di grafico</span>
+            <CustomSelect
+              value={mode}
+              options={PERIODS}
+              onChange={setMode}
+              ariaLabel="Tipo di grafico"
+            />
           </div>
+
+          <button
+            type="button"
+            className="todayButton"
+            onClick={goToToday}
+            disabled={!latestAvailableDate || isTodayView}
+            aria-label="Torna al grafico di oggi"
+            title="Torna al grafico di oggi"
+          >
+            Oggi
+          </button>
         </div>
 
-        <div className="menu">
+        <div className="periodText">
+          <div className="periodTitle">{periodTitle}</div>
+          <div className="periodSub">Live data</div>
+        </div>
+
+        <div className="menu parameterMenu rightMenu">
           <span className="menuLabel">Seleziona parametro</span>
-          <select
-            className="select"
+          <CustomSelect
             value={groupKey}
-            onChange={(e) => setGroupKey(e.target.value)}
-          >
-            {GROUPS.map((g) => (
-              <option key={g.key} value={g.key}>
-                {g.label}
-              </option>
-            ))}
-          </select>
+            options={GROUPS}
+            onChange={setGroupKey}
+            ariaLabel="Seleziona parametro"
+          />
         </div>
       </div>
 
+      <div className="dateNavigator">
+        <button
+          type="button"
+          className="arrow"
+          aria-label="Periodo precedente"
+          title="Periodo precedente"
+          disabled={!canGoBack}
+          onClick={() => changePeriod(-1)}
+        >
+          ←
+        </button>
+
+        <div className="dateText">
+          <strong>{periodLabel}</strong>
+          <span>
+            {mode === "day"
+              ? "24 ore"
+              : mode === "week"
+                ? "7 giorni"
+                : "mese di calendario"}
+          </span>
+        </div>
+
+        <button
+          type="button"
+          className="arrow"
+          aria-label="Periodo successivo"
+          title="Periodo successivo"
+          disabled={!canGoForward}
+          onClick={() => changePeriod(1)}
+        >
+          →
+        </button>
+      </div>
+
       <div className="chartArea">
-        {loading && <div className="msg">Caricamento…</div>}
+        {loading && <div className="msg">Caricamento del grafico…</div>}
         {!loading && err && <div className="msg">{err}</div>}
         {!loading && !err && option && (
           <ReactECharts
             option={option}
-            style={{ height: 420, width: "100%" }}
+            style={{ height: chartHeight, width: "100%" }}
             notMerge={true}
             lazyUpdate={true}
           />
@@ -1593,119 +2459,384 @@ function WeekChart({
       </div>
 
       <style jsx>{`
-        .weekCard {
-          border: 1px solid #e8e8e8;
-          border-radius: 20px;
-          background: rgba(255, 255, 255, 0.95);
-          box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+        .periodCard {
+          border: 1px solid #e4e7eb;
+          border-radius: 22px;
+          background: rgba(255, 255, 255, 0.97);
+          box-shadow: 0 9px 28px rgba(15, 23, 42, 0.06);
           overflow: hidden;
         }
 
-        .weekHead {
+        .periodHead {
           position: relative;
+          z-index: 30;
           min-height: 104px;
-          padding: 18px;
-          display: flex;
+          padding: 17px 18px;
+          display: grid;
+          grid-template-columns: 1fr auto 1fr;
           align-items: center;
-          justify-content: flex-end;
-          gap: 14px;
-          border-bottom: 1px solid #f0f0f0;
+          gap: 18px;
+          border-bottom: 1px solid #eef0f2;
         }
 
-        .weekText {
-          position: absolute;
-          left: 50%;
-          top: 50%;
-          width: min(760px, calc(100% - 390px));
-          transform: translate(-50%, -50%);
+        .periodText {
+          grid-column: 2;
           text-align: center;
-          pointer-events: none;
         }
 
-        .weekTitle {
-          font-size: 24px;
+        .periodTitle {
+          font-size: 25px;
           font-weight: 950;
-          letter-spacing: -0.02em;
-          line-height: 1.1;
+          letter-spacing: -0.025em;
+          line-height: 1.05;
           color: #0f172a;
-          text-align: center;
         }
 
-        .weekSub {
+        .periodSub {
           margin-top: 6px;
-          font-size: 12px;
-          color: rgba(15, 23, 42, 0.64);
-          max-width: 760px;
-          margin-left: auto;
-          margin-right: auto;
-          text-align: center;
+          font-size: 11px;
+          font-weight: 850;
+          color: #dc2626;
+          letter-spacing: 0.025em;
         }
 
         .menu {
-          position: relative;
-          z-index: 2;
-          width: 320px;
           display: grid;
-          gap: 6px;
-          justify-items: end;
+          gap: 5px;
+        }
+
+        .leftControls {
+          grid-column: 1;
+          justify-self: start;
+          display: flex;
+          align-items: end;
+          gap: 9px;
+        }
+
+        .leftMenu {
+          width: 210px;
+        }
+
+        .todayButton {
+          width: 70px;
+          height: 42px;
+          flex: 0 0 70px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          border: 1px solid #dde2e8;
+          border-radius: 13px;
+          background: #fff;
+          color: #0f172a;
+          font-family: inherit;
+          font-size: 12px;
+          font-weight: 900;
+          line-height: 1;
+          cursor: pointer;
+          transition:
+            transform 120ms ease,
+            border-color 120ms ease,
+            background 120ms ease,
+            color 120ms ease;
+        }
+
+        .todayButton:hover:not(:disabled) {
+          transform: translateY(-1px);
+          border-color: #bfc8d3;
+          background: #f8fafc;
+        }
+
+        .todayButton:focus-visible {
+          outline: none;
+          border-color: #aab5c3;
+          box-shadow: 0 0 0 3px rgba(15, 23, 42, 0.06);
+        }
+
+        .todayButton:disabled {
+          background: #f8fafc;
+          color: rgba(15, 23, 42, 0.38);
+          cursor: default;
+        }
+
+        .rightMenu {
+          grid-column: 3;
+          width: 290px;
+          justify-self: end;
+        }
+
+        .parameterMenu {
+          max-width: 290px;
         }
 
         .menuLabel {
-          font-size: 12px;
+          width: 100%;
+          display: block;
+          font-size: 10px;
           font-weight: 950;
-          color: rgba(15, 23, 42, 0.7);
-          text-align: right;
+          color: rgba(15, 23, 42, 0.62);
+          text-transform: uppercase;
+          letter-spacing: 0.04em;
+          text-align: center;
         }
 
-        .select {
-          width: 100%;
-          border: 1px solid #e7e7e7;
+        .dateNavigator {
+          position: relative;
+          z-index: 2;
+          min-height: 66px;
+          padding: 9px 18px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 14px;
+          border-bottom: 1px solid #f0f1f3;
+          background: #fbfcfd;
+        }
+
+        .arrow {
+          width: 40px;
+          height: 40px;
+          flex: 0 0 auto;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          border: 1px solid #dfe4ea;
+          border-radius: 12px;
           background: #fff;
-          border-radius: 14px;
-          padding: 12px 14px;
-          font-size: 13px;
+          color: #0f172a;
+          font-size: 20px;
+          font-weight: 900;
+          cursor: pointer;
+          transition:
+            transform 120ms ease,
+            border-color 120ms ease,
+            background 120ms ease;
+        }
+
+        .arrow:hover:not(:disabled) {
+          transform: translateY(-1px);
+          border-color: #bfc8d3;
+          background: #f8fafc;
+        }
+
+        .arrow:disabled {
+          opacity: 0.34;
+          cursor: not-allowed;
+        }
+
+        .dateText {
+          min-width: 280px;
+          text-align: center;
+          display: grid;
+          gap: 2px;
+        }
+
+        .dateText strong {
+          font-size: 14px;
           font-weight: 950;
           color: #0f172a;
-          outline: none;
+          text-transform: capitalize;
+        }
+
+        .dateText span {
+          font-size: 10px;
+          font-weight: 800;
+          color: rgba(15, 23, 42, 0.52);
+          text-transform: uppercase;
+          letter-spacing: 0.045em;
         }
 
         .chartArea {
-          padding: 8px 8px 2px;
+          position: relative;
+          z-index: 1;
+          width: 100%;
+          min-width: 0;
+          min-height: 430px;
+          padding: 6px 8px 2px;
+          box-sizing: border-box;
         }
 
         .msg {
-          padding: 18px 14px 20px;
+          min-height: 390px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 20px;
+          text-align: center;
           font-size: 12px;
-          color: rgba(15, 23, 42, 0.7);
-          font-weight: 800;
+          color: rgba(15, 23, 42, 0.66);
+          font-weight: 850;
         }
 
-        @media (max-width: 1080px) {
-          .weekHead {
+        @media (max-width: 1260px) {
+          .periodHead {
+            grid-template-columns: minmax(0, 1fr);
+            grid-template-areas:
+              "title"
+              "left"
+              "right";
+            gap: 16px;
+          }
+
+          .periodText {
+            grid-area: title;
+            grid-column: 1;
+            grid-row: auto;
+            justify-self: center;
+            width: min(100%, 620px);
+          }
+
+          .leftControls {
+            grid-area: left;
+            grid-column: 1;
+            grid-row: auto;
+            justify-self: center;
+            justify-content: center;
+            width: min(100%, 420px);
+          }
+
+          .rightMenu {
+            grid-area: right;
+            grid-column: 1;
+            grid-row: auto;
+            justify-self: center;
+            width: min(100%, 420px);
+            max-width: 420px;
+          }
+
+          .leftMenu {
+            width: min(100%, 320px);
+          }
+        }
+
+        @media (max-width: 720px) {
+          .periodCard {
+            border-radius: 18px;
+          }
+
+          .periodHead {
             min-height: 0;
-            flex-direction: column;
-            align-items: stretch;
-            justify-content: flex-start;
+            padding: 16px 12px;
+            gap: 14px;
           }
 
-          .weekText {
-            position: static;
+          .periodText {
             width: 100%;
-            transform: none;
-            pointer-events: auto;
           }
 
-          .menu {
+          .periodTitle {
+            font-size: 22px;
+            line-height: 1.08;
+            overflow-wrap: anywhere;
+          }
+
+          .periodSub {
+            margin-top: 5px;
+          }
+
+          .leftControls {
             width: 100%;
-            justify-items: stretch;
+            max-width: none;
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) 68px;
+            align-items: end;
+            gap: 8px;
+          }
+
+          .menu,
+          .leftMenu,
+          .rightMenu,
+          .parameterMenu {
+            width: 100%;
+            max-width: none;
+            min-width: 0;
+          }
+
+          .todayButton {
+            width: 68px;
+            height: 42px;
+            min-width: 0;
+            flex-basis: auto;
           }
 
           .menuLabel {
             text-align: center;
           }
 
-          .select {
-            width: 100%;
+          .dateNavigator {
+            min-height: 72px;
+            gap: 8px;
+            padding: 10px 8px;
+          }
+
+          .dateText {
+            min-width: 0;
+            flex: 1;
+            padding: 0 3px;
+          }
+
+          .dateText strong {
+            display: block;
+            font-size: 12px;
+            line-height: 1.2;
+            overflow-wrap: anywhere;
+          }
+
+          .dateText span {
+            font-size: 9px;
+          }
+
+          .arrow {
+            width: 38px;
+            height: 38px;
+          }
+
+          .chartArea {
+            min-height: 500px;
+            padding: 4px 0 0;
+            overflow: hidden;
+          }
+
+          .msg {
+            min-height: 460px;
+          }
+        }
+
+        @media (max-width: 430px) {
+          .periodHead {
+            padding-left: 10px;
+            padding-right: 10px;
+          }
+
+          .periodTitle {
+            font-size: 20px;
+          }
+
+          .leftControls {
+            grid-template-columns: minmax(0, 1fr) 62px;
+            gap: 7px;
+          }
+
+          .todayButton {
+            width: 62px;
+            font-size: 11px;
+          }
+
+          .menuLabel {
+            font-size: 9px;
+          }
+
+          .dateNavigator {
+            padding-left: 6px;
+            padding-right: 6px;
+          }
+
+          .dateText strong {
+            font-size: 11.5px;
+          }
+
+          .arrow {
+            width: 36px;
+            height: 36px;
           }
         }
       `}</style>
