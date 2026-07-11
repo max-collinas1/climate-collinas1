@@ -312,9 +312,26 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
   });
 
   let acc = 0;
-  const rainCum = rain15.map((v) => {
-    if (Number.isFinite(v)) acc += v;
-    return acc;
+
+  const rainCum = labels.map((hhmm, index) => {
+    /*
+     * Se non esiste un'osservazione per questo quarto d'ora,
+     * la cumulata resta nulla. In questo modo la linea non
+     * prosegue artificialmente nelle ore future o nei buchi reali.
+     */
+    if (!byHHMM.has(hhmm)) {
+      return null;
+    }
+
+    const value = rain15[index];
+
+    if (Number.isFinite(value)) {
+      acc += value;
+    }
+
+    return Math.round(
+      (acc + Number.EPSILON) * 100
+    ) / 100;
   });
 
   const LARGE_CHART_H = 365;
