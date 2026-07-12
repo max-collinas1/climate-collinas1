@@ -30,6 +30,8 @@ jobs:
       - name: Installa le dipendenze
         shell: bash
         run: |
+          set -e
+
           if [ -f package-lock.json ]; then
             npm ci
           else
@@ -41,14 +43,43 @@ jobs:
           WU_API_KEY: ${{ secrets.WU_API_KEY }}
           WU_STATION_ID: ICOLLI48
           WU_START_DATE: "2026-07-10"
-        run: node scripts/update-wunderground.mjs
+        shell: bash
+        run: |
+          set -e
+
+          MAX_ATTEMPTS=3
+          ATTEMPT=1
+
+          while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
+            echo "Tentativo $ATTEMPT di $MAX_ATTEMPTS..."
+
+            if node scripts/update-wunderground.mjs; then
+              echo "Recupero dati completato correttamente."
+              exit 0
+            fi
+
+            if [ "$ATTEMPT" -eq "$MAX_ATTEMPTS" ]; then
+              echo "Recupero dati fallito dopo $MAX_ATTEMPTS tentativi."
+              exit 1
+            fi
+
+            echo "Tentativo fallito. Nuovo tentativo tra 30 secondi..."
+            sleep 30
+
+            ATTEMPT=$((ATTEMPT + 1))
+          done
 
       - name: Rigenera daily.json e i file intraday
-        run: node scripts/build-data.js
+        shell: bash
+        run: |
+          set -e
+          node scripts/build-data.js
 
       - name: Salva i dati aggiornati su GitHub
         shell: bash
         run: |
+          set -e
+
           if [ -z "$(git status --porcelain -- data_raw/clean/auto data/daily.json public/data/intraday)" ]; then
             echo "Nessuna modifica da salvare."
             exit 0
@@ -60,7 +91,11 @@ jobs:
           git config user.name "$LAST_AUTHOR_NAME"
           git config user.email "$LAST_AUTHOR_EMAIL"
 
-          git add data_raw/clean/auto data/daily.json public/data/intraday
+          git add data_raw/clean/auto
+          git add data/daily.json
+          git add public/data/intraday
+
           git commit -m "Aggiornamento automatico dati meteo"
+
           git pull --rebase origin main
           git push origin HEAD:main
