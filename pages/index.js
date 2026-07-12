@@ -445,10 +445,11 @@ function lastNonNullPoint(pairs) {
   for (let i = pairs.length - 1; i >= 0; i -= 1) {
     const point = pairs[i];
     const x = point?.[0];
-    const y = point?.[1];
+    const rawY = point?.[1];
+    const y = n(rawY);
 
-    if (x !== null && x !== undefined && Number.isFinite(Number(y))) {
-      return [Number(x), Number(y)];
+    if (x !== null && x !== undefined && Number.isFinite(y)) {
+      return [Number(x), y];
     }
   }
 
@@ -463,7 +464,7 @@ function pointAtOrBeforeTimestamp(pairs, timestamp) {
   for (let i = pairs.length - 1; i >= 0; i -= 1) {
     const point = pairs[i];
     const x = Number(point?.[0]);
-    const y = Number(point?.[1]);
+    const y = n(point?.[1]);
 
     if (Number.isFinite(x) && x <= limit && Number.isFinite(y)) {
       return [x, y];
@@ -1459,6 +1460,1073 @@ function CustomSelect({ value, options = [], onChange, ariaLabel }) {
 }
 
 // -------------------- grafico giorno / settimana / mese --------------------
+function addYearsISO(iso, amount) {
+  const d = isoToLocalDate(iso);
+  if (!d) return iso;
+
+  const month = d.getMonth();
+  const day = d.getDate();
+  d.setDate(1);
+  d.setFullYear(d.getFullYear() + amount);
+  d.setMonth(month);
+
+  const lastDay = new Date(d.getFullYear(), month + 1, 0, 12).getDate();
+  d.setDate(Math.min(day, lastDay));
+
+  return dateToISO(d);
+}
+
+function comparisonOptionsForMode(mode) {
+  if (mode === "week") {
+    return [
+      { key: "prev_week", label: "Settimana precedente" },
+      { key: "year_week", label: "Stessa settimana un anno fa" },
+    ];
+  }
+
+  if (mode === "month") {
+    return [
+      { key: "prev_month", label: "Mese precedente" },
+      { key: "year_month", label: "Stesso mese un anno fa" },
+    ];
+  }
+
+  return [
+    { key: "yesterday", label: "Ieri" },
+    { key: "thirty_days", label: "30 giorni fa" },
+    { key: "year_day", label: "Un anno fa" },
+  ];
+}
+
+function comparisonDescriptor(mode, compareKey, selectedDate) {
+  if (!selectedDate) return null;
+
+  const current = getPeriodBounds(mode, selectedDate);
+
+  if (mode === "day") {
+    if (compareKey === "thirty_days") {
+      const date = addDaysISO(selectedDate, -30);
+      return {
+        key: compareKey,
+        label: "30 giorni fa",
+        anchorDate: date,
+        bounds: getPeriodBounds("day", date),
+      };
+    }
+
+    if (compareKey === "year_day") {
+      const date = addYearsISO(selectedDate, -1);
+      return {
+        key: compareKey,
+        label: "un anno fa",
+        anchorDate: date,
+        bounds: getPeriodBounds("day", date),
+      };
+    }
+
+    const date = addDaysISO(selectedDate, -1);
+    return {
+      key: "yesterday",
+      label: "ieri",
+      anchorDate: date,
+      bounds: getPeriodBounds("day", date),
+    };
+  }
+
+  if (mode === "week") {
+    if (compareKey === "year_week") {
+      const endISO = addYearsISO(current.endISO, -1);
+      const startISO = addDaysISO(endISO, -6);
+      return {
+        key: compareKey,
+        label: "la stessa settimana di un anno fa",
+        anchorDate: endISO,
+        bounds: { startISO, endISO },
+      };
+    }
+
+    return {
+      key: "prev_week",
+      label: "la settimana precedente",
+      anchorDate: addDaysISO(selectedDate, -7),
+      bounds: {
+        startISO: addDaysISO(current.startISO, -7),
+        endISO: addDaysISO(current.endISO, -7),
+      },
+    };
+  }
+
+  if (compareKey === "year_month") {
+    const date = addYearsISO(selectedDate, -1);
+    return {
+      key: compareKey,
+      label: "lo stesso mese di un anno fa",
+      anchorDate: date,
+      bounds: getPeriodBounds("month", date),
+    };
+  }
+
+  const date = addMonthsISO(selectedDate, -1);
+  return {
+    key: "prev_month",
+    label: "il mese precedente",
+    anchorDate: date,
+    bounds: getPeriodBounds("month", date),
+  };
+}
+
+function localDayIndex(timestamp, startISO) {
+  const d = new Date(timestamp);
+  const start = isoToLocalDate(startISO, 0);
+  if (!start) return null;
+
+  const dayUTC = Date.UTC(d.getFullYear(), d.getMonth(), d.getDate());
+  const startUTC = Date.UTC(
+    start.getFullYear(),
+    start.getMonth(),
+    start.getDate(),
+  );
+
+  return Math.round((dayUTC - startUTC) / 86400000);
+}
+
+function relativeTimeKey(timestamp, startISO, mode) {
+  const d = new Date(timestamp);
+  const hh = pad2(d.getHours());
+  const mm = pad2(d.getMinutes());
+
+  if (mode === "day") return `${hh}:${mm}`;
+
+  if (mode === "week") {
+    const dayIndex = localDayIndex(timestamp, startISO);
+    return Number.isFinite(dayIndex) ? `${dayIndex}|${hh}:${mm}` : null;
+  }
+
+  return `${pad2(d.getDate())}|${hh}:${mm}`;
+}
+
+function seriesValues(pairs) {
+  return (Array.isArray(pairs) ? pairs : [])
+    .map((point) => ({
+      timestamp: Number(point?.[0]),
+      value: n(point?.[1]),
+    }))
+    .filter(
+      (point) =>
+        Number.isFinite(point.timestamp) && Number.isFinite(point.value),
+    );
+}
+
+function seriesStats(pairs) {
+  const values = seriesValues(pairs);
+  if (!values.length) {
+    return {
+      min: null,
+      minTimestamp: null,
+      max: null,
+      maxTimestamp: null,
+      mean: null,
+    };
+  }
+
+  let minPoint = values[0];
+  let maxPoint = values[0];
+  let total = 0;
+
+  for (const point of values) {
+    total += point.value;
+    if (point.value < minPoint.value) minPoint = point;
+    if (point.value > maxPoint.value) maxPoint = point;
+  }
+
+  return {
+    min: minPoint.value,
+    minTimestamp: minPoint.timestamp,
+    max: maxPoint.value,
+    maxTimestamp: maxPoint.timestamp,
+    mean: total / values.length,
+  };
+}
+
+function formatSummaryTimestamp(timestamp, mode) {
+  if (!Number.isFinite(Number(timestamp))) return "—";
+
+  const d = new Date(Number(timestamp));
+  const hh = pad2(d.getHours());
+  const mm = pad2(d.getMinutes());
+
+  if (mode === "day") return `${hh}:${mm}`;
+  return `${pad2(d.getDate())}/${pad2(d.getMonth() + 1)} ${hh}:${mm}`;
+}
+
+function deltaMetaForGroup(groupKey) {
+  if (groupKey === "rain") {
+    return {
+      field: "rainCum",
+      label: "precipitazione cumulata",
+      shortLabel: "Precipitazioni",
+      unit: "mm",
+    };
+  }
+
+  if (groupKey === "rh") {
+    return {
+      field: "rh",
+      label: "umidità",
+      shortLabel: "Umidità",
+      unit: "%",
+    };
+  }
+
+  if (groupKey === "wind") {
+    return {
+      field: "wind",
+      label: "vento medio",
+      shortLabel: "Vento medio",
+      unit: "km/h",
+    };
+  }
+
+  if (groupKey === "press") {
+    return {
+      field: "press",
+      label: "pressione",
+      shortLabel: "Pressione",
+      unit: "hPa",
+    };
+  }
+
+  if (groupKey === "uv") {
+    return {
+      field: "uv",
+      label: "indice UV",
+      shortLabel: "Indice UV",
+      unit: "UV",
+    };
+  }
+
+  if (groupKey === "solar") {
+    return {
+      field: "solar",
+      label: "radiazione solare",
+      shortLabel: "Radiazione solare",
+      unit: "W/m²",
+    };
+  }
+
+  return {
+    field: "temp",
+    label: "temperatura",
+    shortLabel: "Temperatura",
+    unit: "°C",
+  };
+}
+
+function makeDeltaSeries({
+  currentPairs,
+  comparisonPairs,
+  currentStartISO,
+  comparisonStartISO,
+  mode,
+}) {
+  const comparisonMap = new Map();
+
+  for (const point of Array.isArray(comparisonPairs) ? comparisonPairs : []) {
+    const timestamp = Number(point?.[0]);
+    const value = n(point?.[1]);
+    const key = relativeTimeKey(timestamp, comparisonStartISO, mode);
+
+    if (key && Number.isFinite(value)) comparisonMap.set(key, value);
+  }
+
+  return (Array.isArray(currentPairs) ? currentPairs : []).map((point) => {
+    const timestamp = Number(point?.[0]);
+    const currentValue = n(point?.[1]);
+    const key = relativeTimeKey(timestamp, currentStartISO, mode);
+    const comparisonValue = key ? n(comparisonMap.get(key)) : NaN;
+
+    if (
+      !Number.isFinite(timestamp) ||
+      !Number.isFinite(currentValue) ||
+      !Number.isFinite(comparisonValue)
+    ) {
+      return [timestamp, null];
+    }
+
+    return [timestamp, round1(currentValue - comparisonValue)];
+  });
+}
+
+function symmetricAxisFromPairs(pairs) {
+  const values = seriesValues(pairs).map((point) => Math.abs(point.value));
+  const maxAbs = values.length ? Math.max(...values) : 0;
+
+  if (!Number.isFinite(maxAbs) || maxAbs <= 0) {
+    return { min: -1, max: 1, interval: 0.5 };
+  }
+
+  const interval = niceStep(maxAbs * 2, 6);
+  const limit = Math.max(interval, Math.ceil(maxAbs / interval) * interval);
+
+  return { min: -limit, max: limit, interval };
+}
+
+async function loadIntradayPeriod({
+  startISO,
+  endISO,
+  mode,
+  availableDates,
+  dailyRainByDate,
+}) {
+  const datesSet = new Set(availableDates);
+  const allPeriodDates = dateRangeISO(startISO, endISO);
+  const datesToFetch = allPeriodDates.filter((iso) => datesSet.has(iso));
+  const stepMinutes = mode === "day" ? 15 : 60;
+  const timeline = makePeriodTimeline(startISO, endISO, stepMinutes);
+
+  if (!timeline.length || !datesToFetch.length) {
+    throw new Error("Non sono presenti dati intraday nel periodo selezionato.");
+  }
+
+  const buckets = new Map();
+  for (const timestamp of timeline) {
+    buckets.set(timestamp, {
+      temp_sum: 0,
+      temp_cnt: 0,
+      dew_sum: 0,
+      dew_cnt: 0,
+      rh_sum: 0,
+      rh_cnt: 0,
+      press_sum: 0,
+      press_cnt: 0,
+      wind_sum: 0,
+      wind_cnt: 0,
+      uv_sum: 0,
+      uv_cnt: 0,
+      solar_sum: 0,
+      solar_cnt: 0,
+      gust_max: -Infinity,
+      dir_sin: 0,
+      dir_cos: 0,
+      dir_cnt: 0,
+      observed: false,
+    });
+  }
+
+  const dailyRainMap = new Map();
+  let loadedDays = 0;
+  let latestObservedTimestamp = null;
+  const latestAvailableDate = availableDates[availableDates.length - 1];
+  const futureToleranceMs = 5 * 60 * 1000;
+
+  await Promise.all(
+    datesToFetch.map(async (dISO) => {
+      try {
+        const res = await fetch(`/data/intraday/${dISO}.json`, {
+          cache: "no-store",
+        });
+
+        if (!res.ok) return;
+
+        const arr = await res.json();
+        if (!Array.isArray(arr)) return;
+
+        loadedDays += 1;
+        const bucketTotals = new Map();
+
+        for (const r of arr) {
+          const tt = r?.t ? String(r.t) : "";
+          const match = tt.match(
+            /^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})$/,
+          );
+          if (!match) continue;
+
+          const y = Number(match[1]);
+          const mo = Number(match[2]);
+          const da = Number(match[3]);
+          const hh = Number(match[4]);
+          const mi = Number(match[5]);
+
+          const recordDate = new Date(y, mo - 1, da, hh, mi, 0, 0);
+          const recordTimestamp = recordDate.getTime();
+
+          if (
+            dISO === latestAvailableDate &&
+            recordTimestamp > Date.now() + futureToleranceMs
+          ) {
+            continue;
+          }
+
+          const bucketDate = new Date(recordDate);
+          if (mode === "day") {
+            bucketDate.setMinutes(Math.floor(mi / 15) * 15, 0, 0);
+          } else {
+            bucketDate.setMinutes(0, 0, 0);
+          }
+
+          const bucketTimestamp = bucketDate.getTime();
+          const bucket = buckets.get(bucketTimestamp);
+          if (!bucket) continue;
+
+          bucket.observed = true;
+
+          if (
+            dISO === latestAvailableDate &&
+            (!Number.isFinite(latestObservedTimestamp) ||
+              bucketTimestamp > latestObservedTimestamp)
+          ) {
+            latestObservedTimestamp = bucketTimestamp;
+          }
+
+          const addMean = (keyBase, value) => {
+            const vv = Number(value);
+            if (!Number.isFinite(vv)) return;
+            bucket[`${keyBase}_sum`] += vv;
+            bucket[`${keyBase}_cnt`] += 1;
+          };
+
+          addMean("temp", r?.temp_c);
+          addMean("dew", r?.dewpoint_c);
+          addMean("rh", r?.rh_pct);
+          addMean("press", r?.press_hpa);
+          addMean("wind", r?.wind_kmh);
+          addMean("uv", r?.uv);
+          addMean("solar", r?.solar_wm2);
+
+          const gust = Number(r?.gust_kmh);
+          if (Number.isFinite(gust)) {
+            bucket.gust_max = Math.max(bucket.gust_max, gust);
+          }
+
+          const rain = Number(r?.rain_15m_mm);
+          if (Number.isFinite(rain)) {
+            bucketTotals.set(
+              bucketTimestamp,
+              (bucketTotals.get(bucketTimestamp) || 0) + rain,
+            );
+          }
+
+          const direction = Number(r?.wind_dir_deg);
+          if (Number.isFinite(direction)) {
+            const radians = (direction * Math.PI) / 180;
+            bucket.dir_cos += Math.cos(radians);
+            bucket.dir_sin += Math.sin(radians);
+            bucket.dir_cnt += 1;
+          }
+        }
+
+        dailyRainMap.set(dISO, bucketTotals);
+      } catch {
+        // Gli altri giorni disponibili restano comunque utilizzabili.
+      }
+    }),
+  );
+
+  if (!loadedDays) {
+    throw new Error("Non è stato possibile leggere i dati intraday del periodo.");
+  }
+
+  const adjustedRain = new Map();
+
+  for (const dISO of datesToFetch) {
+    const bucketTotals = dailyRainMap.get(dISO) || new Map();
+    const rawTotal = Array.from(bucketTotals.values()).reduce(
+      (acc, value) => acc + value,
+      0,
+    );
+
+    const dailyValue = n(dailyRainByDate?.[dISO]);
+    const isLatestDay = dISO === latestAvailableDate;
+    const staleZero = isLatestDay && dailyValue === 0 && rawTotal > 0;
+    const targetTotal =
+      Number.isFinite(dailyValue) && !staleZero ? dailyValue : rawTotal;
+
+    if (rawTotal > 0) {
+      const ratio = targetTotal / rawTotal;
+      for (const [timestamp, value] of bucketTotals.entries()) {
+        adjustedRain.set(timestamp, value * ratio);
+      }
+    }
+  }
+
+  const mean = (sumValue, countValue) =>
+    countValue > 0 ? sumValue / countValue : null;
+
+  const temp = [];
+  const dew = [];
+  const rh = [];
+  const press = [];
+  const wind = [];
+  const gust = [];
+  const dirMean = [];
+  const rainH = [];
+  const rainCum = [];
+  const uv = [];
+  const solar = [];
+
+  let cumulativeRain = 0;
+
+  for (const timestamp of timeline) {
+    const bucket = buckets.get(timestamp);
+    const observed = Boolean(bucket?.observed);
+
+    const tempValue = mean(bucket.temp_sum, bucket.temp_cnt);
+    const dewValue = mean(bucket.dew_sum, bucket.dew_cnt);
+    const rhValue = mean(bucket.rh_sum, bucket.rh_cnt);
+    const pressValue = mean(bucket.press_sum, bucket.press_cnt);
+    const windValue = mean(bucket.wind_sum, bucket.wind_cnt);
+    const uvValue = mean(bucket.uv_sum, bucket.uv_cnt);
+    const solarValue = mean(bucket.solar_sum, bucket.solar_cnt);
+    const gustValue = Number.isFinite(bucket.gust_max)
+      ? bucket.gust_max
+      : null;
+
+    let directionValue = null;
+    if (bucket.dir_cnt > 0) {
+      const radians = Math.atan2(
+        bucket.dir_sin / bucket.dir_cnt,
+        bucket.dir_cos / bucket.dir_cnt,
+      );
+      directionValue = (radians * 180) / Math.PI;
+      if (directionValue < 0) directionValue += 360;
+    }
+
+    const rainValue = Number(adjustedRain.get(timestamp) || 0);
+    if (observed) cumulativeRain += rainValue;
+
+    temp.push([timestamp, tempValue === null ? null : round1(tempValue)]);
+    dew.push([timestamp, dewValue === null ? null : round1(dewValue)]);
+    rh.push([timestamp, rhValue === null ? null : round1(rhValue)]);
+    press.push([timestamp, pressValue === null ? null : round1(pressValue)]);
+    wind.push([timestamp, windValue === null ? null : round1(windValue)]);
+    gust.push([timestamp, gustValue === null ? null : round1(gustValue)]);
+    dirMean.push([
+      timestamp,
+      directionValue === null ? null : round1(directionValue),
+    ]);
+    rainH.push([timestamp, observed ? round1(rainValue) : null]);
+    rainCum.push([timestamp, observed ? round1(cumulativeRain) : null]);
+    uv.push([timestamp, uvValue === null ? null : round1(uvValue)]);
+    solar.push([timestamp, solarValue === null ? null : round1(solarValue)]);
+  }
+
+  return {
+    temp,
+    dew,
+    rh,
+    press,
+    wind,
+    gust,
+    dirMean,
+    rainH,
+    rainCum,
+    rainTotal: round1(cumulativeRain),
+    uv,
+    solar,
+    loadedDays,
+    requestedDays: datesToFetch.length,
+    latestTimestamp: Number.isFinite(latestObservedTimestamp)
+      ? latestObservedTimestamp
+      : null,
+  };
+}
+
+function PeriodSummary({ data, mode }) {
+  const items = useMemo(() => {
+    if (!data) return [];
+
+    const tempStats = seriesStats(data.temp);
+    const gustStats = seriesStats(data.gust);
+    const windStats = seriesStats(data.wind);
+    const rhStats = seriesStats(data.rh);
+    const pressStats = seriesStats(data.press);
+
+    return [
+      {
+        label: "Temperatura minima",
+        value: `${fmt(tempStats.min, 1)} °C`,
+        detail: formatSummaryTimestamp(tempStats.minTimestamp, mode),
+      },
+      {
+        label: "Temperatura massima",
+        value: `${fmt(tempStats.max, 1)} °C`,
+        detail: formatSummaryTimestamp(tempStats.maxTimestamp, mode),
+      },
+      {
+        label: "Temperatura media",
+        value: `${fmt(tempStats.mean, 1)} °C`,
+        detail: "sui dati disponibili",
+      },
+      {
+        label: "Precipitazione",
+        value: `${fmt(data.rainTotal, 1)} mm`,
+        detail: "cumulata del periodo",
+      },
+      {
+        label: "Vento medio",
+        value: `${fmt(windStats.mean, 1)} km/h`,
+        detail: "media del periodo",
+      },
+      {
+        label: "Raffica massima",
+        value: `${fmt(gustStats.max, 1)} km/h`,
+        detail: formatSummaryTimestamp(gustStats.maxTimestamp, mode),
+      },
+      {
+        label: "Umidità media",
+        value: `${fmt(rhStats.mean, 1)} %`,
+        detail: "media del periodo",
+      },
+      {
+        label: "Pressione media",
+        value: `${fmt(pressStats.mean, 1)} hPa`,
+        detail: "media del periodo",
+      },
+    ];
+  }, [data, mode]);
+
+  if (!items.length) return null;
+
+  return (
+    <section className="summarySection" aria-label="Riepilogo del periodo">
+      <div className="summaryHead">
+        <h3>Riepilogo del periodo</h3>
+        <span>Valori calcolati sui dati effettivamente disponibili</span>
+      </div>
+
+      <div className="summaryGrid">
+        {items.map((item) => (
+          <div className="summaryCell" key={item.label}>
+            <span className="summaryLabel">{item.label}</span>
+            <strong>{item.value}</strong>
+            <small>{item.detail}</small>
+          </div>
+        ))}
+      </div>
+
+      <style jsx>{`
+        .summarySection {
+          padding: 16px 18px 18px;
+          border-bottom: 1px solid #eef0f2;
+          background: #fff;
+        }
+
+        .summaryHead {
+          display: flex;
+          align-items: baseline;
+          justify-content: space-between;
+          gap: 14px;
+          margin-bottom: 11px;
+        }
+
+        h3 {
+          margin: 0;
+          font-size: 16px;
+          font-weight: 950;
+          color: #0f172a;
+        }
+
+        .summaryHead span {
+          font-size: 10px;
+          font-weight: 750;
+          color: rgba(15, 23, 42, 0.52);
+        }
+
+        .summaryGrid {
+          display: grid;
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+          border: 1px solid #e8ebef;
+          border-radius: 16px;
+          overflow: hidden;
+          background: #fff;
+        }
+
+        .summaryCell {
+          min-width: 0;
+          min-height: 78px;
+          padding: 11px 13px;
+          display: grid;
+          align-content: center;
+          gap: 3px;
+          border-right: 1px solid #eef0f3;
+          border-bottom: 1px solid #eef0f3;
+          background: #fbfcfd;
+        }
+
+        .summaryCell:nth-child(4n) {
+          border-right: 0;
+        }
+
+        .summaryCell:nth-last-child(-n + 4) {
+          border-bottom: 0;
+        }
+
+        .summaryLabel {
+          overflow: hidden;
+          font-size: 9px;
+          font-weight: 900;
+          color: rgba(15, 23, 42, 0.55);
+          text-transform: uppercase;
+          letter-spacing: 0.035em;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        strong {
+          overflow: hidden;
+          font-size: 17px;
+          font-weight: 950;
+          color: #0f172a;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        small {
+          overflow: hidden;
+          font-size: 9px;
+          font-weight: 750;
+          color: rgba(15, 23, 42, 0.48);
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        @media (max-width: 900px) {
+          .summaryGrid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+          }
+
+          .summaryCell:nth-child(4n) {
+            border-right: 1px solid #eef0f3;
+          }
+
+          .summaryCell:nth-child(2n) {
+            border-right: 0;
+          }
+
+          .summaryCell:nth-last-child(-n + 4) {
+            border-bottom: 1px solid #eef0f3;
+          }
+
+          .summaryCell:nth-last-child(-n + 2) {
+            border-bottom: 0;
+          }
+        }
+
+        @media (max-width: 560px) {
+          .summarySection {
+            padding: 14px 10px 16px;
+          }
+
+          .summaryHead {
+            display: grid;
+            gap: 3px;
+            text-align: center;
+          }
+
+          h3 {
+            font-size: 15px;
+          }
+
+          .summaryHead span {
+            font-size: 9px;
+          }
+
+          .summaryCell {
+            min-height: 72px;
+            padding: 9px 10px;
+          }
+
+          strong {
+            font-size: 15px;
+          }
+        }
+      `}</style>
+    </section>
+  );
+}
+
+function ComparisonChart({
+  mode,
+  groupKey,
+  currentData,
+  comparisonData,
+  currentBounds,
+  comparisonBounds,
+  descriptor,
+  options,
+  compareKey,
+  onCompareChange,
+  loading,
+  error,
+  isMobile,
+}) {
+  const meta = useMemo(() => deltaMetaForGroup(groupKey), [groupKey]);
+
+  const deltaSeries = useMemo(() => {
+    if (!currentData || !comparisonData || !comparisonBounds) return [];
+
+    return makeDeltaSeries({
+      currentPairs: currentData?.[meta.field],
+      comparisonPairs: comparisonData?.[meta.field],
+      currentStartISO: currentBounds.startISO,
+      comparisonStartISO: comparisonBounds.startISO,
+      mode,
+    });
+  }, [
+    currentData,
+    comparisonData,
+    comparisonBounds,
+    currentBounds.startISO,
+    meta.field,
+    mode,
+  ]);
+
+  const validDeltaCount = useMemo(
+    () => seriesValues(deltaSeries).length,
+    [deltaSeries],
+  );
+
+  const option = useMemo(() => {
+    if (!validDeltaCount) return null;
+
+    const axis = symmetricAxisFromPairs(deltaSeries);
+
+    const xAxis = {
+      type: "time",
+      min: isoToLocalDate(currentBounds.startISO, 0)?.getTime(),
+      max: isoToLocalDate(addDaysISO(currentBounds.endISO, 1), 0)?.getTime(),
+      axisLabel: {
+        hideOverlap: true,
+        fontSize: isMobile ? 10 : 11,
+        formatter: (value) => {
+          const d = new Date(value);
+          const dd = pad2(d.getDate());
+          const mm = pad2(d.getMonth() + 1);
+          const hh = pad2(d.getHours());
+          const mi = pad2(d.getMinutes());
+
+          if (mode === "day") return `${hh}:${mi}`;
+          if (mode === "month") return `${dd}/${mm}`;
+          return `${dd}/${mm} ${hh}`;
+        },
+      },
+    };
+
+    return {
+      animation: true,
+      animationDuration: 220,
+      grid: isMobile
+        ? { left: 50, right: 18, top: 35, bottom: 54 }
+        : { left: 70, right: 34, top: 35, bottom: 58 },
+      tooltip: {
+        trigger: "axis",
+        confine: true,
+        axisPointer: { type: "none" },
+        valueFormatter: (value) => {
+          const vv = Number(value);
+          if (!Number.isFinite(vv)) return "—";
+          const sign = vv > 0 ? "+" : "";
+          return `${sign}${vv.toFixed(1)} ${meta.unit}`;
+        },
+      },
+      xAxis,
+      yAxis: {
+        type: "value",
+        name: `Δ ${meta.unit}`,
+        nameLocation: "middle",
+        nameRotate: 90,
+        nameGap: isMobile ? 34 : 46,
+        min: axis.min,
+        max: axis.max,
+        interval: axis.interval,
+        axisLabel: {
+          fontSize: isMobile ? 10 : 11,
+          formatter: (value) => {
+            const vv = Number(value);
+            return `${vv > 0 ? "+" : ""}${vv.toFixed(1)}`;
+          },
+        },
+        splitLine: { show: true },
+      },
+      series: [
+        {
+          name: `Δ ${meta.shortLabel}`,
+          type: "line",
+          data: deltaSeries,
+          showSymbol: false,
+          connectNulls: false,
+          smooth: false,
+          lineStyle: { width: 2 },
+          markLine: {
+            silent: true,
+            symbol: "none",
+            label: { show: false },
+            lineStyle: {
+              width: 1.2,
+              type: "dashed",
+              color: "rgba(15, 23, 42, 0.42)",
+            },
+            data: [{ yAxis: 0 }],
+          },
+        },
+      ],
+    };
+  }, [
+    currentBounds.endISO,
+    currentBounds.startISO,
+    deltaSeries,
+    isMobile,
+    meta.shortLabel,
+    meta.unit,
+    mode,
+    validDeltaCount,
+  ]);
+
+  const comparisonPeriodText = descriptor
+    ? formatPeriodLabel(mode, descriptor.anchorDate)
+    : "—";
+
+  return (
+    <section className="comparisonSection" aria-label="Grafico di confronto">
+      <div className="comparisonHead">
+        <div className="comparisonText">
+          <h3>Scostamento {meta.shortLabel.toLowerCase()}</h3>
+          <p>
+            Periodo corrente meno {descriptor?.label || "periodo di confronto"}
+            {descriptor ? ` · ${comparisonPeriodText}` : ""}
+          </p>
+        </div>
+
+        <div className="comparisonMenu">
+          <span>Confronta con</span>
+          <CustomSelect
+            value={compareKey}
+            options={options}
+            onChange={onCompareChange}
+            ariaLabel="Seleziona il periodo di confronto"
+          />
+        </div>
+      </div>
+
+      <div className="comparisonChart">
+        {loading && <div className="compareMsg">Caricamento confronto…</div>}
+        {!loading && error && <div className="compareMsg">{error}</div>}
+        {!loading && !error && !validDeltaCount && (
+          <div className="compareMsg">
+            Nessun intervallo confrontabile: la linea apparirà solo dove sono
+            presenti entrambi i dati.
+          </div>
+        )}
+        {!loading && !error && option && (
+          <ReactECharts
+            option={option}
+            style={{ height: isMobile ? 330 : 260, width: "100%" }}
+            notMerge={true}
+            lazyUpdate={true}
+          />
+        )}
+      </div>
+
+      <style jsx>{`
+        .comparisonSection {
+          position: relative;
+          z-index: 4;
+          border-top: 1px solid #e8ebef;
+          background: #fbfcfd;
+        }
+
+        .comparisonHead {
+          position: relative;
+          z-index: 20;
+          min-height: 78px;
+          padding: 14px 18px 10px;
+          display: grid;
+          grid-template-columns: 1fr auto;
+          align-items: center;
+          gap: 18px;
+        }
+
+        .comparisonText h3 {
+          margin: 0;
+          font-size: 17px;
+          font-weight: 950;
+          color: #0f172a;
+        }
+
+        .comparisonText p {
+          margin: 4px 0 0;
+          font-size: 10px;
+          font-weight: 750;
+          color: rgba(15, 23, 42, 0.55);
+        }
+
+        .comparisonMenu {
+          width: 260px;
+          display: grid;
+          gap: 5px;
+        }
+
+        .comparisonMenu > span {
+          font-size: 9px;
+          font-weight: 950;
+          color: rgba(15, 23, 42, 0.58);
+          text-align: center;
+          text-transform: uppercase;
+          letter-spacing: 0.04em;
+        }
+
+        .comparisonChart {
+          min-height: 260px;
+          padding: 0 8px 6px;
+        }
+
+        .compareMsg {
+          min-height: 240px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 18px;
+          color: rgba(15, 23, 42, 0.62);
+          font-size: 11px;
+          font-weight: 800;
+          text-align: center;
+        }
+
+        @media (max-width: 720px) {
+          .comparisonHead {
+            min-height: 0;
+            padding: 14px 10px 10px;
+            grid-template-columns: 1fr;
+            gap: 12px;
+          }
+
+          .comparisonText {
+            text-align: center;
+          }
+
+          .comparisonText h3 {
+            font-size: 16px;
+          }
+
+          .comparisonMenu {
+            width: 100%;
+          }
+
+          .comparisonChart {
+            min-height: 330px;
+            padding-left: 0;
+            padding-right: 0;
+          }
+
+          .compareMsg {
+            min-height: 300px;
+          }
+        }
+      `}</style>
+    </section>
+  );
+}
+
 function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
   const GROUPS = useMemo(
     () => [
@@ -1467,7 +2535,8 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
       { key: "rh", label: "Umidità" },
       { key: "wind", label: "Vento" },
       { key: "press", label: "Pressione" },
-      { key: "uv", label: "UV + Radiazione" },
+      { key: "uv", label: "Indice UV" },
+      { key: "solar", label: "Radiazione solare" },
     ],
     [],
   );
@@ -1498,10 +2567,14 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
   const [selectedDate, setSelectedDate] = useState(
     availableDates.length ? availableDates[availableDates.length - 1] : null,
   );
+  const [compareKey, setCompareKey] = useState("yesterday");
   const [refreshTick, setRefreshTick] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [comparisonLoading, setComparisonLoading] = useState(false);
   const [err, setErr] = useState("");
+  const [comparisonError, setComparisonError] = useState("");
   const [data, setData] = useState(null);
+  const [comparisonData, setComparisonData] = useState(null);
   const [viewportWidth, setViewportWidth] = useState(1280);
 
   useEffect(() => {
@@ -1527,18 +2600,32 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
 
   useEffect(() => {
     const timer = window.setInterval(
-      () => {
-        setRefreshTick((x) => x + 1);
-      },
+      () => setRefreshTick((value) => value + 1),
       5 * 60 * 1000,
     );
 
     return () => window.clearInterval(timer);
   }, []);
 
+  const comparisonOptions = useMemo(
+    () => comparisonOptionsForMode(mode),
+    [mode],
+  );
+
+  useEffect(() => {
+    if (!comparisonOptions.some((option) => option.key === compareKey)) {
+      setCompareKey(comparisonOptions[0]?.key || "");
+    }
+  }, [compareKey, comparisonOptions]);
+
   const bounds = useMemo(
     () => getPeriodBounds(mode, selectedDate),
     [mode, selectedDate],
+  );
+
+  const compareDescriptor = useMemo(
+    () => comparisonDescriptor(mode, compareKey, selectedDate),
+    [compareKey, mode, selectedDate],
   );
 
   const periodTitle = useMemo(() => {
@@ -1554,23 +2641,20 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
 
   const isMobileChart = viewportWidth <= 720;
   const isVeryNarrowChart = viewportWidth <= 430;
+  const latestAvailableDate = availableDates.length
+    ? availableDates[availableDates.length - 1]
+    : null;
 
   const showRealtimePulse =
-    mode === "day" &&
-    selectedDate === availableDates[availableDates.length - 1];
+    mode === "day" && selectedDate === latestAvailableDate;
 
   const canGoBack = !navigationDisabled(availableDates, selectedDate, mode, -1);
-
   const canGoForward = !navigationDisabled(
     availableDates,
     selectedDate,
     mode,
     1,
   );
-
-  const latestAvailableDate = availableDates.length
-    ? availableDates[availableDates.length - 1]
-    : null;
 
   const isTodayView =
     mode === "day" &&
@@ -1581,7 +2665,7 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
     if (!latestAvailableDate) return;
     setMode("day");
     setSelectedDate(latestAvailableDate);
-    setRefreshTick((current) => current + 1);
+    setRefreshTick((value) => value + 1);
   };
 
   const changePeriod = (direction) => {
@@ -1606,287 +2690,22 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
       setLoading(true);
 
       try {
-        const datesSet = new Set(availableDates);
-        const allPeriodDates = dateRangeISO(bounds.startISO, bounds.endISO);
-        const datesToFetch = allPeriodDates.filter((iso) => datesSet.has(iso));
-        const stepMinutes = mode === "day" ? 15 : 60;
-        const timeline = makePeriodTimeline(bounds.startISO, bounds.endISO, stepMinutes);
-
-        if (!timeline.length || !datesToFetch.length) {
-          if (!alive) return;
-          setErr("Non sono presenti dati intraday nel periodo selezionato.");
-          return;
-        }
-
-        const buckets = new Map();
-        for (const hourMs of timeline) {
-          buckets.set(hourMs, {
-            temp_sum: 0,
-            temp_cnt: 0,
-            dew_sum: 0,
-            dew_cnt: 0,
-            rh_sum: 0,
-            rh_cnt: 0,
-            press_sum: 0,
-            press_cnt: 0,
-            wind_sum: 0,
-            wind_cnt: 0,
-            uv_sum: 0,
-            uv_cnt: 0,
-            solar_sum: 0,
-            solar_cnt: 0,
-            gust_max: -Infinity,
-            dir_sin: 0,
-            dir_cos: 0,
-            dir_cnt: 0,
-            observed: false,
-          });
-        }
-
-        const dailyHourMap = new Map();
-        let loadedDays = 0;
-        let latestObservedTimestamp = null;
-        const latestAvailableDate = availableDates[availableDates.length - 1];
-        const futureToleranceMs = 5 * 60 * 1000;
-
-        await Promise.all(
-          datesToFetch.map(async (dISO) => {
-            try {
-              const res = await fetch(`/data/intraday/${dISO}.json`, {
-                cache: "no-store",
-              });
-
-              if (!res.ok) return;
-
-              const arr = await res.json();
-              if (!Array.isArray(arr)) return;
-
-              loadedDays += 1;
-              const bucketTotals = new Map();
-
-              for (const r of arr) {
-                const tt = r?.t ? String(r.t) : "";
-                if (!tt) continue;
-
-                const match = tt.match(
-                  /^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})$/,
-                );
-                if (!match) continue;
-
-                const y = Number(match[1]);
-                const mo = Number(match[2]);
-                const da = Number(match[3]);
-                const hh = Number(match[4]);
-                const mi = Number(match[5]);
-
-                const recordDate = new Date(y, mo - 1, da, hh, mi, 0, 0);
-                const recordTimestamp = recordDate.getTime();
-
-                // L'ultimo file può contenere intervalli predisposti fino a fine
-                // giornata. Nel giorno live vengono ignorati i timestamp futuri.
-                if (
-                  dISO === latestAvailableDate &&
-                  recordTimestamp > Date.now() + futureToleranceMs
-                ) {
-                  continue;
-                }
-
-                const bucketDate = new Date(recordDate);
-
-                if (mode === "day") {
-                  const normalizedMinutes = Math.floor(mi / 15) * 15;
-                  bucketDate.setMinutes(normalizedMinutes, 0, 0);
-                } else {
-                  bucketDate.setMinutes(0, 0, 0);
-                }
-
-                const hourMs = bucketDate.getTime();
-
-                const bucket = buckets.get(hourMs);
-                if (!bucket) continue;
-
-                bucket.observed = true;
-
-                if (
-                  dISO === latestAvailableDate &&
-                  (!Number.isFinite(latestObservedTimestamp) ||
-                    hourMs > latestObservedTimestamp)
-                ) {
-                  latestObservedTimestamp = hourMs;
-                }
-
-                const addMean = (keyBase, val) => {
-                  const vv = Number(val);
-                  if (!Number.isFinite(vv)) return;
-                  bucket[`${keyBase}_sum`] += vv;
-                  bucket[`${keyBase}_cnt`] += 1;
-                };
-
-                addMean("temp", r?.temp_c);
-                addMean("dew", r?.dewpoint_c);
-                addMean("rh", r?.rh_pct);
-                addMean("press", r?.press_hpa);
-                addMean("wind", r?.wind_kmh);
-                addMean("uv", r?.uv);
-                addMean("solar", r?.solar_wm2);
-
-                const gust = Number(r?.gust_kmh);
-                if (Number.isFinite(gust)) {
-                  bucket.gust_max = Math.max(bucket.gust_max, gust);
-                }
-
-                const rain15 = Number(r?.rain_15m_mm);
-                if (Number.isFinite(rain15)) {
-                  bucketTotals.set(
-                    hourMs,
-                    (bucketTotals.get(hourMs) || 0) + rain15,
-                  );
-                }
-
-                const direction = Number(r?.wind_dir_deg);
-                if (Number.isFinite(direction)) {
-                  const radians = (direction * Math.PI) / 180;
-                  bucket.dir_cos += Math.cos(radians);
-                  bucket.dir_sin += Math.sin(radians);
-                  bucket.dir_cnt += 1;
-                }
-              }
-
-              dailyHourMap.set(dISO, bucketTotals);
-            } catch {
-              // Il grafico continua a usare gli altri giorni disponibili.
-            }
-          }),
-        );
-
-        if (!loadedDays) {
-          if (!alive) return;
-          setErr("Non è stato possibile leggere i dati intraday del periodo.");
-          return;
-        }
-
-        const adjustedRainHours = new Map();
-
-        for (const dISO of datesToFetch) {
-          const hourTotals = dailyHourMap.get(dISO) || new Map();
-          const rawTotal = Array.from(hourTotals.values()).reduce(
-            (acc, value) => acc + value,
-            0,
-          );
-
-          const dailyValue = n(dailyRainByDate?.[dISO]);
-          const isLatestAvailableDay =
-            dISO === availableDates[availableDates.length - 1];
-          const dailyZeroLooksStale =
-            isLatestAvailableDay && dailyValue === 0 && rawTotal > 0;
-          const targetTotal =
-            Number.isFinite(dailyValue) && !dailyZeroLooksStale
-              ? dailyValue
-              : rawTotal;
-
-          if (rawTotal > 0) {
-            const ratio = targetTotal / rawTotal;
-
-            for (const [hourMs, value] of hourTotals.entries()) {
-              adjustedRainHours.set(hourMs, value * ratio);
-            }
-          } else if (targetTotal > 0) {
-            const endHour = isoToLocalDate(dISO, 23)?.getTime();
-            if (Number.isFinite(endHour)) {
-              adjustedRainHours.set(endHour, targetTotal);
-            }
-          }
-        }
-
-        const mean = (sumValue, countValue) =>
-          countValue > 0 ? sumValue / countValue : null;
-
-        const temp = [];
-        const dew = [];
-        const rh = [];
-        const press = [];
-        const wind = [];
-        const gust = [];
-        const dirMean = [];
-        const rainH = [];
-        const rainCum = [];
-        const uv = [];
-        const solar = [];
-
-        let cumulativeRain = 0;
-
-        for (const hourMs of timeline) {
-          const bucket = buckets.get(hourMs);
-
-          const tempValue = mean(bucket.temp_sum, bucket.temp_cnt);
-          const dewValue = mean(bucket.dew_sum, bucket.dew_cnt);
-          const rhValue = mean(bucket.rh_sum, bucket.rh_cnt);
-          const pressValue = mean(bucket.press_sum, bucket.press_cnt);
-          const windValue = mean(bucket.wind_sum, bucket.wind_cnt);
-          const uvValue = mean(bucket.uv_sum, bucket.uv_cnt);
-          const solarValue = mean(bucket.solar_sum, bucket.solar_cnt);
-          const gustValue = Number.isFinite(bucket.gust_max)
-            ? bucket.gust_max
-            : null;
-
-          let directionValue = null;
-          if (bucket.dir_cnt > 0) {
-            const meanRadians = Math.atan2(
-              bucket.dir_sin / bucket.dir_cnt,
-              bucket.dir_cos / bucket.dir_cnt,
-            );
-            directionValue = (meanRadians * 180) / Math.PI;
-            if (directionValue < 0) directionValue += 360;
-          }
-
-          const hasObservation = Boolean(bucket.observed);
-          const rainHour = Number(adjustedRainHours.get(hourMs) || 0);
-
-          if (hasObservation) cumulativeRain += rainHour;
-
-          temp.push([hourMs, tempValue === null ? null : round1(tempValue)]);
-          dew.push([hourMs, dewValue === null ? null : round1(dewValue)]);
-          rh.push([hourMs, rhValue === null ? null : round1(rhValue)]);
-          press.push([hourMs, pressValue === null ? null : round1(pressValue)]);
-          wind.push([hourMs, windValue === null ? null : round1(windValue)]);
-          gust.push([hourMs, gustValue === null ? null : round1(gustValue)]);
-          dirMean.push([
-            hourMs,
-            directionValue === null ? null : round1(directionValue),
-          ]);
-          rainH.push([hourMs, hasObservation ? round1(rainHour) : null]);
-          rainCum.push([
-            hourMs,
-            hasObservation ? round1(cumulativeRain) : null,
-          ]);
-          uv.push([hourMs, uvValue === null ? null : round1(uvValue)]);
-          solar.push([hourMs, solarValue === null ? null : round1(solarValue)]);
-        }
-
-        if (!alive) return;
-
-        setData({
-          temp,
-          dew,
-          rh,
-          press,
-          wind,
-          gust,
-          dirMean,
-          rainH,
-          rainCum,
-          rainTotal: round1(cumulativeRain),
-          uv,
-          solar,
-          loadedDays,
-          requestedDays: datesToFetch.length,
-          latestTimestamp: Number.isFinite(latestObservedTimestamp)
-            ? latestObservedTimestamp
-            : null,
+        const result = await loadIntradayPeriod({
+          startISO: bounds.startISO,
+          endISO: bounds.endISO,
+          mode,
+          availableDates,
+          dailyRainByDate,
         });
-      } catch {
-        if (!alive) return;
-        setErr("Errore nel caricamento o nella lettura dei JSON intraday.");
+
+        if (alive) setData(result);
+      } catch (error) {
+        if (alive) {
+          setErr(
+            error?.message ||
+              "Errore nel caricamento o nella lettura dei JSON intraday.",
+          );
+        }
       } finally {
         if (alive) setLoading(false);
       }
@@ -1898,11 +2717,61 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
       alive = false;
     };
   }, [
-    selectedDate,
-    bounds.startISO,
-    bounds.endISO,
     availableDates,
+    bounds.endISO,
+    bounds.startISO,
     dailyRainByDate,
+    mode,
+    refreshTick,
+    selectedDate,
+  ]);
+
+  useEffect(() => {
+    let alive = true;
+
+    async function runComparison() {
+      setComparisonError("");
+      setComparisonData(null);
+
+      const compareBounds = compareDescriptor?.bounds;
+      if (!compareBounds?.startISO || !compareBounds?.endISO) {
+        setComparisonLoading(false);
+        return;
+      }
+
+      setComparisonLoading(true);
+
+      try {
+        const result = await loadIntradayPeriod({
+          startISO: compareBounds.startISO,
+          endISO: compareBounds.endISO,
+          mode,
+          availableDates,
+          dailyRainByDate,
+        });
+
+        if (alive) setComparisonData(result);
+      } catch (error) {
+        if (alive) {
+          setComparisonError(
+            error?.message || "Il periodo di confronto non è disponibile.",
+          );
+        }
+      } finally {
+        if (alive) setComparisonLoading(false);
+      }
+    }
+
+    runComparison();
+
+    return () => {
+      alive = false;
+    };
+  }, [
+    availableDates,
+    compareDescriptor,
+    dailyRainByDate,
+    mode,
     refreshTick,
   ]);
 
@@ -2019,16 +2888,7 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
     });
 
     const minMaxFrom = (pairs) => {
-      const values = (pairs || [])
-        .map((pair) => pair?.[1])
-        .filter(
-          (value) =>
-            value !== null &&
-            value !== undefined &&
-            Number.isFinite(Number(value)),
-        )
-        .map((value) => Number(value));
-
+      const values = seriesValues(pairs).map((point) => point.value);
       if (!values.length) return null;
       return { min: Math.min(...values), max: Math.max(...values) };
     };
@@ -2101,7 +2961,8 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
       const pulseCum = showRealtimePulse
         ? makeRealtimePulseSeries(data.rainCum, data.latestTimestamp, 1)
         : null;
-      const rainStepLabel = mode === "day" ? "Pioggia 15 min (mm)" : "Pioggia oraria (mm)";
+      const rainStepLabel =
+        mode === "day" ? "Pioggia 15 min (mm)" : "Pioggia oraria (mm)";
       const rainAxisLabel = mode === "day" ? "mm/15m" : "mm/h";
 
       return {
@@ -2144,7 +3005,7 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
     }
 
     if (groupKey === "rh") {
-      const pulseRh = showRealtimePulse
+      const pulse = showRealtimePulse
         ? makeRealtimePulseSeries(data.rh, data.latestTimestamp, 0)
         : null;
 
@@ -2165,7 +3026,7 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
             sampling: "lttb",
             lineStyle: { width: 2 },
           },
-          ...(pulseRh ? [pulseRh] : []),
+          ...(pulse ? [pulse] : []),
         ],
       };
     }
@@ -2199,7 +3060,6 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
 
             for (const p of params || []) {
               const value = p.data?.[1];
-
               if (p.seriesName === "Direzione") {
                 lines.push(
                   `${p.marker}${p.seriesName}: ${
@@ -2275,8 +3135,7 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
     if (groupKey === "press") {
       const mm = minMaxFrom(data.press) || { min: 1010, max: 1020 };
       const axis = axisNice(mm.min - 1.5, mm.max + 1.5, 6);
-
-      const pulsePress = showRealtimePulse
+      const pulse = showRealtimePulse
         ? makeRealtimePulseSeries(data.press, data.latestTimestamp, 0)
         : null;
 
@@ -2301,65 +3160,71 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
             sampling: "lttb",
             lineStyle: { width: 2 },
           },
-          ...(pulsePress ? [pulsePress] : []),
+          ...(pulse ? [pulse] : []),
         ],
       };
     }
 
-    const pulseUv = showRealtimePulse
-      ? makeRealtimePulseSeries(data.uv, data.latestTimestamp, 0)
-      : null;
-    const pulseSolar = showRealtimePulse
-      ? makeRealtimePulseSeries(data.solar, data.latestTimestamp, 1)
+    if (groupKey === "uv") {
+      const pulse = showRealtimePulse
+        ? makeRealtimePulseSeries(data.uv, data.latestTimestamp, 0)
+        : null;
+
+      return {
+        ...common,
+        title: chartTitle("Indice UV"),
+        grid: gridNoLegend,
+        tooltip: tooltipCommon,
+        yAxis: leftAxis("UV", { min: 0 }),
+        series: [
+          {
+            name: "Indice UV",
+            type: "line",
+            data: data.uv,
+            showSymbol: false,
+            connectNulls: false,
+            smooth: false,
+            sampling: "lttb",
+            lineStyle: { width: 2 },
+          },
+          ...(pulse ? [pulse] : []),
+        ],
+      };
+    }
+
+    const pulse = showRealtimePulse
+      ? makeRealtimePulseSeries(data.solar, data.latestTimestamp, 0)
       : null;
 
     return {
       ...common,
-      title: chartTitle("UV e Radiazione"),
-      grid: gridWithLegend,
+      title: chartTitle("Radiazione solare"),
+      grid: gridNoLegend,
       tooltip: tooltipCommon,
-      legend: {
-        ...baseLegend,
-        data: ["UV", "Radiazione (W/m²)"],
-      },
-      yAxis: [leftAxis("UV", { min: 0 }), rightAxis("W/m²", { min: 0 })],
+      yAxis: leftAxis("W/m²", { min: 0 }),
       series: [
         {
-          name: "UV",
-          type: "line",
-          data: data.uv,
-          showSymbol: false,
-          connectNulls: false,
-          smooth: false,
-          sampling: "lttb",
-          yAxisIndex: 0,
-          lineStyle: { width: 2 },
-        },
-        {
-          name: "Radiazione (W/m²)",
+          name: "Radiazione solare (W/m²)",
           type: "line",
           data: data.solar,
           showSymbol: false,
           connectNulls: false,
           smooth: false,
           sampling: "lttb",
-          yAxisIndex: 1,
           lineStyle: { width: 2 },
         },
-        ...(pulseUv ? [pulseUv] : []),
-        ...(pulseSolar ? [pulseSolar] : []),
+        ...(pulse ? [pulse] : []),
       ],
     };
   }, [
+    bounds.endISO,
+    bounds.startISO,
     data,
     groupKey,
-    mode,
-    bounds.startISO,
-    bounds.endISO,
-    showRealtimePulse,
     isMobileChart,
     isVeryNarrowChart,
-    viewportWidth,
+    mode,
+    showRealtimePulse,
   ]);
 
   const chartHeight = isMobileChart
@@ -2445,6 +3310,8 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
         </button>
       </div>
 
+      {!loading && !err && data && <PeriodSummary data={data} mode={mode} />}
+
       <div className="chartArea">
         {loading && <div className="msg">Caricamento del grafico…</div>}
         {!loading && err && <div className="msg">{err}</div>}
@@ -2457,6 +3324,22 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
           />
         )}
       </div>
+
+      <ComparisonChart
+        mode={mode}
+        groupKey={groupKey}
+        currentData={data}
+        comparisonData={comparisonData}
+        currentBounds={bounds}
+        comparisonBounds={compareDescriptor?.bounds || null}
+        descriptor={compareDescriptor}
+        options={comparisonOptions}
+        compareKey={compareKey}
+        onCompareChange={setCompareKey}
+        loading={loading || comparisonLoading}
+        error={comparisonError}
+        isMobile={isMobileChart}
+      />
 
       <style jsx>{`
         .periodCard {
@@ -2680,7 +3563,6 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
           .periodText {
             grid-area: title;
             grid-column: 1;
-            grid-row: auto;
             justify-self: center;
             width: min(100%, 620px);
           }
@@ -2688,7 +3570,6 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
           .leftControls {
             grid-area: left;
             grid-column: 1;
-            grid-row: auto;
             justify-self: center;
             justify-content: center;
             width: min(100%, 420px);
@@ -2697,7 +3578,6 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
           .rightMenu {
             grid-area: right;
             grid-column: 1;
-            grid-row: auto;
             justify-self: center;
             width: min(100%, 420px);
             max-width: 420px;
