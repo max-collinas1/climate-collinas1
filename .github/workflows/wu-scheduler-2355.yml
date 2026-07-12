@@ -1,0 +1,16 @@
+name: Aggiornamento WU - chiusura giornaliera
+
+on:
+  workflow_dispatch:
+
+  schedule:
+    - cron: "55 23 * * *"
+      timezone: "Europe/Rome"
+
+permissions:
+  contents: write
+
+jobs:
+  update-data:
+    uses: ./.github/workflows/update-wunderground.yml
+    secrets: inherit
