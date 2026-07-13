@@ -437,6 +437,32 @@ function axisTooltipFormatter(params, specs) {
   return lines.join("<br/>");
 }
 
+function SummaryMetric({
+  label,
+  value,
+  tone = "neutral",
+  extremeLabel = "",
+  extremeValue = "",
+  extremeTone = "neutral",
+}) {
+  return (
+    <div className={`summaryMetric summaryMetric-${tone}`}>
+      <span className="summaryKey">{label}</span>
+
+      <div className="summaryValueLine">
+        <strong className={`summaryValue summaryValue-${tone}`}>{value}</strong>
+      </div>
+
+      {extremeLabel ? (
+        <div className={`summaryExtreme summaryExtreme-${extremeTone}`}>
+          <span>{extremeLabel}</span>
+          <b>{extremeValue}</b>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function YearArrow({ href, direction, label, title, disabled = false }) {
   const d =
     direction === "prev"
@@ -604,6 +630,9 @@ export default function YearOverviewPage(props) {
     const tmin_mean = avgFinite(days.map((d) => d.tmin));
     const tmean = avgFinite(days.map((d) => d.tmean));
     const tmax_mean = avgFinite(days.map((d) => d.tmax));
+    const tmin_abs = minFinite(days.map((d) => d.tmin));
+    const tmean_max = maxFinite(days.map((d) => d.tmean));
+    const tmax_abs = maxFinite(days.map((d) => d.tmax));
 
     const rainSum = sumFinite(monthly.map((m) => m.rainSum));
     const rainDailyMax = maxFinite(days.map((d) => d.rain_total));
@@ -615,9 +644,13 @@ export default function YearOverviewPage(props) {
     const rh_min_mean = avgFinite(days.map((d) => getRhMin(d)));
     const rh_mean = avgFinite(days.map((d) => getRhMean(d)));
     const rh_max_mean = avgFinite(days.map((d) => getRhMax(d)));
+    const rh_min_abs = minFinite(days.map((d) => getRhMin(d)));
+    const rh_mean_max = maxFinite(days.map((d) => getRhMean(d)));
+    const rh_max_abs = maxFinite(days.map((d) => getRhMax(d)));
 
     const wind_mean = avgFinite(days.map((d) => d.wind_avg));
     const gust_mean = avgFinite(days.map((d) => d.gust_max));
+    const wind_max_mean = maxFinite(days.map((d) => d.wind_avg));
     const gust_max = maxFinite(days.map((d) => d.gust_max));
     const wind_dir_mean_deg = circularMeanDeg(
       days.map((d) => d.wind_dir_mean_deg)
@@ -626,6 +659,9 @@ export default function YearOverviewPage(props) {
     const press_min_mean = avgFinite(days.map((d) => d.press_min));
     const press_mean = avgFinite(days.map((d) => d.press_avg));
     const press_max_mean = avgFinite(days.map((d) => d.press_max));
+    const press_min_abs = minFinite(days.map((d) => d.press_min));
+    const press_mean_max = maxFinite(days.map((d) => d.press_avg));
+    const press_max_abs = maxFinite(days.map((d) => d.press_max));
 
     const uv_mean = avgFinite(days.map((d) => d.uv_mean_pos));
     const uv_max = maxFinite(days.map((d) => d.uv_max));
@@ -637,7 +673,9 @@ export default function YearOverviewPage(props) {
 
     const overrideMonths = monthly.filter((m) => m.rainIsOverride);
     const hasRainOverride = overrideMonths.length > 0;
-    const overrideMonthsText = overrideMonths.map((m) => monthFull(m.ym)).join(", ");
+    const overrideMonthsText = overrideMonths
+      .map((m) => monthFull(m.ym))
+      .join(", ");
     const overrideNotes = overrideMonths
       .map((m) => {
         const note = String(m.rainNote ?? "").trim();
@@ -651,6 +689,9 @@ export default function YearOverviewPage(props) {
       tmin_mean,
       tmean,
       tmax_mean,
+      tmin_abs,
+      tmean_max,
+      tmax_abs,
 
       rainSum,
       rainDailyMax,
@@ -663,15 +704,22 @@ export default function YearOverviewPage(props) {
       rh_min_mean,
       rh_mean,
       rh_max_mean,
+      rh_min_abs,
+      rh_mean_max,
+      rh_max_abs,
 
       wind_mean,
       gust_mean,
+      wind_max_mean,
       gust_max,
       wind_dir_mean_deg,
 
       press_min_mean,
       press_mean,
       press_max_mean,
+      press_min_abs,
+      press_mean_max,
+      press_max_abs,
 
       uv_mean,
       uv_max,
@@ -1468,6 +1516,22 @@ export default function YearOverviewPage(props) {
   return (
     <SiteLayout headerProps={{}}>
       <div className="wrap">
+        <section
+          className="pageDescription"
+          aria-label="Descrizione pagina annuale"
+        >
+          <div className="descriptionCard">
+            <p>
+              Questa pagina riassume l’andamento meteorologico dell’anno
+              selezionato, mostrando sintesi annuale, riepilogo mensile,
+              grafici e tabella completa dei principali parametri osservati.
+              Puoi cambiare anno con le frecce o dal menu dedicato, aprire il
+              dettaglio dei singoli mesi e consultare temperature,
+              precipitazioni, umidità, vento, pressione, UV e radiazione.
+            </p>
+          </div>
+        </section>
+
         <header className="hero">
           <div className="yearTopRow">
             <div className="yearBlock">
@@ -1549,19 +1613,6 @@ export default function YearOverviewPage(props) {
             </div>
           </div>
 
-          <section className="pageDescription" aria-label="Descrizione pagina annuale">
-            <div className="descriptionCard">
-              <p>
-                Questa pagina riassume l’andamento meteorologico dell’anno
-                selezionato, mostrando sintesi annuale, riepilogo mensile,
-                grafici e tabella completa dei principali parametri osservati.
-                Puoi cambiare anno con le frecce o dal menu dedicato, aprire il
-                dettaglio dei singoli mesi e consultare temperature,
-                precipitazioni, umidità, vento, pressione, UV e radiazione.
-              </p>
-            </div>
-          </section>
-
           <section className="summaryCompact">
             <div className="summaryHead">
               <div>
@@ -1573,133 +1624,209 @@ export default function YearOverviewPage(props) {
             <div className="summaryRows">
               <div className="summaryRow">
                 <div className="summaryLabel">Temperature</div>
+
                 <div className="summaryMetrics three">
-                  <div className="summaryMetric">
-                    <span className="summaryKey">Max media</span>
-                    <strong>{fmt(annual.tmax_mean, 1)} °C</strong>
-                  </div>
-                  <div className="summaryMetric">
-                    <span className="summaryKey">Media</span>
-                    <strong>{fmt(annual.tmean, 1)} °C</strong>
-                  </div>
-                  <div className="summaryMetric">
-                    <span className="summaryKey">Min media</span>
-                    <strong>{fmt(annual.tmin_mean, 1)} °C</strong>
-                  </div>
+                  <SummaryMetric
+                    label="Massima media"
+                    value={`${fmt(annual.tmax_mean, 1)} °C`}
+                    tone="high"
+                    extremeLabel="Massima assoluta"
+                    extremeValue={`${fmt(annual.tmax_abs, 1)} °C`}
+                    extremeTone="high"
+                  />
+
+                  <SummaryMetric
+                    label="Media assoluta"
+                    value={`${fmt(annual.tmean, 1)} °C`}
+                    tone="neutral"
+                    extremeLabel="Media giornaliera max"
+                    extremeValue={`${fmt(annual.tmean_max, 1)} °C`}
+                    extremeTone="high"
+                  />
+
+                  <SummaryMetric
+                    label="Minima media"
+                    value={`${fmt(annual.tmin_mean, 1)} °C`}
+                    tone="low"
+                    extremeLabel="Minima assoluta"
+                    extremeValue={`${fmt(annual.tmin_abs, 1)} °C`}
+                    extremeTone="low"
+                  />
                 </div>
               </div>
 
               <div className="summaryRow">
                 <div className="summaryLabel">Precipitazioni</div>
-                <div className="summaryMetrics two">
-                  <div className="summaryMetric">
-                    <span className="summaryKey">Totale</span>
-                    <strong
-                      className={annual.rainHasOverride ? "rainOverrideValue" : ""}
-                      title={
-                        annual.rainHasOverride
-                          ? `Totale annuale con priorità ARPAS nei mesi: ${annual.rainOverrideMonthsText}`
-                          : ""
-                      }
-                    >
-                      {fmt(annual.rainSum, 1)} mm
-                    </strong>
-                  </div>
-                  <div className="summaryMetric">
-                    <span className="summaryKey">Giorni &gt; 1 mm</span>
-                    <strong>{fmtInt(annual.rainyDays)}</strong>
-                  </div>
+
+                <div className="summaryMetrics four">
+                  <SummaryMetric
+                    label="Totale annuale"
+                    value={`${fmt(annual.rainSum, 1)} mm`}
+                    tone="high"
+                  />
+
+                  <SummaryMetric
+                    label="Giorni > 1 mm"
+                    value={fmtInt(annual.rainyDays)}
+                    tone="high"
+                  />
+
+                  <SummaryMetric
+                    label="Giorno più piovoso"
+                    value={`${fmt(annual.rainDailyMax, 1)} mm`}
+                    tone="high"
+                  />
+
+                  <SummaryMetric
+                    label="Rain rate più alto"
+                    value={`${fmt(annual.rainrate_max, 1)} mm/h`}
+                    tone="high"
+                  />
                 </div>
               </div>
 
               <div className="summaryRow">
                 <div className="summaryLabel">Umidità</div>
+
                 <div className="summaryMetrics three">
-                  <div className="summaryMetric">
-                    <span className="summaryKey">Max media</span>
-                    <strong>{fmtInt(annual.rh_max_mean)} %</strong>
-                  </div>
-                  <div className="summaryMetric">
-                    <span className="summaryKey">Media</span>
-                    <strong>{fmtInt(annual.rh_mean)} %</strong>
-                  </div>
-                  <div className="summaryMetric">
-                    <span className="summaryKey">Min media</span>
-                    <strong>{fmtInt(annual.rh_min_mean)} %</strong>
-                  </div>
+                  <SummaryMetric
+                    label="Massima media"
+                    value={`${fmtInt(annual.rh_max_mean)} %`}
+                    tone="high"
+                    extremeLabel="Massima assoluta"
+                    extremeValue={`${fmtInt(annual.rh_max_abs)} %`}
+                    extremeTone="high"
+                  />
+
+                  <SummaryMetric
+                    label="Media assoluta"
+                    value={`${fmtInt(annual.rh_mean)} %`}
+                    tone="neutral"
+                    extremeLabel="Media giornaliera max"
+                    extremeValue={`${fmtInt(annual.rh_mean_max)} %`}
+                    extremeTone="high"
+                  />
+
+                  <SummaryMetric
+                    label="Minima media"
+                    value={`${fmtInt(annual.rh_min_mean)} %`}
+                    tone="low"
+                    extremeLabel="Minima assoluta"
+                    extremeValue={`${fmtInt(annual.rh_min_abs)} %`}
+                    extremeTone="low"
+                  />
                 </div>
               </div>
 
               <div className="summaryRow">
                 <div className="summaryLabel">Vento</div>
-                <div className="summaryMetrics three">
-                  <div className="summaryMetric">
-                    <span className="summaryKey">Medio</span>
-                    <strong>{fmt(annual.wind_mean, 1)} km/h</strong>
-                  </div>
-                  <div className="summaryMetric">
-                    <span className="summaryKey">Raffica media</span>
-                    <strong>{fmt(annual.gust_mean, 1)} km/h</strong>
-                  </div>
-                  <div className="summaryMetric">
-                    <span className="summaryKey">Direzione media</span>
-                    <strong>{dirTxt}</strong>
-                  </div>
+
+                <div className="summaryMetrics four">
+                  <SummaryMetric
+                    label="Media assoluta"
+                    value={`${fmt(annual.wind_mean, 1)} km/h`}
+                    tone="neutral"
+                  />
+
+                  <SummaryMetric
+                    label="Media raffiche"
+                    value={`${fmt(annual.gust_mean, 1)} km/h`}
+                    tone="high"
+                  />
+
+                  <SummaryMetric
+                    label="Media massima"
+                    value={`${fmt(annual.wind_max_mean, 1)} km/h`}
+                    tone="high"
+                  />
+
+                  <SummaryMetric
+                    label="Raffica massima"
+                    value={`${fmt(annual.gust_max, 1)} km/h`}
+                    tone="high"
+                  />
+                </div>
+
+                <div className="summarySmallNote">
+                  Direzione media: <b>{dirTxt}</b>
                 </div>
               </div>
 
               <div className="summaryRow">
                 <div className="summaryLabel">Pressione</div>
+
                 <div className="summaryMetrics three">
-                  <div className="summaryMetric">
-                    <span className="summaryKey">Max media</span>
-                    <strong>{fmt(annual.press_max_mean, 1)} hPa</strong>
-                  </div>
-                  <div className="summaryMetric">
-                    <span className="summaryKey">Media</span>
-                    <strong>{fmt(annual.press_mean, 1)} hPa</strong>
-                  </div>
-                  <div className="summaryMetric">
-                    <span className="summaryKey">Min media</span>
-                    <strong>{fmt(annual.press_min_mean, 1)} hPa</strong>
-                  </div>
+                  <SummaryMetric
+                    label="Massima media"
+                    value={`${fmt(annual.press_max_mean, 1)} hPa`}
+                    tone="high"
+                    extremeLabel="Massima assoluta"
+                    extremeValue={`${fmt(annual.press_max_abs, 1)} hPa`}
+                    extremeTone="high"
+                  />
+
+                  <SummaryMetric
+                    label="Media assoluta"
+                    value={`${fmt(annual.press_mean, 1)} hPa`}
+                    tone="neutral"
+                    extremeLabel="Media giornaliera max"
+                    extremeValue={`${fmt(annual.press_mean_max, 1)} hPa`}
+                    extremeTone="high"
+                  />
+
+                  <SummaryMetric
+                    label="Minima media"
+                    value={`${fmt(annual.press_min_mean, 1)} hPa`}
+                    tone="low"
+                    extremeLabel="Minima assoluta"
+                    extremeValue={`${fmt(annual.press_min_abs, 1)} hPa`}
+                    extremeTone="low"
+                  />
                 </div>
               </div>
 
               <div className="summaryRow dual">
                 <div className="summaryHalf">
                   <div className="summaryLabel">UV</div>
+
                   <div className="summaryMetrics two">
-                    <div className="summaryMetric">
-                      <span className="summaryKey">UV medio</span>
-                      <strong>{fmt(annual.uv_mean, 1)}</strong>
-                    </div>
-                    <div className="summaryMetric">
-                      <span className="summaryKey">UV max medio</span>
-                      <strong>{fmt(annual.uv_max_mean, 1)}</strong>
-                    </div>
+                    <SummaryMetric
+                      label="UV medio"
+                      value={fmt(annual.uv_mean, 1)}
+                      tone="neutral"
+                    />
+
+                    <SummaryMetric
+                      label="UV max medio"
+                      value={fmt(annual.uv_max_mean, 1)}
+                      tone="high"
+                    />
                   </div>
                 </div>
 
                 <div className="summaryHalf">
                   <div className="summaryLabel">Radiazione</div>
+
                   <div className="summaryMetrics two">
-                    <div className="summaryMetric">
-                      <span className="summaryKey">Rad media</span>
-                      <strong>
-                        {Number.isFinite(n(annual.solar_mean))
+                    <SummaryMetric
+                      label="Rad media"
+                      value={
+                        Number.isFinite(n(annual.solar_mean))
                           ? `${Math.round(n(annual.solar_mean))} W/m²`
-                          : "—"}
-                      </strong>
-                    </div>
-                    <div className="summaryMetric">
-                      <span className="summaryKey">Rad max media</span>
-                      <strong>
-                        {Number.isFinite(n(annual.solar_max_mean))
+                          : "—"
+                      }
+                      tone="neutral"
+                    />
+
+                    <SummaryMetric
+                      label="Rad max media"
+                      value={
+                        Number.isFinite(n(annual.solar_max_mean))
                           ? `${Math.round(n(annual.solar_max_mean))} W/m²`
-                          : "—"}
-                      </strong>
-                    </div>
+                          : "—"
+                      }
+                      tone="high"
+                    />
                   </div>
                 </div>
               </div>
@@ -2296,7 +2423,7 @@ export default function YearOverviewPage(props) {
 
           .pageDescription {
             width: 100%;
-            margin: 18px 0 0;
+            margin: 0 0 14px;
           }
 
           .descriptionCard {
@@ -2316,8 +2443,7 @@ export default function YearOverviewPage(props) {
             line-height: 1.75;
             font-weight: 800;
             color: #334155;
-            text-align: justify;
-            text-align-last: left;
+            text-align: left;
             hyphens: none;
             -webkit-hyphens: none;
             overflow-wrap: break-word;
@@ -2326,7 +2452,7 @@ export default function YearOverviewPage(props) {
           .summaryCompact {
             margin-top: 18px;
             border-top: 1px solid #efefef;
-            padding-top: 18px;
+            padding-top: 22px;
           }
 
           .summaryHead {
@@ -2334,13 +2460,13 @@ export default function YearOverviewPage(props) {
             align-items: center;
             justify-content: center;
             gap: 14px;
-            margin-bottom: 16px;
+            margin-bottom: 18px;
             text-align: center;
           }
 
           .summaryHead > div {
             width: 100%;
-            max-width: 760px;
+            max-width: 900px;
             margin-left: auto;
             margin-right: auto;
             text-align: center;
@@ -2348,7 +2474,7 @@ export default function YearOverviewPage(props) {
 
           .summaryHead h2 {
             margin: 0;
-            font-size: 22px;
+            font-size: 24px;
             line-height: 1.15;
             font-weight: 950;
             letter-spacing: -0.02em;
@@ -2358,26 +2484,27 @@ export default function YearOverviewPage(props) {
           .summaryHead p {
             margin: 6px auto 0;
             font-size: 13px;
-            line-height: 1.4;
-            color: #666;
-            font-weight: 700;
+            line-height: 1.45;
+            color: #64748b;
+            font-weight: 800;
             text-align: center;
           }
 
           .summaryRows {
             display: grid;
-            gap: 10px;
+            gap: 12px;
           }
 
           .summaryRow {
             display: grid;
-            grid-template-columns: 160px 1fr;
-            gap: 10px;
+            grid-template-columns: 190px 1fr;
+            gap: 14px;
             align-items: stretch;
-            border: 1px solid #ececec;
-            border-radius: 16px;
-            background: #fcfcfc;
-            padding: 12px 14px;
+            border: 1px solid #e7e7e7;
+            border-radius: 18px;
+            background: linear-gradient(180deg, #ffffff, #fcfcfc);
+            padding: 14px 16px;
+            box-shadow: 0 8px 24px rgba(15, 23, 42, 0.025);
           }
 
           .summaryRow.dual {
@@ -2385,35 +2512,41 @@ export default function YearOverviewPage(props) {
             padding: 0;
             border: 0;
             background: transparent;
+            box-shadow: none;
           }
 
           .summaryHalf {
             display: grid;
-            grid-template-columns: 160px 1fr;
-            gap: 10px;
+            grid-template-columns: 170px 1fr;
+            gap: 14px;
             align-items: stretch;
-            border: 1px solid #ececec;
-            border-radius: 16px;
-            background: #fcfcfc;
-            padding: 12px 14px;
+            border: 1px solid #e7e7e7;
+            border-radius: 18px;
+            background: linear-gradient(180deg, #ffffff, #fcfcfc);
+            padding: 14px 16px;
+            box-shadow: 0 8px 24px rgba(15, 23, 42, 0.025);
           }
 
           .summaryLabel {
             display: flex;
             align-items: center;
-            font-size: 15px;
-            letter-spacing: 0.12em;
+            font-size: 16px;
+            letter-spacing: 0.13em;
             text-transform: uppercase;
-            color: #4b5563;
-            font-weight: 900;
-            padding-right: 8px;
-            border-right: 1px solid #ececec;
+            color: #41546d;
+            font-weight: 950;
+            padding-right: 12px;
+            border-right: 1px solid #e7e7e7;
           }
 
           .summaryMetrics {
             display: grid;
-            gap: 8px;
-            align-items: center;
+            gap: 10px;
+            align-items: stretch;
+          }
+
+          .summaryMetrics.four {
+            grid-template-columns: repeat(4, minmax(0, 1fr));
           }
 
           .summaryMetrics.three {
@@ -2424,27 +2557,115 @@ export default function YearOverviewPage(props) {
             grid-template-columns: repeat(2, minmax(0, 1fr));
           }
 
-          .summaryMetric {
+          :global(.summaryMetric) {
+            min-width: 0;
+            display: grid;
+            align-content: start;
+            gap: 6px;
+            padding: 11px 12px;
+            border-radius: 15px;
+            background: rgba(255, 255, 255, 0.92);
+            border: 1px solid rgba(226, 232, 240, 0.95);
+            box-shadow:
+              inset 0 1px 0 rgba(255, 255, 255, 0.9),
+              0 5px 14px rgba(15, 23, 42, 0.025);
+          }
+
+          :global(.summaryMetric-high) {
+            border-color: rgba(242, 140, 40, 0.25);
+            background: linear-gradient(180deg, #fff, rgba(255, 247, 237, 0.72));
+          }
+
+          :global(.summaryMetric-low) {
+            border-color: rgba(79, 70, 229, 0.22);
+            background: linear-gradient(180deg, #fff, rgba(238, 242, 255, 0.74));
+          }
+
+          :global(.summaryKey) {
+            display: block;
+            font-size: 10px;
+            line-height: 1.2;
+            color: #64748b;
+            font-weight: 950;
+            text-transform: uppercase;
+            letter-spacing: 0.07em;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+          }
+
+          :global(.summaryValueLine) {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 9px;
             min-width: 0;
           }
 
-          .summaryKey {
+          :global(.summaryValue) {
             display: block;
-            font-size: 10px;
-            color: #6b7280;
-            font-weight: 800;
-            margin-bottom: 5px;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
+            min-width: 0;
+            font-size: 21px;
+            line-height: 1.05;
+            font-weight: 950;
+            letter-spacing: -0.035em;
+            color: #0f172a;
+            white-space: nowrap;
           }
 
-          .summaryMetric strong {
-            display: block;
-            font-size: 17px;
-            line-height: 1.05;
-            font-weight: 900;
-            letter-spacing: -0.02em;
+          :global(.summaryValue-high) {
+            color: #c2410c !important;
+          }
+
+          :global(.summaryValue-low) {
+            color: #3730a3 !important;
+          }
+
+          :global(.summaryExtreme) {
+            margin-top: 4px;
+            padding-top: 7px;
+            border-top: 1px solid rgba(226, 232, 240, 0.95);
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 8px;
+            color: #64748b;
+            font-weight: 850;
+            min-width: 0;
+          }
+
+          :global(.summaryExtreme span) {
+            font-size: 10px;
+            line-height: 1.2;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+          }
+
+          :global(.summaryExtreme b) {
+            font-size: 13px;
+            line-height: 1.1;
+            font-weight: 950;
             color: #0f172a;
+            white-space: nowrap;
+          }
+
+          :global(.summaryExtreme-high b) {
+            color: #c2410c;
+          }
+
+          :global(.summaryExtreme-low b) {
+            color: #3730a3;
+          }
+
+          .summarySmallNote {
+            grid-column: 2 / -1;
+            margin-top: 2px;
+            font-size: 12px;
+            color: #64748b;
+            font-weight: 850;
           }
 
           .rainOverrideValue {
@@ -2885,29 +3106,13 @@ export default function YearOverviewPage(props) {
           }
 
           @media (max-width: 1100px) {
-            .summaryRow {
-              grid-template-columns: 150px 1fr;
-              gap: 10px;
-              padding: 12px 14px;
-            }
-
-            .summaryHalf {
-              grid-template-columns: 150px 1fr;
-              gap: 10px;
-              padding: 12px 14px;
-            }
-
-            .summaryLabel {
-              border-right: 1px solid #ececec;
-              border-bottom: 0;
-              padding-right: 8px;
-              padding-bottom: 0;
-              font-size: 13px;
+            .summaryMetrics.four {
+              grid-template-columns: repeat(2, minmax(0, 1fr));
             }
 
             .summaryRow.dual {
-              grid-template-columns: 1fr 1fr;
-              gap: 10px;
+              grid-template-columns: 1fr;
+              gap: 12px;
             }
 
             .charts2 {
@@ -2973,23 +3178,32 @@ export default function YearOverviewPage(props) {
           }
 
           @media (max-width: 720px) {
-            .summaryMetrics.three {
-              grid-template-columns: repeat(3, minmax(0, 1fr));
-              gap: 8px;
+            .summaryRow,
+            .summaryHalf {
+              display: block;
+              padding: 14px;
             }
 
-            .summaryMetrics.two {
-              grid-template-columns: repeat(2, minmax(0, 1fr));
-              gap: 8px;
+            .summaryLabel {
+              border-right: 0;
+              border-bottom: 1px solid #ececec;
+              padding-right: 0;
+              padding-bottom: 10px;
+              margin-bottom: 12px;
+              font-size: 14px;
             }
 
-            .summaryMetric strong {
-              font-size: 16px;
+            .summaryMetrics.three,
+            .summaryMetrics.two,
+            .summaryMetrics.four {
+              grid-template-columns: 1fr;
+              gap: 10px;
             }
 
-            .summaryKey {
-              font-size: 9px;
-              margin-bottom: 4px;
+            .summarySmallNote,
+            .overrideNote {
+              grid-column: auto;
+              margin-top: 10px;
             }
 
             .headerSelectPill {
@@ -3008,6 +3222,128 @@ export default function YearOverviewPage(props) {
               width: 88px;
               min-width: 88px;
               max-width: 88px;
+            }
+          }
+
+          /* Sintesi annuale compatta su mobile, coerente con la pagina giornaliera */
+          @media (max-width: 720px) {
+            .descriptionCard {
+              padding: 14px 16px;
+            }
+
+            .descriptionCard p {
+              font-size: 13px;
+              line-height: 1.65;
+              text-align: left;
+            }
+
+            .summaryRows {
+              gap: 9px;
+            }
+
+            .summaryRow,
+            .summaryHalf {
+              display: block;
+              padding: 10px;
+              border-radius: 15px;
+            }
+
+            .summaryRow.dual {
+              gap: 9px;
+            }
+
+            .summaryLabel {
+              justify-content: center;
+              border-right: 0;
+              border-bottom: 1px solid #eceff3;
+              margin: 0 0 9px;
+              padding: 0 0 8px;
+              font-size: 13px;
+              letter-spacing: 0.105em;
+              text-align: center;
+            }
+
+            .summaryMetrics.three {
+              grid-template-columns: repeat(3, minmax(0, 1fr));
+              gap: 6px;
+            }
+
+            .summaryMetrics.two {
+              grid-template-columns: repeat(2, minmax(0, 1fr));
+              gap: 6px;
+            }
+
+            .summaryMetrics.four {
+              grid-template-columns: repeat(2, minmax(0, 1fr));
+              gap: 6px;
+            }
+
+            :global(.summaryMetric) {
+              min-height: 76px;
+              padding: 8px 5px;
+              align-content: center;
+              justify-items: center;
+              text-align: center;
+              border-radius: 12px;
+              gap: 3px;
+            }
+
+            .summaryMetrics.three :global(.summaryMetric) {
+              min-height: 112px;
+            }
+
+            :global(.summaryKey) {
+              min-height: 20px;
+              margin-bottom: 1px;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              font-size: 8px;
+              line-height: 1.12;
+              white-space: normal;
+              text-align: center;
+            }
+
+            :global(.summaryValueLine) {
+              justify-content: center;
+              width: 100%;
+            }
+
+            :global(.summaryValue) {
+              font-size: 15px;
+              line-height: 1.02;
+              white-space: normal;
+              text-align: center;
+            }
+
+            :global(.summaryExtreme) {
+              width: 100%;
+              margin-top: 3px;
+              padding-top: 5px;
+              display: grid;
+              justify-items: center;
+              gap: 2px;
+              text-align: center;
+            }
+
+            :global(.summaryExtreme span) {
+              min-height: 18px;
+              font-size: 7px;
+              line-height: 1.12;
+              white-space: normal;
+              text-align: center;
+            }
+
+            :global(.summaryExtreme b) {
+              font-size: 11px;
+              white-space: normal;
+              text-align: center;
+            }
+
+            .summarySmallNote,
+            .overrideNote {
+              margin-top: 8px;
+              text-align: center;
             }
           }
 
@@ -3046,7 +3382,7 @@ export default function YearOverviewPage(props) {
             }
 
             .pageDescription {
-              margin-top: 16px;
+              margin-bottom: 12px;
             }
 
             .descriptionCard {
@@ -3055,59 +3391,36 @@ export default function YearOverviewPage(props) {
             }
 
             .descriptionCard p {
-              font-size: 14px;
-              line-height: 1.75;
+              font-size: 13px;
+              line-height: 1.65;
               font-weight: 800;
-              text-align: justify;
-              text-align-last: left;
+              text-align: left;
+            }
+
+            .summaryHead h2 {
+              font-size: 22px;
             }
 
             .summaryRows {
-              gap: 12px;
+              gap: 9px;
             }
 
-            .summaryRow,
-            .summaryHalf {
-              display: block;
-              padding: 14px;
+            :global(.summaryMetric) {
+              padding: 8px 5px;
             }
 
-            .summaryRow.dual {
-              display: grid;
-              grid-template-columns: 1fr;
-              gap: 12px;
+            :global(.summaryValueLine) {
+              justify-content: center;
+              width: 100%;
             }
 
-            .summaryLabel {
-              border-right: 0;
-              border-bottom: 1px solid #ececec;
-              padding-right: 0;
-              padding-bottom: 10px;
-              margin-bottom: 12px;
-              font-size: 14px;
+            :global(.summaryKey) {
+              font-size: 8px;
+              margin-bottom: 1px;
             }
 
-            .summaryMetrics.three,
-            .summaryMetrics.two {
-              grid-template-columns: 1fr;
-              gap: 12px;
-            }
-
-            .summaryMetric {
-              display: flex;
-              justify-content: space-between;
-              align-items: baseline;
-              gap: 12px;
-            }
-
-            .summaryKey {
-              font-size: 11px;
-              margin-bottom: 0;
-            }
-
-            .summaryMetric strong {
-              font-size: 17px;
-              text-align: right;
+            :global(.summaryValue) {
+              font-size: 15px;
             }
 
             .cellText {
@@ -3128,6 +3441,26 @@ export default function YearOverviewPage(props) {
           @media (max-width: 390px) {
             .year {
               font-size: 46px;
+            }
+
+            :global(.summaryMetric) {
+              padding: 7px 4px;
+            }
+
+            :global(.summaryKey) {
+              font-size: 7.5px;
+            }
+
+            :global(.summaryValue) {
+              font-size: 14px;
+            }
+
+            :global(.summaryExtreme span) {
+              font-size: 6.6px;
+            }
+
+            :global(.summaryExtreme b) {
+              font-size: 10.5px;
             }
 
             .yearLine {

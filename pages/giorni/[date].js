@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import Link from "next/link";
 import dynamic from "next/dynamic";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/router";
 import SiteLayout from "../../components/SiteLayout";
 
@@ -276,6 +276,17 @@ function makeDataZoom(nPoints, windowPoints = 144) {
 // -------------------- page --------------------
 export default function DayPage({ day, intraday, prev, next, compareOptions = [], monthDays = [] }) {
   const router = useRouter();
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const media = window.matchMedia("(max-width: 720px)");
+    const update = () => setIsMobile(media.matches);
+
+    update();
+    media.addEventListener?.("change", update);
+
+    return () => media.removeEventListener?.("change", update);
+  }, []);
 
   if (!day) {
     return (
@@ -291,6 +302,9 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
   const month = day.date.slice(5, 7);
   const ym = day.date.slice(0, 7);
   const mmdd = day.date.slice(5, 10);
+  const dayTitle = `${Number(day.date.slice(8, 10))} ${
+    MONTHS_IT[Number(month) - 1] || month
+  }`;
 
   const labels = buildLabels(15);
   const byHHMM = mapIntradayByHHMM(intraday);
@@ -334,8 +348,8 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
     ) / 100;
   });
 
-  const LARGE_CHART_H = 365;
-  const NORMAL_CHART_H = 340;
+  const LARGE_CHART_H = isMobile ? 325 : 390;
+  const NORMAL_CHART_H = isMobile ? 305 : 370;
 
   const N = labels.length;
   const DZ = makeDataZoom(N, 144);
@@ -347,8 +361,13 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
     6
   );
 
-  const gridNoLegend = { left: 72, right: 56, top: 58, bottom: 118 };
-  const gridWithLegend = { left: 72, right: 56, top: 58, bottom: 118 };
+  const gridNoLegend = isMobile
+    ? { left: 50, right: 50, top: 64, bottom: 108 }
+    : { left: 64, right: 34, top: 92, bottom: 118 };
+
+  const gridWithLegend = isMobile
+    ? { left: 50, right: 50, top: 64, bottom: 108 }
+    : { left: 64, right: 34, top: 92, bottom: 118 };
 
   const COLORS = {
     red: "#ff2d20",
@@ -357,7 +376,7 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
     blueLight: "#60a5fa",
     blue: "#2563eb",
     greenStrong: "#2f9e44",
-    windDir: "#f4a261",
+    windDir: "#7c3aed",
   };
 
   const baseChart = {
@@ -367,17 +386,40 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
       type: "category",
       data: labels,
       boundaryGap: false,
-      axisLabel: { hideOverlap: true, margin: 14 },
+      axisLabel: {
+        hideOverlap: true,
+        margin: 14,
+        fontSize: isMobile ? 10 : 11,
+      },
     },
-    title: { left: "center", top: 10 },
+    title: {
+      left: "center",
+      top: 10,
+      textStyle: {
+        fontSize: isMobile ? 15 : 17,
+        fontWeight: 900,
+        width: isMobile ? 230 : 300,
+        overflow: "break",
+      },
+    },
     legend: {
       bottom: 36,
       left: "center",
-      itemGap: 16,
-      padding: [8, 10, 2, 10],
+      type: "scroll",
+      itemGap: 12,
+      padding: [6, 10, 6, 10],
+      textStyle: {
+        fontSize: isMobile ? 10 : 11,
+        fontWeight: 700,
+      },
     },
-    toolbox: { feature: { dataZoom: { yAxisIndex: "none" }, restore: {} }, right: 10, top: 10 },
-    tooltip: { trigger: "axis", order: "seriesAsc" },
+    toolbox: {
+      feature: { dataZoom: { yAxisIndex: "none" }, restore: {} },
+      right: 4,
+      top: 8,
+      itemSize: 14,
+    },
+    tooltip: { trigger: "axis", order: "seriesAsc", confine: true },
     dataZoom: DZ,
   };
 
@@ -411,8 +453,8 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
         showSymbol: false,
         connectNulls: false,
         smooth: false,
-        lineStyle: { width: 3, color: COLORS.grayDark },
-        itemStyle: { color: COLORS.grayDark },
+        lineStyle: { width: 3, color: COLORS.orange },
+        itemStyle: { color: COLORS.orange },
       },
       {
         name: "Punto di rugiada",
@@ -421,8 +463,8 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
         showSymbol: false,
         connectNulls: false,
         smooth: false,
-        lineStyle: { width: 2, color: COLORS.red },
-        itemStyle: { color: COLORS.red },
+        lineStyle: { width: 2, color: COLORS.blueLight },
+        itemStyle: { color: COLORS.blueLight },
       },
     ],
   };
@@ -454,8 +496,8 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
         showSymbol: false,
         connectNulls: false,
         smooth: false,
-        lineStyle: { width: 3, color: COLORS.grayDark },
-        itemStyle: { color: COLORS.grayDark },
+        lineStyle: { width: 3, color: COLORS.blue },
+        itemStyle: { color: COLORS.blue },
       },
     ],
   };
@@ -657,8 +699,8 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
         showSymbol: false,
         connectNulls: false,
         smooth: false,
-        lineStyle: { width: 3, color: COLORS.grayDark },
-        itemStyle: { color: COLORS.grayDark },
+        lineStyle: { width: 3, color: COLORS.orange },
+        itemStyle: { color: COLORS.orange },
       },
     ],
   };
@@ -689,8 +731,8 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
         showSymbol: false,
         connectNulls: false,
         smooth: false,
-        lineStyle: { width: 3, color: COLORS.grayDark },
-        itemStyle: { color: COLORS.grayDark },
+        lineStyle: { width: 3, color: COLORS.orange },
+        itemStyle: { color: COLORS.orange },
       },
     ],
   };
@@ -701,7 +743,6 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
 
   const compareAvailable = compareOptions.filter((x) => x?.date && x.year && x.date !== day.date);
   const [comparePick, setComparePick] = useState(compareAvailable?.[0]?.year ?? "");
-  const [showTable, setShowTable] = useState(false);
 
   function yearToDayHref(targetYear) {
     const found = compareAvailable.find((o) => String(o.year) === String(targetYear));
@@ -737,6 +778,69 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
     });
   }, [labels, byHHMM, windDir, temp, dew, rh, press, wind, gust, rain15, rainCum, uv, solar]);
 
+  function downloadDailyCsv() {
+    const columns = [
+      "date",
+      "time",
+      "temp_c",
+      "dewpoint_c",
+      "rh_pct",
+      "press_hpa",
+      "wind_kmh",
+      "gust_kmh",
+      "wind_dir_deg",
+      "wind_dir_txt",
+      "rain_15m_mm",
+      "rain_cum_mm",
+      "uv",
+      "solar_wm2",
+    ];
+
+    const csvRows = tableRows
+      .filter((row) => row._has)
+      .map((row) => [
+        day.date,
+        row.time,
+        row.temp,
+        row.dew,
+        row.rh,
+        row.press,
+        row.wind,
+        row.gust,
+        row.dirDeg,
+        row.dirCard,
+        row.rain15,
+        row.rainCum,
+        row.uv,
+        row.solar,
+      ]);
+
+    const escapeCsv = (value) => {
+      if (value === null || value === undefined || value === "") return "";
+      const raw = String(value);
+      const escaped = raw.replaceAll('"', '""');
+      return /[",\n]/.test(raw) ? `"${escaped}"` : escaped;
+    };
+
+    const csv = [
+      columns.join(","),
+      ...csvRows.map((row) => row.map(escapeCsv).join(",")),
+    ].join("\n");
+
+    const blob = new Blob(["\uFEFF", csv], {
+      type: "text/csv;charset=utf-8",
+    });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+
+    anchor.href = url;
+    anchor.download = `${day.date}_dati_15min.csv`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  }
+
   const dirTxt = Number.isFinite(n(day?.wind_dir_mean_deg)) ? degToCardinal16(day.wind_dir_mean_deg) : "—";
 
   return (
@@ -745,21 +849,45 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
         <header className="hero">
           <div className="yearTopRow">
             <div className="yearBlock">
-              <div className="kicker">Giorno</div>
+              <div className="dayHeaderGrid">
+                <div className="daySelectHeaderWrap">
+                  <span className="selectorLabel">Seleziona giorno</span>
 
-              <div className="titleLine">
+                  <select
+                    className="selectorPill dayHeaderSelect"
+                    value={day.date}
+                    onChange={(e) => {
+                      const targetDate = e.target.value;
+                      if (!targetDate) return;
+                      router.push(`/giorni/${targetDate}`);
+                    }}
+                    aria-label={`Seleziona giorno ${formatMonthIT(ym)}`}
+                  >
+                    {monthDays.map((item) => (
+                      <option key={item.date} value={item.date}>
+                        Giorno {item.dayNum}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
                 <div className="titleMain">
-                  <h1 className="year">{formatDateIT(day.date)}</h1>
+                  <div className="kicker">Giorno</div>
 
-                  <div className="titleActions">
+                  <div className="dayTitleLine">
                     {prev ? (
-                      <Link href={`/giorni/${prev}`} className="arrowCircle" aria-label="Giorno precedente" title="Precedente">
+                      <Link
+                        href={`/giorni/${prev}`}
+                        className="arrowCircle"
+                        aria-label="Giorno precedente"
+                        title="Precedente"
+                      >
                         <svg viewBox="0 0 32 32" aria-hidden="true" className="arrowSvg">
                           <path
-                            d="M19 9.5L12.5 16L19 22.5"
+                            d="M21 6.5L9.5 16L21 25.5"
                             fill="none"
                             stroke="currentColor"
-                            strokeWidth="2.4"
+                            strokeWidth="4.2"
                             strokeLinecap="round"
                             strokeLinejoin="round"
                           />
@@ -769,10 +897,10 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
                       <span className="arrowCircle disabled" aria-hidden="true">
                         <svg viewBox="0 0 32 32" aria-hidden="true" className="arrowSvg">
                           <path
-                            d="M19 9.5L12.5 16L19 22.5"
+                            d="M21 6.5L9.5 16L21 25.5"
                             fill="none"
                             stroke="currentColor"
-                            strokeWidth="2.4"
+                            strokeWidth="4.2"
                             strokeLinecap="round"
                             strokeLinejoin="round"
                           />
@@ -780,14 +908,21 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
                       </span>
                     )}
 
+                    <h1 className="year">{dayTitle}</h1>
+
                     {next ? (
-                      <Link href={`/giorni/${next}`} className="arrowCircle" aria-label="Giorno successivo" title="Successivo">
+                      <Link
+                        href={`/giorni/${next}`}
+                        className="arrowCircle"
+                        aria-label="Giorno successivo"
+                        title="Successivo"
+                      >
                         <svg viewBox="0 0 32 32" aria-hidden="true" className="arrowSvg">
                           <path
-                            d="M13 9.5L19.5 16L13 22.5"
+                            d="M11 6.5L22.5 16L11 25.5"
                             fill="none"
                             stroke="currentColor"
-                            strokeWidth="2.4"
+                            strokeWidth="4.2"
                             strokeLinecap="round"
                             strokeLinejoin="round"
                           />
@@ -797,10 +932,10 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
                       <span className="arrowCircle disabled" aria-hidden="true">
                         <svg viewBox="0 0 32 32" aria-hidden="true" className="arrowSvg">
                           <path
-                            d="M13 9.5L19.5 16L13 22.5"
+                            d="M11 6.5L22.5 16L11 25.5"
                             fill="none"
                             stroke="currentColor"
-                            strokeWidth="2.4"
+                            strokeWidth="4.2"
                             strokeLinecap="round"
                             strokeLinejoin="round"
                           />
@@ -808,14 +943,33 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
                       </span>
                     )}
                   </div>
+
+                  <div className="dayContextLinks">
+                    <Link
+                      href={`/anni/${year}`}
+                      className="contextPill"
+                      aria-label={`Apri l'anno ${year}`}
+                    >
+                      {year}
+                    </Link>
+
+                    <Link
+                      href={`/mesi/${year}/${month}`}
+                      className="contextPill contextPillMonth"
+                      aria-label={`Apri ${formatMonthIT(ym)}`}
+                    >
+                      {formatMonthIT(ym)}
+                    </Link>
+                  </div>
                 </div>
 
-                {compareAvailable.length > 0 && (
+                {compareAvailable.length > 0 ? (
                   <div className="inlineCompareWrap">
-                    <span className="inlineCompareLabel">Giorno negli altri anni</span>
+                    <span className="selectorLabel">Giorno negli altri anni</span>
+
                     <select
                       id="compare-day-select"
-                      className="compareSelectMini"
+                      className="selectorPill compareSelectMini"
                       value={comparePick}
                       onChange={onCompareChange}
                     >
@@ -827,58 +981,12 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
                       ))}
                     </select>
                   </div>
+                ) : (
+                  <div className="headerSideSpacer" aria-hidden="true" />
                 )}
-              </div>
-
-              <div className="dayMeta">
-                <Link href={`/anni/${year}`} className="subLink">
-                  {year}
-                </Link>
-                <span className="subSep">•</span>
-                <Link href={`/mesi/${year}/${month}`} className="subLink">
-                  {formatMonthIT(ym)}
-                </Link>
               </div>
             </div>
           </div>
-
-          <section className="daysBar" aria-label={`Seleziona giorno ${formatMonthIT(ym)}`}>
-            <div className="daysBarHead">Seleziona giorno {formatMonthIT(ym)}</div>
-
-            <select
-              className="daySelectMobile"
-              value={day.date}
-              onChange={(e) => {
-                const targetDate = e.target.value;
-                if (!targetDate) return;
-                router.push(`/giorni/${targetDate}`);
-              }}
-            >
-              {monthDays.map((item) => (
-                <option key={item.date} value={item.date}>
-                  {item.dayNum}
-                </option>
-              ))}
-            </select>
-
-            <nav className="dayNavGrid">
-              {monthDays.map((item) => {
-                const isActive = String(item.date) === String(day.date);
-
-                return (
-                  <Link
-                    key={item.date}
-                    href={`/giorni/${item.date}`}
-                    className={`dayLink ${isActive ? "active" : ""}`}
-                    title={`Apri ${formatDateIT(item.date)}`}
-                    aria-label={`Apri ${formatDateIT(item.date)}`}
-                  >
-                    <span className="dayLinkNum">{item.dayNum}</span>
-                  </Link>
-                );
-              })}
-            </nav>
-          </section>
 
           <section className="summaryCompact">
             <div className="summaryHead centered">
@@ -1058,23 +1166,19 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
         )}
 
         <section className="dayTableHead">
-          <div className="dayTableTitle">Riepilogo giornaliero</div>
-        </section>
+          <div className="dayTableTitle">Dati ogni 15 minuti</div>
 
-        <section className="recordsAction">
           <button
             type="button"
-            className={`toggleRecords ${showTable ? "active" : ""}`}
-            onClick={() => setShowTable((v) => !v)}
-            aria-expanded={showTable}
-            aria-controls="table-day-data"
+            className="downloadCsvDesktop"
+            onClick={downloadDailyCsv}
+            aria-label={`Scarica i dati del ${day.date} in formato CSV`}
           >
-            {showTable ? "Nascondi tabella dati giornalieri" : "Mostra tabella dati giornalieri"}
+            Scarica CSV giornaliero
           </button>
         </section>
 
-        {showTable && (
-          <section id="table-day-data" className="tableWrap">
+        <section id="table-day-data" className="tableWrap">
             <table>
               <thead>
                 <tr className="groupRow">
@@ -1158,7 +1262,6 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
               Nota: le righe sbiadite indicano assenza dato a quell’orario.
             </div>
           </section>
-        )}
 
         <style jsx>{`
           .wrap {
@@ -1927,6 +2030,673 @@ export default function DayPage({ day, intraday, prev, next, compareOptions = []
               font-size: 14px;
             }
           }
+
+          /* Header giornaliero coerente con le pagine mese e anno */
+          .yearTopRow,
+          .yearBlock {
+            width: 100%;
+          }
+
+          .dayHeaderGrid {
+            display: grid;
+            grid-template-columns:
+              minmax(190px, 260px)
+              minmax(360px, 1fr)
+              minmax(190px, 260px);
+            gap: 22px;
+            align-items: center;
+            width: 100%;
+            min-height: 160px;
+          }
+
+          .daySelectHeaderWrap,
+          .inlineCompareWrap {
+            display: grid;
+            justify-items: center;
+            align-items: center;
+            gap: 10px;
+            min-width: 0;
+          }
+
+          .daySelectHeaderWrap {
+            justify-self: start;
+          }
+
+          .inlineCompareWrap {
+            justify-self: end;
+          }
+
+          .headerSideSpacer {
+            min-width: 0;
+          }
+
+          .selectorLabel {
+            font-size: 13px;
+            font-weight: 950;
+            color: #475569;
+            white-space: nowrap;
+            letter-spacing: 0.13em;
+            text-transform: uppercase;
+            text-align: center;
+          }
+
+          .selectorPill {
+            appearance: none;
+            -webkit-appearance: none;
+            -moz-appearance: none;
+            width: 132px;
+            min-width: 132px;
+            max-width: 132px;
+            height: 54px;
+            padding: 0 18px;
+            border-radius: 999px;
+            background: linear-gradient(180deg, #ffffff, #f8fafc);
+            border: 1px solid #d8dee7;
+            box-shadow:
+              inset 0 1px 0 rgba(255, 255, 255, 0.9),
+              0 4px 14px rgba(15, 23, 42, 0.04);
+            font-weight: 950;
+            font-size: 15px;
+            color: #0f172a;
+            cursor: pointer;
+            color-scheme: light;
+            text-align: center;
+          }
+
+          .selectorPill:focus {
+            outline: none;
+            border-color: #b9c5d6;
+            box-shadow:
+              0 0 0 2px rgba(37, 99, 235, 0.12),
+              inset 0 1px 0 rgba(255, 255, 255, 0.9),
+              0 4px 14px rgba(15, 23, 42, 0.05);
+          }
+
+          .selectorPill option {
+            color: #111111;
+            background: #ffffff;
+          }
+
+          .dayHeaderSelect {
+            width: 150px;
+            min-width: 150px;
+            max-width: 150px;
+          }
+
+          .compareSelectMini {
+            width: 112px;
+            min-width: 112px;
+            max-width: 112px;
+          }
+
+          .titleMain {
+            display: grid;
+            justify-items: center;
+            align-items: center;
+            text-align: center;
+            min-width: 0;
+          }
+
+          .kicker {
+            margin-bottom: 8px;
+            text-align: center;
+          }
+
+          .dayTitleLine {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 14px;
+            width: max-content;
+            max-width: 100%;
+          }
+
+          .year {
+            margin: 0;
+            font-size: 58px;
+            line-height: 1;
+            letter-spacing: -0.04em;
+            text-align: center;
+            white-space: nowrap;
+            color: #111111;
+          }
+
+          .arrowCircle {
+            width: 48px !important;
+            height: 48px !important;
+            min-width: 48px !important;
+            min-height: 48px !important;
+            border: 0 !important;
+            background: transparent !important;
+            color: #475569 !important;
+            opacity: 0.82;
+            box-shadow: none !important;
+          }
+
+          .arrowCircle:hover {
+            background: rgba(15, 23, 42, 0.05) !important;
+            transform: translateY(-1px);
+            opacity: 1;
+          }
+
+          .arrowSvg {
+            width: 32px !important;
+            height: 32px !important;
+            color: #475569 !important;
+          }
+
+          .dayContextLinks {
+            margin-top: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            flex-wrap: wrap;
+          }
+
+          .contextPill {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 34px;
+            padding: 0 14px;
+            border-radius: 999px;
+            border: 1px solid #d8dee7;
+            background: linear-gradient(180deg, #ffffff, #f8fafc);
+            text-decoration: none;
+            color: #5f7897;
+            box-shadow:
+              inset 0 1px 0 rgba(255, 255, 255, 0.9),
+              0 4px 14px rgba(15, 23, 42, 0.035);
+            font-size: 14px;
+            line-height: 1;
+            font-weight: 950;
+            transition:
+              transform 120ms ease,
+              box-shadow 120ms ease,
+              background 120ms ease;
+          }
+
+          .contextPill:hover {
+            transform: translateY(-1px);
+            background: #ffffff;
+            box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
+          }
+
+          .contextPillMonth {
+            padding-left: 16px;
+            padding-right: 16px;
+          }
+
+          /* Sintesi giornaliera nello stesso stile della sintesi mensile */
+          .summaryCompact {
+            padding-top: 22px;
+          }
+
+          .summaryRows {
+            gap: 12px;
+          }
+
+          .summaryRow {
+            grid-template-columns: 190px 1fr;
+            gap: 14px;
+            border: 1px solid #e7e7e7;
+            border-radius: 18px;
+            background: linear-gradient(180deg, #ffffff, #fcfcfc);
+            padding: 14px 16px;
+            box-shadow: 0 8px 24px rgba(15, 23, 42, 0.025);
+          }
+
+          .summaryHalf {
+            grid-template-columns: 170px 1fr;
+            gap: 14px;
+            border: 1px solid #e7e7e7;
+            border-radius: 18px;
+            background: linear-gradient(180deg, #ffffff, #fcfcfc);
+            padding: 14px 16px;
+            box-shadow: 0 8px 24px rgba(15, 23, 42, 0.025);
+          }
+
+          .summaryLabel {
+            font-size: 16px;
+            letter-spacing: 0.13em;
+            color: #41546d;
+            font-weight: 950;
+            padding-right: 12px;
+            border-right-color: #e7e7e7;
+          }
+
+          .summaryMetric {
+            min-width: 0;
+            display: grid;
+            align-content: start;
+            gap: 6px;
+            padding: 11px 12px;
+            border-radius: 15px;
+            background: rgba(255, 255, 255, 0.92);
+            border: 1px solid rgba(226, 232, 240, 0.95);
+            box-shadow:
+              inset 0 1px 0 rgba(255, 255, 255, 0.9),
+              0 5px 14px rgba(15, 23, 42, 0.025);
+          }
+
+          .summaryRow:nth-child(1) .summaryMetric:nth-child(1),
+          .summaryRow:nth-child(2) .summaryMetric,
+          .summaryRow:nth-child(3) .summaryMetric:nth-child(1),
+          .summaryRow:nth-child(4) .summaryMetric:nth-child(2),
+          .summaryRow:nth-child(5) .summaryMetric:nth-child(1),
+          .summaryHalf .summaryMetric:nth-child(2) {
+            border-color: rgba(242, 140, 40, 0.25);
+            background: linear-gradient(180deg, #fff, rgba(255, 247, 237, 0.72));
+          }
+
+          .summaryRow:nth-child(1) .summaryMetric:nth-child(3),
+          .summaryRow:nth-child(3) .summaryMetric:nth-child(3),
+          .summaryRow:nth-child(5) .summaryMetric:nth-child(3) {
+            border-color: rgba(79, 70, 229, 0.22);
+            background: linear-gradient(180deg, #fff, rgba(238, 242, 255, 0.74));
+          }
+
+          .summaryRow:nth-child(1) .summaryMetric:nth-child(1) strong,
+          .summaryRow:nth-child(2) .summaryMetric strong,
+          .summaryRow:nth-child(3) .summaryMetric:nth-child(1) strong,
+          .summaryRow:nth-child(4) .summaryMetric:nth-child(2) strong,
+          .summaryRow:nth-child(5) .summaryMetric:nth-child(1) strong,
+          .summaryHalf .summaryMetric:nth-child(2) strong {
+            color: #c2410c;
+          }
+
+          .summaryRow:nth-child(1) .summaryMetric:nth-child(3) strong,
+          .summaryRow:nth-child(3) .summaryMetric:nth-child(3) strong,
+          .summaryRow:nth-child(5) .summaryMetric:nth-child(3) strong {
+            color: #3730a3;
+          }
+
+          .summaryKey {
+            font-size: 10px;
+            line-height: 1.2;
+            color: #64748b;
+            font-weight: 950;
+            letter-spacing: 0.07em;
+          }
+
+          .summaryMetric strong {
+            font-size: 21px;
+            line-height: 1.05;
+            font-weight: 950;
+            letter-spacing: -0.035em;
+          }
+
+          @media (max-width: 1280px) {
+            .dayHeaderGrid {
+              grid-template-columns:
+                minmax(170px, 220px)
+                minmax(300px, 1fr)
+                minmax(170px, 220px);
+              gap: 18px;
+            }
+
+            .year {
+              font-size: 52px;
+            }
+
+            .selectorLabel {
+              font-size: 12px;
+            }
+          }
+
+          @media (max-width: 1100px) {
+            .dayHeaderGrid {
+              grid-template-columns: 1fr 1fr;
+              grid-template-areas:
+                "daySelect compareYear"
+                "title title";
+              row-gap: 18px;
+            }
+
+            .daySelectHeaderWrap {
+              grid-area: daySelect;
+              justify-self: center;
+            }
+
+            .inlineCompareWrap,
+            .headerSideSpacer {
+              grid-area: compareYear;
+              justify-self: center;
+            }
+
+            .titleMain {
+              grid-area: title;
+            }
+          }
+
+          @media (max-width: 760px) {
+            .dayHeaderGrid {
+              grid-template-columns: 1fr;
+              grid-template-areas:
+                "daySelect"
+                "title"
+                "compareYear";
+              row-gap: 16px;
+            }
+
+            .daySelectHeaderWrap,
+            .inlineCompareWrap {
+              width: 100%;
+              justify-self: stretch;
+            }
+
+            .selectorPill,
+            .dayHeaderSelect,
+            .compareSelectMini {
+              width: 100%;
+              min-width: 0;
+              max-width: none;
+            }
+
+            .dayTitleLine {
+              gap: 8px;
+            }
+
+            .year {
+              font-size: 42px;
+            }
+
+            .arrowCircle {
+              width: 40px !important;
+              height: 40px !important;
+              min-width: 40px !important;
+              min-height: 40px !important;
+            }
+
+            .arrowSvg {
+              width: 27px !important;
+              height: 27px !important;
+            }
+          }
+
+          @media (max-width: 520px) {
+            .hero {
+              padding: 14px;
+              border-radius: 16px;
+            }
+
+            .year {
+              width: auto;
+              max-width: calc(100vw - 120px);
+              font-size: 36px;
+              line-height: 1.02;
+              white-space: nowrap;
+              overflow-wrap: normal;
+            }
+
+            .dayTitleLine {
+              gap: 4px;
+            }
+
+            .arrowCircle {
+              width: 32px !important;
+              height: 38px !important;
+              min-width: 32px !important;
+              min-height: 38px !important;
+            }
+
+            .arrowSvg {
+              width: 23px !important;
+              height: 23px !important;
+            }
+
+            .contextPill {
+              min-height: 32px;
+              padding: 0 12px;
+              font-size: 13px;
+            }
+
+            .summaryMetric {
+              padding: 11px;
+            }
+
+            .summaryMetric strong {
+              font-size: 19px;
+            }
+
+            .chartBox {
+              padding: 6px;
+              border-radius: 14px;
+              overflow: hidden;
+            }
+          }
+
+          @media (max-width: 390px) {
+            .year {
+              max-width: calc(100vw - 104px);
+              font-size: 31px;
+            }
+
+            .arrowCircle {
+              width: 28px !important;
+              min-width: 28px !important;
+            }
+
+            .arrowSvg {
+              width: 21px !important;
+              height: 21px !important;
+            }
+          }
+
+          /* Rifiniture finali per centratura e compattezza su mobile */
+          .dayTableHead {
+            position: relative;
+            min-height: 48px;
+            align-items: center;
+          }
+
+          .downloadCsvDesktop {
+            appearance: none;
+            position: absolute;
+            right: 0;
+            top: 50%;
+            transform: translateY(-50%);
+            min-height: 42px;
+            padding: 0 16px;
+            border: 1px solid #d8dee7;
+            border-radius: 999px;
+            background: linear-gradient(180deg, #ffffff, #f8fafc);
+            color: #0f172a;
+            box-shadow:
+              inset 0 1px 0 rgba(255, 255, 255, 0.9),
+              0 4px 14px rgba(15, 23, 42, 0.04);
+            font-size: 13px;
+            font-weight: 950;
+            cursor: pointer;
+            transition:
+              transform 120ms ease,
+              box-shadow 120ms ease,
+              background 120ms ease;
+          }
+
+          .downloadCsvDesktop:hover {
+            transform: translateY(calc(-50% - 1px));
+            background: #ffffff;
+            box-shadow: 0 10px 24px rgba(15, 23, 42, 0.07);
+          }
+
+          .charts2,
+          .chartBox {
+            min-width: 0;
+            box-sizing: border-box;
+          }
+
+          .chartBox > :global(div) {
+            width: 100% !important;
+            margin-left: auto !important;
+            margin-right: auto !important;
+          }
+
+          @media (max-width: 760px) {
+            .daySelectHeaderWrap {
+              width: min(100%, 286px);
+              max-width: 286px;
+              margin-left: auto;
+              margin-right: auto;
+              justify-self: center;
+            }
+
+            .inlineCompareWrap {
+              grid-area: compareYear;
+              grid-column: 1 / -1;
+              width: 100% !important;
+              max-width: none !important;
+              margin: 0 !important;
+              justify-self: stretch !important;
+              display: flex !important;
+              flex-direction: column !important;
+              align-items: center !important;
+              justify-content: center !important;
+              text-align: center !important;
+            }
+
+            .inlineCompareWrap .selectorLabel {
+              width: auto;
+              max-width: 100%;
+              margin: 0 auto;
+              text-align: center;
+            }
+
+            .inlineCompareWrap .compareSelectMini {
+              width: min(286px, 100%) !important;
+              min-width: 0 !important;
+              max-width: 286px !important;
+              margin-left: auto !important;
+              margin-right: auto !important;
+            }
+
+            .selectorLabel {
+              text-align: center;
+            }
+
+            .titleMain,
+            .dayContextLinks {
+              width: 100%;
+              justify-content: center;
+              justify-items: center;
+              text-align: center;
+            }
+
+            .charts2 {
+              width: 100%;
+              justify-items: center;
+              gap: 12px;
+            }
+
+            .chartBox,
+            .chartBoxWide {
+              width: 100%;
+              max-width: 100%;
+              margin-left: auto;
+              margin-right: auto;
+              padding: 4px 2px;
+              overflow: hidden;
+            }
+
+            .summaryRows {
+              gap: 9px;
+            }
+
+            .summaryRow,
+            .summaryHalf {
+              display: block;
+              padding: 10px;
+              border-radius: 15px;
+            }
+
+            .summaryRow.dual {
+              gap: 9px;
+            }
+
+            .summaryLabel {
+              justify-content: center;
+              border-right: 0;
+              border-bottom: 1px solid #eceff3;
+              margin: 0 0 9px;
+              padding: 0 0 8px;
+              font-size: 13px;
+              letter-spacing: 0.105em;
+              text-align: center;
+            }
+
+            .summaryMetrics.three {
+              grid-template-columns: repeat(3, minmax(0, 1fr));
+              gap: 6px;
+            }
+
+            .summaryMetrics.two {
+              grid-template-columns: repeat(2, minmax(0, 1fr));
+              gap: 6px;
+            }
+
+            .summaryMetric {
+              min-height: 72px;
+              padding: 8px 5px;
+              align-content: center;
+              justify-items: center;
+              text-align: center;
+              border-radius: 12px;
+            }
+
+            .summaryKey {
+              min-height: 20px;
+              margin-bottom: 2px;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              font-size: 8.5px;
+              line-height: 1.12;
+              white-space: normal;
+              text-align: center;
+            }
+
+            .summaryMetric strong {
+              font-size: 15.5px;
+              line-height: 1.02;
+              white-space: normal;
+              text-align: center;
+            }
+
+            .dayTableHead {
+              min-height: 44px;
+              justify-content: center;
+            }
+
+            .downloadCsvDesktop {
+              display: none;
+            }
+
+            .tableWrap {
+              margin-top: 8px;
+            }
+          }
+
+          @media (max-width: 390px) {
+            .summaryRow,
+            .summaryHalf {
+              padding: 8px;
+            }
+
+            .summaryMetric {
+              min-height: 68px;
+              padding: 7px 4px;
+            }
+
+            .summaryKey {
+              font-size: 8px;
+            }
+
+            .summaryMetric strong {
+              font-size: 14px;
+            }
+          }
+
         `}</style>
       </div>
     </SiteLayout>

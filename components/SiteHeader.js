@@ -108,11 +108,21 @@ export default function SiteHeader({
         }
 
         .heroTop {
-          display: grid;
-          grid-template-columns: 1fr auto;
-          gap: 16px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
           padding: 22px 22px 18px;
           position: relative;
+          text-align: center;
+        }
+
+        .heroLeft {
+          width: 100%;
+          max-width: 920px;
+          margin: 0 auto;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
         }
 
         .kicker {
@@ -367,7 +377,15 @@ export default function SiteHeader({
           }
 
           .heroTop {
+            display: block;
             padding: 20px 18px 18px;
+            text-align: left;
+          }
+
+          .heroLeft {
+            max-width: none;
+            margin: 0;
+            align-items: flex-start;
           }
 
           .title {

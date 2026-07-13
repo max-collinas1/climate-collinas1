@@ -1667,6 +1667,10 @@ function deltaMetaForGroup(groupKey) {
       shortLabel: "Precipitazioni",
       differenceTitle: "Differenza di precipitazione cumulata",
       unit: "mm",
+      positiveColor: "#0284c7",
+      negativeColor: "#d97706",
+      positiveText: "Più pioggia",
+      negativeText: "Meno pioggia",
     };
   }
 
@@ -1677,6 +1681,10 @@ function deltaMetaForGroup(groupKey) {
       shortLabel: "Umidità",
       differenceTitle: "Differenza di umidità",
       unit: "%",
+      positiveColor: "#0891b2",
+      negativeColor: "#d97706",
+      positiveText: "Più umido",
+      negativeText: "Meno umido",
     };
   }
 
@@ -1687,6 +1695,10 @@ function deltaMetaForGroup(groupKey) {
       shortLabel: "Vento medio",
       differenceTitle: "Differenza del vento medio",
       unit: "km/h",
+      positiveColor: "#7c3aed",
+      negativeColor: "#64748b",
+      positiveText: "Più vento",
+      negativeText: "Meno vento",
     };
   }
 
@@ -1697,6 +1709,10 @@ function deltaMetaForGroup(groupKey) {
       shortLabel: "Pressione",
       differenceTitle: "Differenza di pressione",
       unit: "hPa",
+      positiveColor: "#dc2626",
+      negativeColor: "#2563eb",
+      positiveText: "Pressione più alta",
+      negativeText: "Pressione più bassa",
     };
   }
 
@@ -1707,6 +1723,10 @@ function deltaMetaForGroup(groupKey) {
       shortLabel: "Indice UV",
       differenceTitle: "Differenza dell’indice UV",
       unit: "UV",
+      positiveColor: "#f59e0b",
+      negativeColor: "#64748b",
+      positiveText: "UV più alto",
+      negativeText: "UV più basso",
     };
   }
 
@@ -1717,6 +1737,10 @@ function deltaMetaForGroup(groupKey) {
       shortLabel: "Radiazione solare",
       differenceTitle: "Differenza della radiazione solare",
       unit: "W/m²",
+      positiveColor: "#ea580c",
+      negativeColor: "#64748b",
+      positiveText: "Più radiazione",
+      negativeText: "Meno radiazione",
     };
   }
 
@@ -1726,6 +1750,10 @@ function deltaMetaForGroup(groupKey) {
     shortLabel: "Temperatura",
     differenceTitle: "Differenza di temperatura",
     unit: "°C",
+    positiveColor: "#dc2626",
+    negativeColor: "#2563eb",
+    positiveText: "Più caldo",
+    negativeText: "Più freddo",
   };
 }
 
@@ -1762,6 +1790,108 @@ function makeDeltaSeries({
 
     return [timestamp, round1(currentValue - comparisonValue)];
   });
+}
+
+function splitDeltaSeriesBySign(pairs) {
+  const positive = [];
+  const negative = [];
+  let previousValid = null;
+
+  for (const point of Array.isArray(pairs) ? pairs : []) {
+    const timestamp = Number(point?.[0]);
+    const value = n(point?.[1]);
+
+    if (!Number.isFinite(timestamp) || !Number.isFinite(value)) {
+      positive.push([timestamp, null]);
+      negative.push([timestamp, null]);
+      previousValid = null;
+      continue;
+    }
+
+    if (
+      previousValid &&
+      previousValid.value !== 0 &&
+      value !== 0 &&
+      Math.sign(previousValid.value) !== Math.sign(value)
+    ) {
+      const fraction =
+        (0 - previousValid.value) / (value - previousValid.value);
+      const zeroTimestamp =
+        previousValid.timestamp +
+        fraction * (timestamp - previousValid.timestamp);
+
+      positive.push([zeroTimestamp, 0]);
+      negative.push([zeroTimestamp, 0]);
+    }
+
+    positive.push([timestamp, value >= 0 ? value : null]);
+    negative.push([timestamp, value <= 0 ? value : null]);
+
+    previousValid = { timestamp, value };
+  }
+
+  return { positive, negative };
+}
+
+function deltaStatsFromSeries(pairs) {
+  const values = seriesValues(pairs);
+
+  if (!values.length) {
+    return {
+      count: 0,
+      mean: null,
+      maxPositive: null,
+      minNegative: null,
+      last: null,
+      lastTimestamp: null,
+    };
+  }
+
+  let total = 0;
+  let maxPositive = null;
+  let minNegative = null;
+
+  for (const point of values) {
+    total += point.value;
+
+    if (
+      point.value > 0 &&
+      (maxPositive === null || point.value > maxPositive)
+    ) {
+      maxPositive = point.value;
+    }
+
+    if (
+      point.value < 0 &&
+      (minNegative === null || point.value < minNegative)
+    ) {
+      minNegative = point.value;
+    }
+  }
+
+  const lastPoint = values[values.length - 1];
+
+  return {
+    count: values.length,
+    mean: total / values.length,
+    maxPositive,
+    minNegative,
+    last: lastPoint.value,
+    lastTimestamp: lastPoint.timestamp,
+  };
+}
+
+function formatSignedDelta(value, unit) {
+  const vv = n(value);
+  if (!Number.isFinite(vv)) return "—";
+  const sign = vv > 0 ? "+" : "";
+  return `${sign}${vv.toFixed(1)} ${unit}`;
+}
+
+function deltaTone(value) {
+  const vv = n(value);
+  if (!Number.isFinite(vv) || vv === 0) return "neutral";
+  return vv > 0 ? "positive" : "negative";
 }
 
 function symmetricAxisFromPairs(pairs) {
@@ -2302,6 +2432,16 @@ function ComparisonChart({
     [deltaSeries],
   );
 
+  const splitSeries = useMemo(
+    () => splitDeltaSeriesBySign(deltaSeries),
+    [deltaSeries],
+  );
+
+  const deltaStats = useMemo(
+    () => deltaStatsFromSeries(deltaSeries),
+    [deltaSeries],
+  );
+
   const option = useMemo(() => {
     if (!validDeltaCount) return null;
 
@@ -2338,11 +2478,51 @@ function ComparisonChart({
         trigger: "axis",
         confine: true,
         axisPointer: { type: "none" },
-        valueFormatter: (value) => {
-          const vv = Number(value);
-          if (!Number.isFinite(vv)) return "—";
-          const sign = vv > 0 ? "+" : "";
-          return `${sign}${vv.toFixed(1)} ${meta.unit}`;
+        formatter: (params) => {
+          const axisTimestamp = Number(
+            params?.[0]?.axisValue ?? params?.[0]?.data?.[0],
+          );
+
+          const validPoints = seriesValues(deltaSeries);
+          if (!validPoints.length) return "";
+
+          let selectedPoint = validPoints[0];
+
+          if (Number.isFinite(axisTimestamp)) {
+            let bestDistance = Infinity;
+
+            for (const point of validPoints) {
+              const distance = Math.abs(point.timestamp - axisTimestamp);
+
+              if (distance < bestDistance) {
+                bestDistance = distance;
+                selectedPoint = point;
+              }
+            }
+          }
+
+          const value = selectedPoint.value;
+          const time =
+            params?.[0]?.axisValueLabel ||
+            formatSummaryTimestamp(selectedPoint.timestamp, mode);
+
+          const markerColor =
+            value > 0
+              ? meta.positiveColor
+              : value < 0
+                ? meta.negativeColor
+                : "rgba(15, 23, 42, 0.55)";
+
+          const marker =
+            `<span style="display:inline-block;margin-right:6px;` +
+            `border-radius:50%;width:9px;height:9px;` +
+            `background:${markerColor};"></span>`;
+
+          return (
+            `${time}<br/>` +
+            `${marker}${meta.shortLabel}: ` +
+            `${formatSignedDelta(value, meta.unit)}`
+          );
         },
       },
       xAxis,
@@ -2366,13 +2546,20 @@ function ComparisonChart({
       },
       series: [
         {
-          name: `Δ ${meta.shortLabel}`,
+          name: meta.positiveText,
           type: "line",
-          data: deltaSeries,
+          data: splitSeries.positive,
           showSymbol: false,
           connectNulls: false,
           smooth: false,
-          lineStyle: { width: 2 },
+          sampling: "lttb",
+          lineStyle: {
+            width: 2.4,
+            color: meta.positiveColor,
+          },
+          itemStyle: {
+            color: meta.positiveColor,
+          },
           markLine: {
             silent: true,
             symbol: "none",
@@ -2385,6 +2572,22 @@ function ComparisonChart({
             data: [{ yAxis: 0 }],
           },
         },
+        {
+          name: meta.negativeText,
+          type: "line",
+          data: splitSeries.negative,
+          showSymbol: false,
+          connectNulls: false,
+          smooth: false,
+          sampling: "lttb",
+          lineStyle: {
+            width: 2.4,
+            color: meta.negativeColor,
+          },
+          itemStyle: {
+            color: meta.negativeColor,
+          },
+        },
       ],
     };
   }, [
@@ -2392,15 +2595,52 @@ function ComparisonChart({
     currentBounds.startISO,
     deltaSeries,
     isMobile,
+    meta.negativeColor,
+    meta.negativeText,
+    meta.positiveColor,
+    meta.positiveText,
     meta.shortLabel,
     meta.unit,
     mode,
+    splitSeries.negative,
+    splitSeries.positive,
     validDeltaCount,
   ]);
 
   const comparisonPeriodText = descriptor
     ? formatPeriodLabel(mode, descriptor.anchorDate)
     : "—";
+
+  const summaryItems = [
+    {
+      label: "Differenza media",
+      value: formatSignedDelta(deltaStats.mean, meta.unit),
+      detail: deltaStats.count
+        ? `media su ${deltaStats.count} intervalli`
+        : "nessun intervallo",
+      tone: deltaTone(deltaStats.mean),
+    },
+    {
+      label: "Massimo positivo",
+      value: formatSignedDelta(deltaStats.maxPositive, meta.unit),
+      detail: meta.positiveText,
+      tone: "positive",
+    },
+    {
+      label: "Massimo negativo",
+      value: formatSignedDelta(deltaStats.minNegative, meta.unit),
+      detail: meta.negativeText,
+      tone: "negative",
+    },
+    {
+      label: "Ultima differenza",
+      value: formatSignedDelta(deltaStats.last, meta.unit),
+      detail: Number.isFinite(Number(deltaStats.lastTimestamp))
+        ? formatSummaryTimestamp(deltaStats.lastTimestamp, mode)
+        : "ultimo intervallo disponibile",
+      tone: deltaTone(deltaStats.last),
+    },
+  ];
 
   return (
     <section className="comparisonSection" aria-label="Grafico di confronto">
@@ -2436,12 +2676,30 @@ function ComparisonChart({
         {!loading && !error && option && (
           <ReactECharts
             option={option}
-            style={{ height: isMobile ? 285 : 260, width: "100%" }}
+            style={{ height: isMobile ? 245 : 260, width: "100%" }}
             notMerge={true}
             lazyUpdate={true}
           />
         )}
       </div>
+
+      {!loading && !error && validDeltaCount > 0 && (
+        <div
+          className="deltaSummary"
+          style={{
+            "--positive-color": meta.positiveColor,
+            "--negative-color": meta.negativeColor,
+          }}
+        >
+          {summaryItems.map((item) => (
+            <div className="deltaCell" key={item.label}>
+              <span className="deltaLabel">{item.label}</span>
+              <strong className={item.tone}>{item.value}</strong>
+              <small>{item.detail}</small>
+            </div>
+          ))}
+        </div>
+      )}
 
       <style jsx>{`
         .comparisonSection {
@@ -2500,7 +2758,7 @@ function ComparisonChart({
 
         .comparisonChart {
           min-height: 260px;
-          padding: 0 8px 6px;
+          padding: 0 8px 2px;
         }
 
         .compareMsg {
@@ -2513,6 +2771,68 @@ function ComparisonChart({
           font-size: 11px;
           font-weight: 800;
           text-align: center;
+        }
+
+        .deltaSummary {
+          margin: 0 18px 16px;
+          display: grid;
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+          border: 1px solid #e3e7ec;
+          border-radius: 14px;
+          overflow: hidden;
+          background: #fff;
+        }
+
+        .deltaCell {
+          min-width: 0;
+          min-height: 64px;
+          padding: 9px 11px;
+          display: grid;
+          align-content: center;
+          gap: 2px;
+          border-right: 1px solid #edf0f3;
+          background: rgba(255, 255, 255, 0.9);
+        }
+
+        .deltaCell:last-child {
+          border-right: 0;
+        }
+
+        .deltaLabel {
+          overflow: hidden;
+          font-size: 8.5px;
+          font-weight: 900;
+          color: rgba(15, 23, 42, 0.53);
+          text-transform: uppercase;
+          letter-spacing: 0.035em;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .deltaCell strong {
+          overflow: hidden;
+          font-size: 15px;
+          font-weight: 950;
+          color: #0f172a;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .deltaCell strong.positive {
+          color: var(--positive-color);
+        }
+
+        .deltaCell strong.negative {
+          color: var(--negative-color);
+        }
+
+        .deltaCell small {
+          overflow: hidden;
+          font-size: 8.5px;
+          font-weight: 750;
+          color: rgba(15, 23, 42, 0.47);
+          text-overflow: ellipsis;
+          white-space: nowrap;
         }
 
         @media (max-width: 720px) {
@@ -2539,13 +2859,36 @@ function ComparisonChart({
           }
 
           .comparisonChart {
-            min-height: 285px;
+            min-height: 245px;
             padding-left: 0;
             padding-right: 0;
           }
 
           .compareMsg {
-            min-height: 255px;
+            min-height: 215px;
+          }
+
+          .deltaSummary {
+            margin: 0 10px 14px;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+          }
+
+          .deltaCell {
+            min-height: 60px;
+            padding: 8px 9px;
+            border-bottom: 1px solid #edf0f3;
+          }
+
+          .deltaCell:nth-child(2n) {
+            border-right: 0;
+          }
+
+          .deltaCell:nth-last-child(-n + 2) {
+            border-bottom: 0;
+          }
+
+          .deltaCell strong {
+            font-size: 14px;
           }
         }
       `}</style>
@@ -3255,8 +3598,8 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
 
   const chartHeight = isMobileChart
     ? groupKey === "wind"
-      ? 495
-      : 455
+      ? 455
+      : 415
     : 420;
 
   return (
@@ -3697,13 +4040,13 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
           }
 
           .chartArea {
-            min-height: 455px;
+            min-height: 415px;
             padding: 4px 0 0;
             overflow: hidden;
           }
 
           .msg {
-            min-height: 415px;
+            min-height: 375px;
           }
         }
 
