@@ -485,12 +485,12 @@ function makeRealtimePulseSeries(dataPairs, timestamp, yAxisIndex = 0) {
     yAxisIndex,
     coordinateSystem: "cartesian2d",
     symbol: "circle",
-    symbolSize: 11,
+    symbolSize: 9,
     showEffectOn: "render",
     animation: true,
     rippleEffect: {
       brushType: "stroke",
-      scale: 4.5,
+      scale: 4,
       period: 1.8,
       number: 3,
     },
@@ -498,7 +498,7 @@ function makeRealtimePulseSeries(dataPairs, timestamp, yAxisIndex = 0) {
       color: "#ef4444",
       borderColor: "#ffffff",
       borderWidth: 2,
-      shadowBlur: 14,
+      shadowBlur: 10,
       shadowColor: "rgba(239, 68, 68, 0.65)",
     },
     emphasis: { scale: false },
@@ -1665,6 +1665,7 @@ function deltaMetaForGroup(groupKey) {
       field: "rainCum",
       label: "precipitazione cumulata",
       shortLabel: "Precipitazioni",
+      differenceTitle: "Differenza di precipitazione cumulata",
       unit: "mm",
     };
   }
@@ -1674,6 +1675,7 @@ function deltaMetaForGroup(groupKey) {
       field: "rh",
       label: "umidità",
       shortLabel: "Umidità",
+      differenceTitle: "Differenza di umidità",
       unit: "%",
     };
   }
@@ -1683,6 +1685,7 @@ function deltaMetaForGroup(groupKey) {
       field: "wind",
       label: "vento medio",
       shortLabel: "Vento medio",
+      differenceTitle: "Differenza del vento medio",
       unit: "km/h",
     };
   }
@@ -1692,6 +1695,7 @@ function deltaMetaForGroup(groupKey) {
       field: "press",
       label: "pressione",
       shortLabel: "Pressione",
+      differenceTitle: "Differenza di pressione",
       unit: "hPa",
     };
   }
@@ -1701,6 +1705,7 @@ function deltaMetaForGroup(groupKey) {
       field: "uv",
       label: "indice UV",
       shortLabel: "Indice UV",
+      differenceTitle: "Differenza dell’indice UV",
       unit: "UV",
     };
   }
@@ -1710,6 +1715,7 @@ function deltaMetaForGroup(groupKey) {
       field: "solar",
       label: "radiazione solare",
       shortLabel: "Radiazione solare",
+      differenceTitle: "Differenza della radiazione solare",
       unit: "W/m²",
     };
   }
@@ -1718,6 +1724,7 @@ function deltaMetaForGroup(groupKey) {
     field: "temp",
     label: "temperatura",
     shortLabel: "Temperatura",
+    differenceTitle: "Differenza di temperatura",
     unit: "°C",
   };
 }
@@ -2112,24 +2119,29 @@ function PeriodSummary({ data, mode }) {
         }
 
         .summaryHead {
-          display: flex;
+          display: grid;
+          grid-template-columns: 1fr auto 1fr;
           align-items: baseline;
-          justify-content: space-between;
           gap: 14px;
           margin-bottom: 11px;
         }
 
         h3 {
+          grid-column: 2;
           margin: 0;
           font-size: 16px;
           font-weight: 950;
           color: #0f172a;
+          text-align: center;
         }
 
         .summaryHead span {
+          grid-column: 3;
+          justify-self: end;
           font-size: 10px;
           font-weight: 750;
           color: rgba(15, 23, 42, 0.52);
+          text-align: right;
         }
 
         .summaryGrid {
@@ -2218,17 +2230,21 @@ function PeriodSummary({ data, mode }) {
           }
 
           .summaryHead {
-            display: grid;
+            grid-template-columns: 1fr;
             gap: 3px;
             text-align: center;
           }
 
           h3 {
+            grid-column: 1;
             font-size: 15px;
           }
 
           .summaryHead span {
+            grid-column: 1;
+            justify-self: center;
             font-size: 9px;
+            text-align: center;
           }
 
           .summaryCell {
@@ -2390,7 +2406,7 @@ function ComparisonChart({
     <section className="comparisonSection" aria-label="Grafico di confronto">
       <div className="comparisonHead">
         <div className="comparisonText">
-          <h3>Scostamento {meta.shortLabel.toLowerCase()}</h3>
+          <h3>{meta.differenceTitle}</h3>
           <p>
             Periodo corrente meno {descriptor?.label || "periodo di confronto"}
             {descriptor ? ` · ${comparisonPeriodText}` : ""}
@@ -2441,9 +2457,14 @@ function ComparisonChart({
           min-height: 78px;
           padding: 14px 18px 10px;
           display: grid;
-          grid-template-columns: 1fr auto;
+          grid-template-columns: 1fr auto 1fr;
           align-items: center;
           gap: 18px;
+        }
+
+        .comparisonText {
+          grid-column: 2;
+          text-align: center;
         }
 
         .comparisonText h3 {
@@ -2461,6 +2482,8 @@ function ComparisonChart({
         }
 
         .comparisonMenu {
+          grid-column: 3;
+          justify-self: end;
           width: 260px;
           display: grid;
           gap: 5px;
@@ -2501,6 +2524,7 @@ function ComparisonChart({
           }
 
           .comparisonText {
+            grid-column: 1;
             text-align: center;
           }
 
@@ -2509,6 +2533,8 @@ function ComparisonChart({
           }
 
           .comparisonMenu {
+            grid-column: 1;
+            justify-self: stretch;
             width: 100%;
           }
 
