@@ -2436,7 +2436,7 @@ function ComparisonChart({
         {!loading && !error && option && (
           <ReactECharts
             option={option}
-            style={{ height: isMobile ? 330 : 260, width: "100%" }}
+            style={{ height: isMobile ? 285 : 260, width: "100%" }}
             notMerge={true}
             lazyUpdate={true}
           />
@@ -2539,13 +2539,13 @@ function ComparisonChart({
           }
 
           .comparisonChart {
-            min-height: 330px;
+            min-height: 285px;
             padding-left: 0;
             padding-right: 0;
           }
 
           .compareMsg {
-            min-height: 300px;
+            min-height: 255px;
           }
         }
       `}</style>
@@ -3255,8 +3255,8 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
 
   const chartHeight = isMobileChart
     ? groupKey === "wind"
-      ? 540
-      : 500
+      ? 495
+      : 455
     : 420;
 
   return (
@@ -3697,13 +3697,13 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
           }
 
           .chartArea {
-            min-height: 500px;
+            min-height: 455px;
             padding: 4px 0 0;
             overflow: hidden;
           }
 
           .msg {
-            min-height: 460px;
+            min-height: 415px;
           }
         }
 
