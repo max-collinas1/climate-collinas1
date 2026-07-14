@@ -762,6 +762,8 @@ export default function Home({
         currentPath: "/",
       }}
     >
+      <ForecastSection />
+
       <div className="chartWrap">
         <PeriodChart
           intradayDates={intradayDates}
@@ -855,7 +857,7 @@ export default function Home({
           display: flex;
           align-items: center;
           gap: 8px;
-          min-width: 190px;
+          min-width: 235px;
           border: 1px solid #e5e7eb;
           background: rgba(255, 255, 255, 0.96);
           padding: 9px 11px;
@@ -948,6 +950,1770 @@ export default function Home({
     </SiteLayout>
   );
 }
+
+// -------------------- previsioni brevi --------------------
+const FORECAST_LATITUDE = 39.6413;
+const FORECAST_LONGITUDE = 8.8399;
+const FORECAST_TIMEZONE = "Europe/Rome";
+
+const FORECAST_BANDS = [
+  { key: "night", label: "Notte", timeLabel: "00–06", start: 0, end: 6, night: true },
+  { key: "morning", label: "Mattino", timeLabel: "06–12", start: 6, end: 12, night: false },
+  { key: "afternoon", label: "Pomeriggio", timeLabel: "12–18", start: 12, end: 18, night: false },
+  { key: "evening", label: "Sera", timeLabel: "18–24", start: 18, end: 24, night: true },
+];
+
+function percentileFinite(values, percentile) {
+  const sorted = (Array.isArray(values) ? values : [])
+    .map((value) => Number(value))
+    .filter(Number.isFinite)
+    .sort((a, b) => a - b);
+
+  if (!sorted.length) return null;
+  if (sorted.length === 1) return sorted[0];
+
+  const position = clamp01(percentile) * (sorted.length - 1);
+  const lowerIndex = Math.floor(position);
+  const upperIndex = Math.ceil(position);
+  const fraction = position - lowerIndex;
+
+  if (lowerIndex === upperIndex) return sorted[lowerIndex];
+
+  return (
+    sorted[lowerIndex] +
+    (sorted[upperIndex] - sorted[lowerIndex]) * fraction
+  );
+}
+
+function integerForecastRange(values, fallbackValue = null) {
+  const low = percentileFinite(values, 0.2);
+  const high = percentileFinite(values, 0.8);
+
+  if (Number.isFinite(low) && Number.isFinite(high)) {
+    return {
+      low: Math.floor(low),
+      high: Math.ceil(high),
+      ensemble: true,
+    };
+  }
+
+  const fallback = n(fallbackValue);
+  if (!Number.isFinite(fallback)) return null;
+
+  return {
+    low: Math.floor(fallback),
+    high: Math.ceil(fallback),
+    ensemble: false,
+  };
+}
+
+function consensusForecastRange(
+  ensembleValues,
+  deterministicValues = [],
+  fallbackValue = null,
+) {
+  const ensemble = (Array.isArray(ensembleValues) ? ensembleValues : [])
+    .map((value) => n(value))
+    .filter(Number.isFinite);
+  const deterministic = (Array.isArray(deterministicValues)
+    ? deterministicValues
+    : []
+  )
+    .map((value) => n(value))
+    .filter(Number.isFinite);
+
+  // ICON-2I e AROME vengono trattati come due ulteriori scenari della
+  // distribuzione, senza allargare automaticamente il range fino ai loro
+  // estremi. In questo modo un singolo deterministico molto caldo o freddo
+  // non domina la fascia mostrata in home.
+  if (ensemble.length) {
+    const combined = [...ensemble, ...deterministic];
+    const low = percentileFinite(combined, 0.2);
+    const high = percentileFinite(combined, 0.8);
+
+    if (Number.isFinite(low) && Number.isFinite(high)) {
+      return {
+        low: Math.floor(low),
+        high: Math.ceil(high),
+        ensemble: true,
+      };
+    }
+  }
+
+  if (deterministic.length) {
+    return {
+      low: Math.floor(Math.min(...deterministic)),
+      high: Math.ceil(Math.max(...deterministic)),
+      ensemble: false,
+    };
+  }
+
+  return integerForecastRange([], fallbackValue);
+}
+
+function integerObservedRange(values) {
+  const valid = (Array.isArray(values) ? values : [])
+    .map((value) => n(value))
+    .filter(Number.isFinite);
+
+  if (!valid.length) return null;
+
+  return {
+    low: Math.floor(Math.min(...valid)),
+    high: Math.ceil(Math.max(...valid)),
+    ensemble: false,
+  };
+}
+
+function formatForecastRange(range) {
+  if (!range) return "—";
+  if (range.low === range.high) return `${range.low} °C`;
+  return `${range.low}–${range.high} °C`;
+}
+
+function formatRainRange(values, fallbackValue = null) {
+  const low = percentileFinite(values, 0.2);
+  const high = percentileFinite(values, 0.8);
+
+  if (Number.isFinite(low) && Number.isFinite(high)) {
+    if (high < 0.2) return "0 mm";
+    if (high < 1) return "<1 mm";
+
+    const lowRounded = Math.max(0, Math.floor(low));
+    const highRounded = Math.max(lowRounded, Math.ceil(high));
+    return lowRounded === highRounded
+      ? `${highRounded} mm`
+      : `${lowRounded}–${highRounded} mm`;
+  }
+
+  const fallback = n(fallbackValue);
+  if (!Number.isFinite(fallback) || fallback < 0.2) return "0 mm";
+  if (fallback < 1) return "<1 mm";
+  return `${Math.round(fallback)} mm`;
+}
+
+function ensembleMemberKeys(hourly, variable) {
+  if (!hourly || typeof hourly !== "object") return [];
+
+  const escaped = variable.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(`^${escaped}(?:_member_?\\d+)?$`);
+
+  return Object.keys(hourly).filter(
+    (key) => pattern.test(key) && Array.isArray(hourly[key]),
+  );
+}
+
+function forecastDateLabel(iso, index) {
+  if (index === 0) return "Oggi";
+  if (index === 1) return "Domani";
+  if (index === 2) return "Dopodomani";
+
+  const date = isoToLocalDate(iso);
+  if (!date) return iso;
+  return WEEKDAYS_IT[date.getDay()];
+}
+
+function forecastCompactDate(iso) {
+  const date = isoToLocalDate(iso);
+  if (!date) return iso;
+
+  return `${date.getDate()} ${MONTHS_IT_LOWER[date.getMonth()]}`;
+}
+
+function windCardinal16(value) {
+  const direction = n(value);
+  if (!Number.isFinite(direction)) return "—";
+
+  const labels = [
+    "N",
+    "NNE",
+    "NE",
+    "ENE",
+    "E",
+    "ESE",
+    "SE",
+    "SSE",
+    "S",
+    "SSW",
+    "SW",
+    "WSW",
+    "W",
+    "WNW",
+    "NW",
+    "NNW",
+  ];
+
+  const normalized = ((direction % 360) + 360) % 360;
+  return labels[Math.round(normalized / 22.5) % 16];
+}
+
+function weatherMetaFromHourly({
+  codes = [],
+  cloudCover = [],
+  rainProbability = 0,
+  precipitation = 0,
+}) {
+  const validCodes = codes.map((value) => Number(value)).filter(Number.isFinite);
+  const validCloud = cloudCover
+    .map((value) => Number(value))
+    .filter(Number.isFinite);
+
+  const countCodes = (accepted) =>
+    validCodes.filter((value) => accepted.includes(value)).length;
+
+  const stormCount = countCodes([95, 96, 99]);
+  const snowCount = countCodes([71, 73, 75, 77, 85, 86]);
+  const rainCount = countCodes([
+    51,
+    53,
+    55,
+    56,
+    57,
+    61,
+    63,
+    65,
+    66,
+    67,
+    80,
+    81,
+    82,
+  ]);
+  const fogCount = countCodes([45, 48]);
+
+  if (stormCount > 0 && (rainProbability >= 25 || precipitation >= 0.1)) {
+    return { kind: "storm", label: "Possibili temporali" };
+  }
+
+  if (snowCount > 0) {
+    return { kind: "snow", label: "Possibili nevicate" };
+  }
+
+  const rainCodeThreshold = Math.max(1, Math.ceil(validCodes.length * 0.25));
+  if (
+    (rainCount >= rainCodeThreshold &&
+      (rainProbability >= 25 || precipitation >= 0.1)) ||
+    (rainProbability >= 50 && precipitation >= 0.1)
+  ) {
+    return {
+      kind: rainProbability >= 60 ? "rain" : "showers",
+      label: rainProbability >= 60 ? "Pioggia probabile" : "Possibili rovesci",
+    };
+  }
+
+  if (fogCount >= Math.max(1, Math.ceil(validCodes.length / 3))) {
+    return { kind: "fog", label: "Nebbia o foschia" };
+  }
+
+  const cloudMean = avgFinite(validCloud);
+  const cloudHighFraction = validCloud.length
+    ? validCloud.filter((value) => value >= 70).length / validCloud.length
+    : 0;
+
+  if (Number.isFinite(cloudMean)) {
+    if (cloudMean < 20) return { kind: "sun", label: "Sereno" };
+    if (cloudMean < 42) return { kind: "partly", label: "Poco nuvoloso" };
+    if (cloudMean < 68 || cloudHighFraction < 0.5) {
+      return { kind: "partly", label: "Parzialmente nuvoloso" };
+    }
+    return { kind: "cloud", label: "Nuvoloso" };
+  }
+
+  const cloudCodeCount = countCodes([3]);
+  const partlyCodeCount = countCodes([1, 2]);
+
+  if (cloudCodeCount > validCodes.length / 2) {
+    return { kind: "cloud", label: "Nuvoloso" };
+  }
+
+  if (partlyCodeCount > 0) {
+    return { kind: "partly", label: "Poco nuvoloso" };
+  }
+
+  return { kind: "sun", label: "Sereno" };
+}
+
+function WeatherForecastIcon({ kind, night = false }) {
+  const moon = (
+    <path
+      d="M60 8c-13 4-21 17-18 31 3 15 17 25 32 22 4-1 8-2 11-5-6 12-19 20-33 20-20 0-36-16-36-36C16 22 29 7 47 4c5-1 9 0 13 1Z"
+      fill="#f8fafc"
+      stroke="#64748b"
+      strokeWidth="3"
+      strokeLinejoin="round"
+    />
+  );
+
+  const sun = (
+    <g>
+      <g stroke="#f59e0b" strokeWidth="4" strokeLinecap="round">
+        <path d="M48 3v10" />
+        <path d="M48 69v10" />
+        <path d="M9 41h10" />
+        <path d="M77 41h10" />
+        <path d="m20 13 7 7" />
+        <path d="m69 62 7 7" />
+        <path d="m20 69 7-7" />
+        <path d="m69 20 7-7" />
+      </g>
+      <circle
+        cx="48"
+        cy="41"
+        r="21"
+        fill="#fbbf24"
+        stroke="#f59e0b"
+        strokeWidth="3"
+      />
+    </g>
+  );
+
+  const cloud = (
+    <path
+      d="M27 62h40c10 0 18-7 18-16s-7-16-17-16h-1C64 19 55 12 44 12c-13 0-24 10-25 23C10 36 4 42 4 50c0 7 6 12 13 12h10Z"
+      fill="#dbe5ef"
+      stroke="#64748b"
+      strokeWidth="3"
+      strokeLinejoin="round"
+    />
+  );
+
+  const skyBody = night ? moon : sun;
+
+  if (kind === "sun") {
+    return (
+      <svg viewBox="0 0 96 82" aria-hidden="true">
+        {skyBody}
+      </svg>
+    );
+  }
+
+  if (kind === "cloud") {
+    return (
+      <svg viewBox="0 0 96 82" aria-hidden="true">
+        {night && <g transform="translate(-8 -8) scale(.72)">{moon}</g>}
+        {cloud}
+      </svg>
+    );
+  }
+
+  if (kind === "fog") {
+    return (
+      <svg viewBox="0 0 96 92" aria-hidden="true">
+        {night && <g transform="translate(-8 -8) scale(.72)">{moon}</g>}
+        {cloud}
+        <g stroke="#94a3b8" strokeWidth="4" strokeLinecap="round">
+          <path d="M18 70h55" />
+          <path d="M27 81h49" />
+        </g>
+      </svg>
+    );
+  }
+
+  if (kind === "snow") {
+    return (
+      <svg viewBox="0 0 96 100" aria-hidden="true">
+        {night && <g transform="translate(-8 -8) scale(.72)">{moon}</g>}
+        {cloud}
+        <g fill="#38bdf8" fontSize="23" fontWeight="900">
+          <text x="20" y="94">✣</text>
+          <text x="48" y="94">✣</text>
+        </g>
+      </svg>
+    );
+  }
+
+  if (kind === "storm") {
+    return (
+      <svg viewBox="0 0 96 100" aria-hidden="true">
+        {night && <g transform="translate(-8 -8) scale(.72)">{moon}</g>}
+        {cloud}
+        <path
+          d="M48 61 35 82h13l-4 13 19-25H51l5-9Z"
+          fill="#facc15"
+          stroke="#d97706"
+          strokeWidth="2"
+          strokeLinejoin="round"
+        />
+        <path d="M24 69 20 82" stroke="#38bdf8" strokeWidth="4" strokeLinecap="round" />
+        <path d="M72 69 68 82" stroke="#38bdf8" strokeWidth="4" strokeLinecap="round" />
+      </svg>
+    );
+  }
+
+  if (kind === "rain" || kind === "showers") {
+    return (
+      <svg viewBox="0 0 96 100" aria-hidden="true">
+        {night ? (
+          <g transform="translate(-8 -8) scale(.72)">{moon}</g>
+        ) : (
+          kind === "showers" && (
+            <circle
+              cx="27"
+              cy="25"
+              r="16"
+              fill="#fbbf24"
+              stroke="#f59e0b"
+              strokeWidth="3"
+            />
+          )
+        )}
+        {cloud}
+        <g stroke="#0ea5e9" strokeWidth="4" strokeLinecap="round">
+          <path d="M25 69 20 84" />
+          <path d="M49 69 44 84" />
+          <path d="M73 69 68 84" />
+        </g>
+      </svg>
+    );
+  }
+
+  return (
+    <svg viewBox="0 0 96 82" aria-hidden="true">
+      <g transform="translate(-5 -5) scale(.76)">{skyBody}</g>
+      {cloud}
+    </svg>
+  );
+}
+
+function hourlyIndexesForDate(times, iso) {
+  const out = [];
+
+  for (let index = 0; index < times.length; index += 1) {
+    if (String(times[index]).slice(0, 10) === iso) out.push(index);
+  }
+
+  return out;
+}
+
+function bandIndexesFromTimes(times, iso, band) {
+  return hourlyIndexesForDate(times, iso).filter((index) => {
+    const hour = Number(String(times[index]).slice(11, 13));
+    return Number.isFinite(hour) && hour >= band.start && hour < band.end;
+  });
+}
+
+function ensembleRainStats(hourlyEnsemble, precipitationKeys, indexes) {
+  if (!precipitationKeys.length || !indexes.length) {
+    return { probability: null, totals: [] };
+  }
+
+  let maximumProbability = 0;
+
+  for (const index of indexes) {
+    let validMembers = 0;
+    let wetMembers = 0;
+
+    for (const key of precipitationKeys) {
+      const value = n(hourlyEnsemble?.[key]?.[index]);
+      if (!Number.isFinite(value)) continue;
+      validMembers += 1;
+      if (value >= 0.1) wetMembers += 1;
+    }
+
+    if (validMembers) {
+      maximumProbability = Math.max(
+        maximumProbability,
+        Math.round((wetMembers / validMembers) * 100),
+      );
+    }
+  }
+
+  const totals = [];
+
+  for (const key of precipitationKeys) {
+    const values = indexes
+      .map((index) => n(hourlyEnsemble?.[key]?.[index]))
+      .filter(Number.isFinite);
+
+    if (values.length) {
+      totals.push(values.reduce((sum, value) => sum + value, 0));
+    }
+  }
+
+  return {
+    probability: totals.length ? maximumProbability : null,
+    totals,
+  };
+}
+
+function summarizeDeterministicIndexes(hourly, indexes) {
+  const temperatureValues = [];
+  const codes = [];
+  const cloudCover = [];
+  const precipitationValues = [];
+  const windSpeedValues = [];
+  const gustValues = [];
+
+  let directionSin = 0;
+  let directionCos = 0;
+  let directionWeight = 0;
+  let availableHourCount = 0;
+
+  for (const index of Array.isArray(indexes) ? indexes : []) {
+    const temperature = n(hourly?.temperature_2m?.[index]);
+    const code = n(hourly?.weather_code?.[index]);
+    const cloud = n(hourly?.cloud_cover?.[index]);
+    const precipitation = n(hourly?.precipitation?.[index]);
+    const windSpeed = n(hourly?.wind_speed_10m?.[index]);
+    const gust = n(hourly?.wind_gusts_10m?.[index]);
+    const direction = n(hourly?.wind_direction_10m?.[index]);
+    const hourAvailable = [
+      temperature,
+      code,
+      cloud,
+      precipitation,
+      windSpeed,
+      gust,
+      direction,
+    ].some(Number.isFinite);
+
+    if (hourAvailable) availableHourCount += 1;
+    if (Number.isFinite(temperature)) temperatureValues.push(temperature);
+    if (Number.isFinite(code)) codes.push(code);
+    if (Number.isFinite(cloud)) cloudCover.push(cloud);
+    if (Number.isFinite(precipitation)) {
+      precipitationValues.push(Math.max(0, precipitation));
+    }
+    if (Number.isFinite(windSpeed)) windSpeedValues.push(windSpeed);
+    if (Number.isFinite(gust)) gustValues.push(gust);
+
+    if (Number.isFinite(direction)) {
+      const radians = (direction * Math.PI) / 180;
+      const weight = Number.isFinite(windSpeed) && windSpeed > 0 ? windSpeed : 1;
+      directionSin += Math.sin(radians) * weight;
+      directionCos += Math.cos(radians) * weight;
+      directionWeight += weight;
+    }
+  }
+
+  const countCodes = (accepted) =>
+    codes.filter((value) => accepted.includes(value)).length;
+
+  const stormCount = countCodes([95, 96, 99]);
+  const snowCount = countCodes([71, 73, 75, 77, 85, 86]);
+  const rainCount = countCodes([
+    51,
+    53,
+    55,
+    56,
+    57,
+    61,
+    63,
+    65,
+    66,
+    67,
+    80,
+    81,
+    82,
+  ]);
+  const fogCount = countCodes([45, 48]);
+  const precipitationTotal = precipitationValues.reduce(
+    (sum, value) => sum + value,
+    0,
+  );
+  const rainCodeThreshold = Math.max(1, Math.ceil(codes.length * 0.25));
+
+  return {
+    available: availableHourCount > 0,
+    availableHourCount,
+    temperatureValues,
+    codes,
+    cloudCover,
+    precipitationValues,
+    precipitationTotal,
+    windSpeedValues,
+    gustValues,
+    temperatureMin: temperatureValues.length
+      ? Math.min(...temperatureValues)
+      : null,
+    temperatureMax: temperatureValues.length
+      ? Math.max(...temperatureValues)
+      : null,
+    windSpeedMax: windSpeedValues.length ? Math.max(...windSpeedValues) : null,
+    gustMax: gustValues.length ? Math.max(...gustValues) : null,
+    cloudMean: avgFinite(cloudCover),
+    cloudHighFraction: cloudCover.length
+      ? cloudCover.filter((value) => value >= 70).length / cloudCover.length
+      : null,
+    stormVote: stormCount > 0,
+    snowVote: snowCount > 0,
+    rainVote:
+      rainCount >= rainCodeThreshold || precipitationTotal >= 0.1,
+    fogVote: fogCount >= Math.max(1, Math.ceil(codes.length / 3)),
+    directionSin,
+    directionCos,
+    directionWeight,
+  };
+}
+
+function summarizeDeterministicBand(hourly, times, iso, band) {
+  const indexes = bandIndexesFromTimes(times, iso, band);
+  return summarizeDeterministicIndexes(hourly, indexes);
+}
+
+function summarizeDeterministicDay(hourly, times, iso) {
+  const indexes = hourlyIndexesForDate(times, iso);
+  return summarizeDeterministicIndexes(hourly, indexes);
+}
+
+function cloudCategoryFromSummary(summary) {
+  if (Number.isFinite(summary?.cloudMean)) {
+    if (summary.cloudMean < 20) return 0;
+    if (summary.cloudMean < 42) return 1;
+    if (summary.cloudMean < 68 || summary.cloudHighFraction < 0.5) return 2;
+    return 3;
+  }
+
+  const fallback = weatherMetaFromHourly({
+    codes: summary?.codes || [],
+    cloudCover: summary?.cloudCover || [],
+    rainProbability: 0,
+    precipitation: 0,
+  });
+
+  if (fallback.kind === "sun") return 0;
+  if (fallback.kind === "partly") return 1;
+  return 3;
+}
+
+function consensusWeatherMeta(modelSummaries, rainProbability) {
+  const models = (Array.isArray(modelSummaries) ? modelSummaries : []).filter(
+    (summary) => summary?.available,
+  );
+
+  if (!models.length) return { kind: "sun", label: "Sereno" };
+
+  if (models.length === 1) {
+    const only = models[0];
+    return weatherMetaFromHourly({
+      codes: only.codes,
+      cloudCover: only.cloudCover,
+      rainProbability,
+      precipitation: only.precipitationTotal,
+    });
+  }
+
+  const stormVotes = models.filter((summary) => summary.stormVote).length;
+  const snowVotes = models.filter((summary) => summary.snowVote).length;
+  const rainVotes = models.filter((summary) => summary.rainVote).length;
+  const fogVotes = models.filter((summary) => summary.fogVote).length;
+  const maximumPrecipitation = Math.max(
+    ...models.map((summary) => summary.precipitationTotal || 0),
+  );
+
+  if (
+    stormVotes === models.length ||
+    (stormVotes >= 1 && rainProbability >= 45 && maximumPrecipitation >= 0.1)
+  ) {
+    return { kind: "storm", label: "Possibili temporali" };
+  }
+
+  if (snowVotes === models.length || (snowVotes >= 1 && rainProbability >= 50)) {
+    return { kind: "snow", label: "Possibili nevicate" };
+  }
+
+  if (
+    (rainVotes === models.length && rainProbability >= 20) ||
+    (rainVotes >= 1 && rainProbability >= 45) ||
+    (rainProbability >= 70 && maximumPrecipitation >= 0.1)
+  ) {
+    return {
+      kind: rainProbability >= 65 ? "rain" : "showers",
+      label: rainProbability >= 65 ? "Pioggia probabile" : "Possibili rovesci",
+    };
+  }
+
+  if (fogVotes === models.length) {
+    return { kind: "fog", label: "Nebbia o foschia" };
+  }
+
+  const categories = models.map(cloudCategoryFromSummary);
+  const cloudMeans = models
+    .map((summary) => summary.cloudMean)
+    .filter(Number.isFinite);
+  const categorySpread = Math.max(...categories) - Math.min(...categories);
+  const cloudSpread = cloudMeans.length > 1
+    ? Math.max(...cloudMeans) - Math.min(...cloudMeans)
+    : 0;
+
+  if (categorySpread >= 2 || cloudSpread >= 45) {
+    return { kind: "partly", label: "Variabile" };
+  }
+
+  const categoryMean = avgFinite(categories);
+
+  if (categoryMean < 0.5) return { kind: "sun", label: "Sereno" };
+  if (categoryMean < 1.5) {
+    return { kind: "partly", label: "Poco nuvoloso" };
+  }
+  if (categoryMean < 2.5) {
+    return { kind: "partly", label: "Parzialmente nuvoloso" };
+  }
+
+  return { kind: "cloud", label: "Nuvoloso" };
+}
+
+function consensusDirectionFromSummaries(modelSummaries) {
+  const summaries = (Array.isArray(modelSummaries) ? modelSummaries : []).filter(
+    (summary) => summary?.available && summary.directionWeight > 0,
+  );
+
+  if (!summaries.length) return null;
+
+  const sin = summaries.reduce(
+    (sum, summary) => sum + summary.directionSin,
+    0,
+  );
+  const cos = summaries.reduce(
+    (sum, summary) => sum + summary.directionCos,
+    0,
+  );
+
+  if (Math.abs(sin) < 1e-9 && Math.abs(cos) < 1e-9) return null;
+
+  let degrees = (Math.atan2(sin, cos) * 180) / Math.PI;
+  if (degrees < 0) degrees += 360;
+  return degrees;
+}
+
+function consensusAverage(values) {
+  const valid = (Array.isArray(values) ? values : [])
+    .map((value) => n(value))
+    .filter(Number.isFinite);
+  return valid.length ? avgFinite(valid) : null;
+}
+
+function isForecastBandPast(iso, band) {
+  const now = new Date();
+  const todayISO = dateToISO(now);
+
+  if (iso < todayISO) return true;
+  if (iso > todayISO) return false;
+
+  return now.getHours() >= band.end;
+}
+
+function buildShortForecast(iconDeterministic, aromeDeterministic, ensemble) {
+  const daily = iconDeterministic?.daily;
+  const iconHourly = iconDeterministic?.hourly;
+  const iconTimes = Array.isArray(iconHourly?.time) ? iconHourly.time : [];
+
+  const aromeHourly = aromeDeterministic?.hourly;
+  const aromeTimes = Array.isArray(aromeHourly?.time) ? aromeHourly.time : [];
+
+  const hourlyEnsemble = ensemble?.hourly;
+  const ensembleTimes = Array.isArray(hourlyEnsemble?.time)
+    ? hourlyEnsemble.time
+    : [];
+
+  if (!daily || !Array.isArray(daily.time) || !iconTimes.length) {
+    return [];
+  }
+
+  const temperatureKeys = ensembleMemberKeys(hourlyEnsemble, "temperature_2m");
+  const precipitationKeys = ensembleMemberKeys(hourlyEnsemble, "precipitation");
+
+  return daily.time.slice(0, 3).map((iso, dayIndex) => {
+    const ensembleDayIndexes = hourlyIndexesForDate(ensembleTimes, iso);
+    const iconDay = summarizeDeterministicDay(iconHourly, iconTimes, iso);
+    const aromeDay = summarizeDeterministicDay(aromeHourly, aromeTimes, iso);
+    const deterministicDays = [iconDay, aromeDay].filter(
+      (summary) => summary.available,
+    );
+
+    const memberMaximums = [];
+    const memberMinimums = [];
+    const memberRainTotals = [];
+
+    for (const key of temperatureKeys) {
+      const values = ensembleDayIndexes
+        .map((index) => n(hourlyEnsemble?.[key]?.[index]))
+        .filter(Number.isFinite);
+
+      if (values.length) {
+        memberMaximums.push(Math.max(...values));
+        memberMinimums.push(Math.min(...values));
+      }
+    }
+
+    for (const key of precipitationKeys) {
+      const values = ensembleDayIndexes
+        .map((index) => n(hourlyEnsemble?.[key]?.[index]))
+        .filter(Number.isFinite);
+
+      if (values.length) {
+        memberRainTotals.push(values.reduce((sum, value) => sum + value, 0));
+      }
+    }
+
+    const periods = FORECAST_BANDS.map((band) => {
+      const ensembleIndexes = bandIndexesFromTimes(ensembleTimes, iso, band);
+      const iconBand = summarizeDeterministicBand(
+        iconHourly,
+        iconTimes,
+        iso,
+        band,
+      );
+      const aromeBand = summarizeDeterministicBand(
+        aromeHourly,
+        aromeTimes,
+        iso,
+        band,
+      );
+      const modelBands = [iconBand, aromeBand].filter(
+        (summary) => summary.available,
+      );
+
+      const iconProbabilityValues = bandIndexesFromTimes(iconTimes, iso, band)
+        .map((index) => n(iconHourly?.precipitation_probability?.[index]))
+        .filter(Number.isFinite);
+      const deterministicProbability = iconProbabilityValues.length
+        ? Math.max(...iconProbabilityValues)
+        : null;
+
+      const ensembleRain = ensembleRainStats(
+        hourlyEnsemble,
+        precipitationKeys,
+        ensembleIndexes,
+      );
+      const rainProbability = Number.isFinite(ensembleRain.probability)
+        ? ensembleRain.probability
+        : Number.isFinite(deterministicProbability)
+          ? Math.round(deterministicProbability)
+          : 0;
+      const consensusPrecipitation = consensusAverage(
+        modelBands.map((summary) => summary.precipitationTotal),
+      );
+      const combinedTemperatures = modelBands.flatMap(
+        (summary) => summary.temperatureValues,
+      );
+
+      const expectedHours = Math.max(1, band.end - band.start);
+      const aromeAvailableHours = Number(aromeBand.availableHourCount || 0);
+      const aromeCoverage =
+        aromeAvailableHours >= expectedHours
+          ? "full"
+          : aromeAvailableHours > 0
+            ? "partial"
+            : "none";
+
+      return {
+        ...band,
+        weather: consensusWeatherMeta(modelBands, rainProbability),
+        temperatureRange: integerObservedRange(combinedTemperatures),
+        rainProbability,
+        rainRange: formatRainRange(
+          ensembleRain.totals,
+          consensusPrecipitation,
+        ),
+        past: isForecastBandPast(iso, band),
+        aromeUsed: aromeCoverage !== "none",
+        aromeCoverage,
+        aromeAvailableHours,
+      };
+    });
+
+    const rainProbabilityFromMembers = memberRainTotals.length
+      ? Math.round(
+          (memberRainTotals.filter((value) => value >= 0.2).length /
+            memberRainTotals.length) *
+            100,
+        )
+      : null;
+    const deterministicProbability = n(
+      daily?.precipitation_probability_max?.[dayIndex],
+    );
+    const rainProbability = Number.isFinite(rainProbabilityFromMembers)
+      ? rainProbabilityFromMembers
+      : Number.isFinite(deterministicProbability)
+        ? Math.round(deterministicProbability)
+        : Math.max(...periods.map((period) => period.rainProbability), 0);
+
+    const wettestPeriod = periods.reduce((best, period) => {
+      if (!best || period.rainProbability > best.rainProbability) return period;
+      return best;
+    }, null);
+
+    const deterministicMaximums = deterministicDays
+      .map((summary) => summary.temperatureMax)
+      .filter(Number.isFinite);
+    const deterministicMinimums = deterministicDays
+      .map((summary) => summary.temperatureMin)
+      .filter(Number.isFinite);
+    const deterministicRainTotal = consensusAverage(
+      deterministicDays.map((summary) => summary.precipitationTotal),
+    );
+    const windDirection = consensusDirectionFromSummaries(deterministicDays);
+    const windSpeed = consensusAverage(
+      deterministicDays.map((summary) => summary.windSpeedMax),
+    );
+    const windGust = consensusAverage(
+      deterministicDays.map((summary) => summary.gustMax),
+    );
+    const aromeFullPeriods = periods.filter(
+      (period) => period.aromeCoverage === "full",
+    ).length;
+    const aromeAvailablePeriods = periods.filter(
+      (period) => period.aromeCoverage !== "none",
+    ).length;
+    const aromeCoverage =
+      aromeFullPeriods === FORECAST_BANDS.length
+        ? "full"
+        : aromeAvailablePeriods > 0
+          ? "partial"
+          : "none";
+    const aromeUsed = aromeCoverage !== "none";
+    const modelLabel =
+      aromeCoverage === "full"
+        ? "Consenso ICON + AROME"
+        : aromeCoverage === "partial"
+          ? "ICON + AROME parziale"
+          : "ICON-2I";
+
+    return {
+      iso,
+      title: forecastDateLabel(iso, dayIndex),
+      dateLabel: forecastCompactDate(iso),
+      modelLabel,
+      aromeUsed,
+      aromeCoverage,
+      maxRange: consensusForecastRange(
+        memberMaximums,
+        deterministicMaximums,
+        daily?.temperature_2m_max?.[dayIndex],
+      ),
+      minRange: consensusForecastRange(
+        memberMinimums,
+        deterministicMinimums,
+        daily?.temperature_2m_min?.[dayIndex],
+      ),
+      rainProbability,
+      rainPeriod:
+        wettestPeriod?.rainProbability >= 20 ? wettestPeriod.label : "",
+      rainRange: formatRainRange(memberRainTotals, deterministicRainTotal),
+      windDirection: windCardinal16(windDirection),
+      windSpeed,
+      windGust,
+      periods,
+      ensembleMembers: Math.max(
+        temperatureKeys.length,
+        precipitationKeys.length,
+      ),
+    };
+  });
+}
+
+function ForecastSection() {
+  const [forecast, setForecast] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [updatedAt, setUpdatedAt] = useState(null);
+
+  useEffect(() => {
+    let alive = true;
+    let timer = null;
+
+    const loadForecast = async () => {
+      try {
+        setError("");
+
+        const iconUrl = new URL("https://api.open-meteo.com/v1/forecast");
+        iconUrl.search = new URLSearchParams({
+          latitude: String(FORECAST_LATITUDE),
+          longitude: String(FORECAST_LONGITUDE),
+          models: "italia_meteo_arpae_icon_2i",
+          timezone: FORECAST_TIMEZONE,
+          forecast_days: "3",
+          hourly:
+            "temperature_2m,precipitation_probability,precipitation,weather_code,cloud_cover,wind_speed_10m,wind_direction_10m,wind_gusts_10m",
+          daily:
+            "temperature_2m_max,temperature_2m_min,precipitation_probability_max,precipitation_sum,wind_speed_10m_max,wind_gusts_10m_max,wind_direction_10m_dominant",
+        }).toString();
+
+        const aromeUrl = new URL("https://api.open-meteo.com/v1/forecast");
+        aromeUrl.search = new URLSearchParams({
+          latitude: String(FORECAST_LATITUDE),
+          longitude: String(FORECAST_LONGITUDE),
+          models: "meteofrance_arome_france_hd",
+          timezone: FORECAST_TIMEZONE,
+          forecast_days: "3",
+          hourly:
+            "temperature_2m,precipitation,weather_code,cloud_cover,wind_speed_10m,wind_direction_10m,wind_gusts_10m",
+        }).toString();
+
+        const ensembleUrl = new URL(
+          "https://ensemble-api.open-meteo.com/v1/ensemble",
+        );
+        ensembleUrl.search = new URLSearchParams({
+          latitude: String(FORECAST_LATITUDE),
+          longitude: String(FORECAST_LONGITUDE),
+          models: "icon_eu",
+          timezone: FORECAST_TIMEZONE,
+          forecast_days: "3",
+          hourly: "temperature_2m,precipitation",
+        }).toString();
+
+        const [iconResponse, aromeResponse, ensembleResponse] =
+          await Promise.all([
+            fetch(iconUrl.toString(), { cache: "no-store" }),
+            fetch(aromeUrl.toString(), { cache: "no-store" }).catch(
+              () => null,
+            ),
+            fetch(ensembleUrl.toString(), { cache: "no-store" }).catch(
+              () => null,
+            ),
+          ]);
+
+        if (!iconResponse.ok) {
+          throw new Error(
+            "La previsione ICON-2I non è momentaneamente disponibile.",
+          );
+        }
+
+        const iconDeterministic = await iconResponse.json();
+        let aromeDeterministic = null;
+        let ensemble = null;
+
+        if (aromeResponse?.ok) {
+          aromeDeterministic = await aromeResponse.json();
+        }
+
+        if (ensembleResponse?.ok) {
+          ensemble = await ensembleResponse.json();
+        }
+
+        const built = buildShortForecast(
+          iconDeterministic,
+          aromeDeterministic,
+          ensemble,
+        );
+        if (!built.length) {
+          throw new Error("La previsione non contiene giorni utilizzabili.");
+        }
+
+        if (alive) {
+          setForecast(built);
+          setUpdatedAt(new Date());
+        }
+      } catch (loadError) {
+        if (alive) {
+          setError(
+            loadError?.message ||
+              "Non è stato possibile caricare le previsioni a breve termine.",
+          );
+        }
+      } finally {
+        if (alive) setLoading(false);
+      }
+    };
+
+    const reloadWhenVisible = () => {
+      if (document.visibilityState === "visible") loadForecast();
+    };
+
+    loadForecast();
+    timer = window.setInterval(loadForecast, 30 * 60 * 1000);
+    window.addEventListener("focus", loadForecast);
+    document.addEventListener("visibilitychange", reloadWhenVisible);
+
+    return () => {
+      alive = false;
+      if (timer) window.clearInterval(timer);
+      window.removeEventListener("focus", loadForecast);
+      document.removeEventListener("visibilitychange", reloadWhenVisible);
+    };
+  }, []);
+
+  const hasEnsemble = forecast.some((day) => day.ensembleMembers > 1);
+  const hasArome = forecast.some((day) => day.aromeUsed);
+  const hasFullArome = forecast.some((day) => day.aromeCoverage === "full");
+  const hasPartialArome = forecast.some(
+    (day) => day.aromeCoverage === "partial",
+  );
+
+  return (
+    <section className="forecastSection" aria-label="Previsioni per Collinas">
+      <div className="forecastHeader">
+        <div className="forecastHeading">
+          <span className="forecastKicker">PREVISIONI LOCALI</span>
+          <h2>Previsioni per Collinas</h2>
+          <p>
+            Previsione di consenso suddivisa tra notte, mattino, pomeriggio
+            e sera nelle prossime 72 ore.
+          </p>
+        </div>
+
+        <div className="forecastSource">
+          <strong>
+            {[
+              "ICON-2I",
+              hasArome ? "AROME HD" : null,
+              hasEnsemble ? "ICON-EU EPS" : null,
+            ]
+              .filter(Boolean)
+              .join(" + ")}
+          </strong>
+          <span>
+            {updatedAt
+              ? `Consultazione ${updatedAt.toLocaleTimeString("it-IT", {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })}`
+              : "Orizzonte 3 giorni"}
+          </span>
+          <small>
+            {hasFullArome && hasPartialArome
+              ? "Copertura AROME completa o parziale secondo la scadenza"
+              : hasFullArome
+                ? "Consenso ICON–AROME su tutte le fasce disponibili"
+                : hasPartialArome
+                  ? "AROME disponibile soltanto su alcune fasce"
+                  : "AROME temporaneamente non disponibile"}
+          </small>
+        </div>
+      </div>
+
+      {loading && !forecast.length && (
+        <div className="forecastMessage">Caricamento delle previsioni…</div>
+      )}
+
+      {!loading && error && !forecast.length && (
+        <div className="forecastMessage">{error}</div>
+      )}
+
+      {forecast.length > 0 && (
+        <div className="forecastGrid">
+          {forecast.map((day) => (
+            <article className="forecastCard" key={day.iso}>
+              <div className="forecastDay">
+                <strong>{day.title}</strong>
+                <div className="forecastDayMeta">
+                  <span>{day.dateLabel}</span>
+                  <small>{day.modelLabel}</small>
+                </div>
+              </div>
+
+              <div className="dailySummary">
+                <div className="summaryItem maximum">
+                  <span>Massima</span>
+                  <strong>{formatForecastRange(day.maxRange)}</strong>
+                </div>
+                <div className="summaryItem minimum">
+                  <span>Minima</span>
+                  <strong>{formatForecastRange(day.minRange)}</strong>
+                </div>
+                <div className="summaryItem rainSummary">
+                  <span>Pioggia</span>
+                  <strong>{day.rainProbability}%</strong>
+                  <small>
+                    {day.rainPeriod
+                      ? `${day.rainPeriod} · ${day.rainRange}`
+                      : day.rainRange}
+                  </small>
+                </div>
+                <div className="summaryItem windSummary">
+                  <span>Vento</span>
+                  <strong>
+                    {day.windDirection} {fmt(day.windSpeed, 0)} km/h
+                  </strong>
+                  <small>Raffiche {fmt(day.windGust, 0)} km/h</small>
+                </div>
+              </div>
+
+              <div className="periodGrid">
+                {day.periods.map((period) => (
+                  <div
+                    className={`periodForecast ${period.past ? "isPast" : ""}`}
+                    key={period.key}
+                  >
+                    <div className="periodTop">
+                      <strong>{period.label}</strong>
+                      <span>{period.timeLabel}</span>
+                    </div>
+
+                    <div className="periodIcon">
+                      <WeatherForecastIcon
+                        kind={period.weather.kind}
+                        night={period.night}
+                      />
+                    </div>
+
+                    <div className="periodCondition">
+                      {period.weather.label}
+                    </div>
+
+                    <div className="periodValues">
+                      <strong>{formatForecastRange(period.temperatureRange)}</strong>
+                      <span>
+                        Pioggia {period.rainProbability}% · {period.rainRange}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
+
+      <div className="forecastFooter">
+        <div>
+          <strong>Oltre le 72 ore</strong>
+          <span>
+            La tendenza a più lungo termine va valutata attraverso dispersione
+            e scenari ensemble, non con una singola icona giornaliera.
+          </span>
+        </div>
+
+        <a href="/grafici-previsione">
+          Apri i grafici ensemble
+          <span aria-hidden="true">→</span>
+        </a>
+      </div>
+
+      <style jsx>{`
+        .forecastSection {
+          margin: 18px auto 0;
+          border: 1px solid #e4e7eb;
+          border-radius: 22px;
+          overflow: hidden;
+          background:
+            radial-gradient(
+              800px 260px at 12% 0%,
+              rgba(14, 165, 233, 0.09),
+              transparent 62%
+            ),
+            linear-gradient(180deg, #ffffff, #f8fafc);
+          box-shadow: 0 9px 28px rgba(15, 23, 42, 0.055);
+        }
+
+        .forecastHeader {
+          min-height: 100px;
+          padding: 18px 20px;
+          display: grid;
+          grid-template-columns: 1fr minmax(0, 720px) 1fr;
+          align-items: center;
+          gap: 20px;
+          border-bottom: 1px solid #e9edf1;
+        }
+
+        .forecastHeading {
+          grid-column: 2;
+          min-width: 0;
+          text-align: center;
+        }
+
+        .forecastKicker {
+          display: block;
+          margin-bottom: 5px;
+          font-size: 9px;
+          font-weight: 950;
+          color: #0284c7;
+          letter-spacing: 0.1em;
+        }
+
+        .forecastHeading h2 {
+          margin: 0;
+          font-size: 24px;
+          font-weight: 950;
+          letter-spacing: -0.025em;
+          color: #0f172a;
+          text-align: center;
+        }
+
+        .forecastHeading p {
+          margin: 5px auto 0;
+          font-size: 11px;
+          font-weight: 700;
+          line-height: 1.45;
+          color: rgba(15, 23, 42, 0.56);
+          text-align: center;
+        }
+
+        .forecastSource {
+          grid-column: 3;
+          justify-self: end;
+          min-width: 190px;
+          padding: 10px 13px;
+          display: grid;
+          gap: 3px;
+          border: 1px solid #dfe7ee;
+          border-radius: 13px;
+          background: rgba(255, 255, 255, 0.86);
+          text-align: center;
+        }
+
+        .forecastSource strong {
+          font-size: 10px;
+          font-weight: 950;
+          color: #0f172a;
+        }
+
+        .forecastSource span {
+          font-size: 9px;
+          font-weight: 800;
+          color: rgba(15, 23, 42, 0.5);
+          text-transform: uppercase;
+          letter-spacing: 0.035em;
+        }
+
+        .forecastSource small {
+          font-size: 8px;
+          font-weight: 750;
+          color: rgba(15, 23, 42, 0.46);
+          line-height: 1.25;
+        }
+
+        .forecastMessage {
+          min-height: 220px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 24px;
+          font-size: 12px;
+          font-weight: 800;
+          color: rgba(15, 23, 42, 0.62);
+          text-align: center;
+        }
+
+        .forecastGrid {
+          padding: 16px 18px 18px;
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 13px;
+        }
+
+        .forecastCard {
+          min-width: 0;
+          padding: 15px;
+          border: 1px solid #e2e8ee;
+          border-radius: 18px;
+          background: rgba(255, 255, 255, 0.94);
+          box-shadow: 0 5px 16px rgba(15, 23, 42, 0.035);
+        }
+
+        .forecastDay {
+          display: flex;
+          align-items: baseline;
+          justify-content: space-between;
+          gap: 10px;
+        }
+
+        .forecastDay strong {
+          font-size: 18px;
+          font-weight: 950;
+          color: #0f172a;
+        }
+
+        .forecastDayMeta {
+          min-width: 0;
+          display: grid;
+          justify-items: end;
+          gap: 2px;
+          text-align: right;
+        }
+
+        .forecastDayMeta span {
+          font-size: 10px;
+          font-weight: 850;
+          color: rgba(15, 23, 42, 0.5);
+          text-transform: capitalize;
+        }
+
+        .forecastDayMeta small {
+          padding: 3px 6px;
+          border: 1px solid #e2e8f0;
+          border-radius: 999px;
+          background: #f8fafc;
+          font-size: 7.5px;
+          font-weight: 900;
+          color: rgba(15, 23, 42, 0.55);
+          text-transform: uppercase;
+          letter-spacing: 0.025em;
+          white-space: nowrap;
+        }
+
+        .dailySummary {
+          margin-top: 11px;
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 7px;
+        }
+
+        .summaryItem {
+          min-width: 0;
+          min-height: 62px;
+          padding: 8px 9px;
+          display: grid;
+          align-content: center;
+          gap: 2px;
+          border: 1px solid #e7ebef;
+          border-radius: 12px;
+          background: #fbfcfd;
+          text-align: center;
+        }
+
+        .summaryItem > span {
+          font-size: 8px;
+          font-weight: 950;
+          color: rgba(15, 23, 42, 0.5);
+          text-transform: uppercase;
+          letter-spacing: 0.04em;
+        }
+
+        .summaryItem strong {
+          overflow: hidden;
+          font-size: 14px;
+          font-weight: 950;
+          color: #0f172a;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .summaryItem small {
+          overflow: hidden;
+          font-size: 8px;
+          font-weight: 750;
+          color: rgba(15, 23, 42, 0.48);
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .summaryItem.maximum strong {
+          color: #dc2626;
+        }
+
+        .summaryItem.minimum strong {
+          color: #2563eb;
+        }
+
+        .rainSummary strong {
+          color: #0284c7;
+        }
+
+        .periodGrid {
+          margin-top: 10px;
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 7px;
+        }
+
+        .periodForecast {
+          min-width: 0;
+          min-height: 176px;
+          padding: 9px;
+          display: grid;
+          grid-template-rows: auto 56px auto auto;
+          align-content: start;
+          border: 1px solid #e5eaf0;
+          border-radius: 14px;
+          background:
+            linear-gradient(180deg, rgba(248, 250, 252, 0.82), #ffffff);
+          transition:
+            transform 130ms ease,
+            border-color 130ms ease,
+            box-shadow 130ms ease,
+            opacity 130ms ease;
+        }
+
+        .periodForecast:hover {
+          transform: translateY(-1px);
+          border-color: #cfd8e2;
+          box-shadow: 0 6px 14px rgba(15, 23, 42, 0.045);
+        }
+
+        .periodForecast.isPast {
+          opacity: 0.52;
+        }
+
+        .periodTop {
+          display: flex;
+          align-items: baseline;
+          justify-content: space-between;
+          gap: 6px;
+        }
+
+        .periodTop strong {
+          font-size: 11px;
+          font-weight: 950;
+          color: #0f172a;
+        }
+
+        .periodTop span {
+          font-size: 8px;
+          font-weight: 850;
+          color: rgba(15, 23, 42, 0.46);
+        }
+
+        .periodIcon {
+          width: 64px;
+          height: 56px;
+          margin: 2px auto 0;
+        }
+
+        .periodIcon :global(svg) {
+          width: 100%;
+          height: 100%;
+          display: block;
+          overflow: visible;
+        }
+
+        .periodCondition {
+          min-height: 29px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 9.5px;
+          font-weight: 900;
+          line-height: 1.15;
+          color: #334155;
+          text-align: center;
+        }
+
+        .periodValues {
+          margin-top: 4px;
+          display: grid;
+          gap: 2px;
+          text-align: center;
+        }
+
+        .periodValues strong {
+          font-size: 12px;
+          font-weight: 950;
+          color: #0f172a;
+          white-space: nowrap;
+        }
+
+        .periodValues span {
+          overflow: hidden;
+          font-size: 7.8px;
+          font-weight: 750;
+          color: rgba(15, 23, 42, 0.48);
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .forecastFooter {
+          min-height: 76px;
+          padding: 13px 18px;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 20px;
+          border-top: 1px solid #e7ebef;
+          background: rgba(255, 255, 255, 0.78);
+        }
+
+        .forecastFooter > div {
+          min-width: 0;
+          display: grid;
+          gap: 3px;
+        }
+
+        .forecastFooter > div strong {
+          font-size: 11px;
+          font-weight: 950;
+          color: #0f172a;
+        }
+
+        .forecastFooter > div span {
+          max-width: 740px;
+          font-size: 9.5px;
+          font-weight: 700;
+          line-height: 1.4;
+          color: rgba(15, 23, 42, 0.52);
+        }
+
+        .forecastFooter a {
+          flex: 0 0 auto;
+          min-height: 42px;
+          padding: 0 15px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          gap: 10px;
+          border: 1px solid #cbd5df;
+          border-radius: 13px;
+          background: #0f172a;
+          color: #fff;
+          font-size: 11px;
+          font-weight: 900;
+          text-decoration: none;
+          transition:
+            transform 120ms ease,
+            background 120ms ease;
+        }
+
+        .forecastFooter a:hover {
+          transform: translateY(-1px);
+          background: #1e293b;
+        }
+
+        .forecastFooter a span {
+          font-size: 17px;
+          line-height: 1;
+        }
+
+        @media (max-width: 1180px) {
+          .forecastHeader {
+            grid-template-columns: 1fr minmax(0, 640px) 1fr;
+          }
+
+          .forecastSource {
+            min-width: 165px;
+          }
+
+          .forecastGrid {
+            grid-template-columns: 1fr;
+          }
+
+          .forecastCard {
+            display: grid;
+            grid-template-columns: 230px minmax(0, 1fr);
+            grid-template-areas:
+              "day day"
+              "summary periods";
+            column-gap: 12px;
+          }
+
+          .forecastDay {
+            grid-area: day;
+          }
+
+          .dailySummary {
+            grid-area: summary;
+          }
+
+          .periodGrid {
+            grid-area: periods;
+            margin-top: 11px;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+          }
+        }
+
+        @media (max-width: 820px) {
+          .forecastHeader {
+            padding: 16px 13px;
+            grid-template-columns: 1fr;
+            gap: 12px;
+          }
+
+          .forecastHeading,
+          .forecastSource {
+            grid-column: 1;
+          }
+
+          .forecastHeading h2 {
+            font-size: 21px;
+          }
+
+          .forecastHeading p {
+            font-size: 10px;
+          }
+
+          .forecastSource {
+            justify-self: center;
+            width: min(100%, 300px);
+            min-width: 0;
+            box-sizing: border-box;
+          }
+
+          .forecastCard {
+            display: block;
+          }
+
+          .dailySummary {
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+          }
+
+          .periodGrid {
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+          }
+        }
+
+        @media (max-width: 720px) {
+          .forecastSection {
+            border-radius: 18px;
+          }
+
+          .forecastGrid {
+            padding: 12px 10px 14px;
+            gap: 10px;
+          }
+
+          .forecastCard {
+            padding: 13px;
+          }
+
+          .forecastDay strong {
+            font-size: 16px;
+          }
+
+          .dailySummary,
+          .periodGrid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+          }
+
+          .summaryItem {
+            min-height: 58px;
+          }
+
+          .periodForecast {
+            min-height: 168px;
+          }
+
+          .forecastFooter {
+            padding: 14px 11px;
+            display: grid;
+            text-align: center;
+          }
+
+          .forecastFooter a {
+            width: 100%;
+            box-sizing: border-box;
+          }
+        }
+
+        @media (max-width: 430px) {
+          .forecastHeader {
+            padding-left: 10px;
+            padding-right: 10px;
+          }
+
+          .forecastHeading h2 {
+            font-size: 20px;
+          }
+
+          .forecastCard {
+            padding: 11px;
+          }
+
+          .summaryItem strong {
+            font-size: 12.5px;
+          }
+
+          .periodForecast {
+            min-height: 160px;
+            padding: 8px;
+          }
+
+          .periodIcon {
+            width: 58px;
+            height: 52px;
+          }
+
+          .periodTop strong {
+            font-size: 10px;
+          }
+
+          .periodValues strong {
+            font-size: 11px;
+          }
+        }
+      `}</style>
+    </section>
+  );
+}
+
 
 // -------------------- scheda anno compatta --------------------
 function YearCard({ y, norm }) {
