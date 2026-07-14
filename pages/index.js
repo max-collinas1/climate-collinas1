@@ -1908,12 +1908,50 @@ function symmetricAxisFromPairs(pairs) {
   return { min: -limit, max: limit, interval };
 }
 
+const intradayJsonCache = new Map();
+
+async function fetchIntradayJson(
+  dISO,
+  forceRefresh = false,
+  refreshToken = "",
+) {
+  if (!forceRefresh && intradayJsonCache.has(dISO)) {
+    return intradayJsonCache.get(dISO);
+  }
+
+  const cacheBuster = forceRefresh
+    ? `?v=${encodeURIComponent(String(refreshToken || Date.now()))}`
+    : "";
+
+  const request = fetch(`/data/intraday/${dISO}.json${cacheBuster}`, {
+    cache: "no-store",
+  })
+    .then(async (res) => {
+      if (!res.ok) return null;
+      const arr = await res.json();
+      return Array.isArray(arr) ? arr : null;
+    })
+    .catch(() => null);
+
+  if (!forceRefresh) intradayJsonCache.set(dISO, request);
+
+  const result = await request;
+
+  if (!result && !forceRefresh) {
+    intradayJsonCache.delete(dISO);
+  }
+
+  return result;
+}
+
 async function loadIntradayPeriod({
   startISO,
   endISO,
   mode,
   availableDates,
   dailyRainByDate,
+  refreshToken = "",
+  forceRefreshEndDate = false,
 }) {
   const datesSet = new Set(availableDates);
   const allPeriodDates = dateRangeISO(startISO, endISO);
@@ -1959,13 +1997,16 @@ async function loadIntradayPeriod({
   await Promise.all(
     datesToFetch.map(async (dISO) => {
       try {
-        const res = await fetch(`/data/intraday/${dISO}.json`, {
-          cache: "no-store",
-        });
+        const shouldForceRefresh =
+          dISO === latestAvailableDate ||
+          (forceRefreshEndDate && dISO === endISO);
 
-        if (!res.ok) return;
+        const arr = await fetchIntradayJson(
+          dISO,
+          shouldForceRefresh,
+          refreshToken,
+        );
 
-        const arr = await res.json();
         if (!Array.isArray(arr)) return;
 
         loadedDays += 1;
@@ -2164,6 +2205,195 @@ async function loadIntradayPeriod({
     requestedDays: datesToFetch.length,
     latestTimestamp: Number.isFinite(latestObservedTimestamp)
       ? latestObservedTimestamp
+      : null,
+  };
+}
+
+
+const CLIMATOLOGY_FIELDS = [
+  "temp",
+  "dew",
+  "rh",
+  "press",
+  "wind",
+  "gust",
+  "rainH",
+  "rainCum",
+  "uv",
+  "solar",
+];
+
+function climatologyTimeKey(timestamp, mode) {
+  const d = new Date(Number(timestamp));
+  if (!Number.isFinite(d.getTime())) return null;
+
+  const hh = pad2(d.getHours());
+  const mm = pad2(d.getMinutes());
+
+  if (mode === "day") return `${hh}:${mm}`;
+  if (mode === "week") {
+    return `${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}|${hh}:${mm}`;
+  }
+
+  return `${pad2(d.getDate())}|${hh}:${mm}`;
+}
+
+function climatologyCandidateBounds(mode, selectedDate, yearShift) {
+  if (!selectedDate || !Number.isFinite(Number(yearShift))) return null;
+
+  const shiftedAnchor = addYearsISO(selectedDate, yearShift);
+  if (!shiftedAnchor) return null;
+
+  if (
+    mode === "day" &&
+    String(shiftedAnchor).slice(5) !== String(selectedDate).slice(5)
+  ) {
+    return null;
+  }
+
+  if (mode === "week") {
+    const current = getPeriodBounds("week", selectedDate);
+    return {
+      startISO: addYearsISO(current.startISO, yearShift),
+      endISO: addYearsISO(current.endISO, yearShift),
+    };
+  }
+
+  return getPeriodBounds(mode, shiftedAnchor);
+}
+
+async function loadHistoricalAverage({
+  selectedDate,
+  currentBounds,
+  mode,
+  availableDates,
+  dailyRainByDate,
+}) {
+  if (!selectedDate || !currentBounds?.startISO || !currentBounds?.endISO) {
+    throw new Error("Periodo non valido per il calcolo della media storica.");
+  }
+
+  const anchorYear = Number(String(selectedDate).slice(0, 4));
+  const availableYears = Array.from(
+    new Set(
+      (Array.isArray(availableDates) ? availableDates : [])
+        .map((iso) => Number(String(iso).slice(0, 4)))
+        .filter(Number.isFinite),
+    ),
+  ).sort((a, b) => a - b);
+
+  const candidateYears = availableYears.filter((year) => year !== anchorYear);
+  if (!candidateYears.length) {
+    throw new Error(
+      "Servono dati della stessa data in almeno un altro anno per calcolare la media storica.",
+    );
+  }
+
+  const stepMinutes = mode === "day" ? 15 : 60;
+  const currentTimeline = makePeriodTimeline(
+    currentBounds.startISO,
+    currentBounds.endISO,
+    stepMinutes,
+  );
+
+  if (!currentTimeline.length) {
+    throw new Error("Non è stato possibile costruire la linea temporale storica.");
+  }
+
+  const sums = {};
+  for (const field of CLIMATOLOGY_FIELDS) {
+    sums[field] = new Map();
+  }
+
+  const usedPeriods = [];
+
+  for (const year of candidateYears) {
+    const yearShift = year - anchorYear;
+    const historicalBounds = climatologyCandidateBounds(
+      mode,
+      selectedDate,
+      yearShift,
+    );
+
+    if (!historicalBounds?.startISO || !historicalBounds?.endISO) continue;
+
+    try {
+      const historicalPeriod = await loadIntradayPeriod({
+        startISO: historicalBounds.startISO,
+        endISO: historicalBounds.endISO,
+        mode,
+        availableDates,
+        dailyRainByDate,
+      });
+
+      if (!historicalPeriod?.loadedDays) continue;
+
+      usedPeriods.push({
+        year,
+        startISO: historicalBounds.startISO,
+        endISO: historicalBounds.endISO,
+        loadedDays: historicalPeriod.loadedDays,
+        requestedDays: historicalPeriod.requestedDays,
+      });
+
+      for (const field of CLIMATOLOGY_FIELDS) {
+        for (const point of Array.isArray(historicalPeriod?.[field])
+          ? historicalPeriod[field]
+          : []) {
+          const timestamp = Number(point?.[0]);
+          const value = n(point?.[1]);
+          const key = climatologyTimeKey(timestamp, mode);
+
+          if (!key || !Number.isFinite(value)) continue;
+
+          const previous = sums[field].get(key) || { sum: 0, count: 0 };
+          previous.sum += value;
+          previous.count += 1;
+          sums[field].set(key, previous);
+        }
+      }
+    } catch {
+      // Un anno privo del periodo richiesto viene semplicemente escluso.
+    }
+  }
+
+  if (!usedPeriods.length) {
+    throw new Error(
+      "Non sono disponibili periodi omologhi in altri anni per costruire la media storica.",
+    );
+  }
+
+  const historicalAverage = {};
+  const sampleCounts = {};
+
+  for (const field of CLIMATOLOGY_FIELDS) {
+    historicalAverage[field] = currentTimeline.map((timestamp) => {
+      const key = climatologyTimeKey(timestamp, mode);
+      const aggregate = key ? sums[field].get(key) : null;
+
+      if (!aggregate?.count) return [timestamp, null];
+      return [timestamp, round1(aggregate.sum / aggregate.count)];
+    });
+
+    sampleCounts[field] = currentTimeline.map((timestamp) => {
+      const key = climatologyTimeKey(timestamp, mode);
+      const aggregate = key ? sums[field].get(key) : null;
+      return [timestamp, aggregate?.count || 0];
+    });
+  }
+
+  const historicalRainTotal = lastNonNullPoint(
+    historicalAverage.rainCum,
+  )?.[1];
+
+  return {
+    ...historicalAverage,
+    sampleCounts,
+    periodCount: usedPeriods.length,
+    years: usedPeriods.map((period) => period.year).sort((a, b) => a - b),
+    periods: usedPeriods,
+    rainTotal: Number.isFinite(n(historicalRainTotal))
+      ? round1(historicalRainTotal)
       : null,
   };
 }
@@ -2896,6 +3126,536 @@ function ComparisonChart({
   );
 }
 
+
+function ClimatologyChart({
+  mode,
+  groupKey,
+  currentData,
+  climatologyData,
+  currentBounds,
+  loading,
+  error,
+  isMobile,
+}) {
+  const meta = useMemo(() => deltaMetaForGroup(groupKey), [groupKey]);
+
+  const anomalySeries = useMemo(() => {
+    if (!currentData || !climatologyData) return [];
+
+    return makeDeltaSeries({
+      currentPairs: currentData?.[meta.field],
+      comparisonPairs: climatologyData?.[meta.field],
+      currentStartISO: currentBounds.startISO,
+      comparisonStartISO: currentBounds.startISO,
+      mode,
+    });
+  }, [
+    climatologyData,
+    currentBounds.startISO,
+    currentData,
+    meta.field,
+    mode,
+  ]);
+
+  const validAnomalyCount = useMemo(
+    () => seriesValues(anomalySeries).length,
+    [anomalySeries],
+  );
+
+  const splitSeries = useMemo(
+    () => splitDeltaSeriesBySign(anomalySeries),
+    [anomalySeries],
+  );
+
+  const anomalyStats = useMemo(
+    () => deltaStatsFromSeries(anomalySeries),
+    [anomalySeries],
+  );
+
+  const option = useMemo(() => {
+    if (!validAnomalyCount) return null;
+
+    const axis = symmetricAxisFromPairs(anomalySeries);
+
+    return {
+      animation: true,
+      animationDuration: 220,
+      grid: isMobile
+        ? { left: 50, right: 18, top: 35, bottom: 54 }
+        : { left: 70, right: 34, top: 35, bottom: 58 },
+      tooltip: {
+        trigger: "axis",
+        confine: true,
+        axisPointer: { type: "none" },
+        formatter: (params) => {
+          const axisTimestamp = Number(
+            params?.[0]?.axisValue ?? params?.[0]?.data?.[0],
+          );
+          const validPoints = seriesValues(anomalySeries);
+          if (!validPoints.length) return "";
+
+          let selectedPoint = validPoints[0];
+          if (Number.isFinite(axisTimestamp)) {
+            let bestDistance = Infinity;
+            for (const point of validPoints) {
+              const distance = Math.abs(point.timestamp - axisTimestamp);
+              if (distance < bestDistance) {
+                bestDistance = distance;
+                selectedPoint = point;
+              }
+            }
+          }
+
+          const value = selectedPoint.value;
+          const time =
+            params?.[0]?.axisValueLabel ||
+            formatSummaryTimestamp(selectedPoint.timestamp, mode);
+          const markerColor =
+            value > 0
+              ? meta.positiveColor
+              : value < 0
+                ? meta.negativeColor
+                : "rgba(15, 23, 42, 0.55)";
+          const marker =
+            `<span style="display:inline-block;margin-right:6px;` +
+            `border-radius:50%;width:9px;height:9px;` +
+            `background:${markerColor};"></span>`;
+
+          return (
+            `${time}<br/>` +
+            `${marker}Scarto dalla media: ` +
+            `${formatSignedDelta(value, meta.unit)}`
+          );
+        },
+      },
+      xAxis: {
+        type: "time",
+        min: isoToLocalDate(currentBounds.startISO, 0)?.getTime(),
+        max: isoToLocalDate(addDaysISO(currentBounds.endISO, 1), 0)?.getTime(),
+        axisLabel: {
+          hideOverlap: true,
+          fontSize: isMobile ? 10 : 11,
+          formatter: (value) => {
+            const d = new Date(value);
+            const dd = pad2(d.getDate());
+            const mm = pad2(d.getMonth() + 1);
+            const hh = pad2(d.getHours());
+            const mi = pad2(d.getMinutes());
+
+            if (mode === "day") return `${hh}:${mi}`;
+            if (mode === "month") return `${dd}/${mm}`;
+            return `${dd}/${mm} ${hh}`;
+          },
+        },
+      },
+      yAxis: {
+        type: "value",
+        name: `Δ ${meta.unit}`,
+        nameLocation: "middle",
+        nameRotate: 90,
+        nameGap: isMobile ? 34 : 46,
+        min: axis.min,
+        max: axis.max,
+        interval: axis.interval,
+        axisLabel: {
+          fontSize: isMobile ? 10 : 11,
+          formatter: (value) => {
+            const vv = Number(value);
+            return `${vv > 0 ? "+" : ""}${vv.toFixed(1)}`;
+          },
+        },
+        splitLine: { show: true },
+      },
+      series: [
+        {
+          name: "Sopra la media storica",
+          type: "line",
+          data: splitSeries.positive,
+          showSymbol: false,
+          connectNulls: false,
+          smooth: false,
+          sampling: "lttb",
+          lineStyle: { width: 2.4, color: meta.positiveColor },
+          itemStyle: { color: meta.positiveColor },
+          markLine: {
+            silent: true,
+            symbol: "none",
+            label: { show: false },
+            lineStyle: {
+              width: 1.2,
+              type: "dashed",
+              color: "rgba(15, 23, 42, 0.42)",
+            },
+            data: [{ yAxis: 0 }],
+          },
+        },
+        {
+          name: "Sotto la media storica",
+          type: "line",
+          data: splitSeries.negative,
+          showSymbol: false,
+          connectNulls: false,
+          smooth: false,
+          sampling: "lttb",
+          lineStyle: { width: 2.4, color: meta.negativeColor },
+          itemStyle: { color: meta.negativeColor },
+        },
+      ],
+    };
+  }, [
+    anomalySeries,
+    currentBounds.endISO,
+    currentBounds.startISO,
+    isMobile,
+    meta.negativeColor,
+    meta.positiveColor,
+    meta.unit,
+    mode,
+    splitSeries.negative,
+    splitSeries.positive,
+    validAnomalyCount,
+  ]);
+
+  const historicalYears = Array.isArray(climatologyData?.years)
+    ? climatologyData.years
+    : [];
+  const yearsText = historicalYears.length
+    ? historicalYears.join(", ")
+    : "—";
+  const periodCount = Number(climatologyData?.periodCount || 0);
+
+  const summaryItems = [
+    {
+      label: "Scarto medio",
+      value: formatSignedDelta(anomalyStats.mean, meta.unit),
+      detail: anomalyStats.count
+        ? `media su ${anomalyStats.count} intervalli`
+        : "nessun intervallo",
+      tone: deltaTone(anomalyStats.mean),
+    },
+    {
+      label: "Massimo sopra media",
+      value: formatSignedDelta(anomalyStats.maxPositive, meta.unit),
+      detail: meta.positiveText,
+      tone: "positive",
+    },
+    {
+      label: "Massimo sotto media",
+      value: formatSignedDelta(anomalyStats.minNegative, meta.unit),
+      detail: meta.negativeText,
+      tone: "negative",
+    },
+    {
+      label: "Ultimo scarto",
+      value: formatSignedDelta(anomalyStats.last, meta.unit),
+      detail: Number.isFinite(Number(anomalyStats.lastTimestamp))
+        ? formatSummaryTimestamp(anomalyStats.lastTimestamp, mode)
+        : "ultimo intervallo disponibile",
+      tone: deltaTone(anomalyStats.last),
+    },
+  ];
+
+  return (
+    <section
+      className="climatologySection"
+      aria-label="Confronto con la media storica"
+    >
+      <div className="climatologyHead">
+        <div className="climatologyText">
+          <h3>Scarto rispetto alla media storica</h3>
+          <p>
+            {meta.shortLabel}: periodo selezionato meno media delle stesse date
+            e degli stessi orari negli altri anni disponibili
+          </p>
+        </div>
+
+        <div className="archiveInfo">
+          <span>Archivio utilizzato</span>
+          <strong>
+            {periodCount
+              ? `${periodCount} ${periodCount === 1 ? "periodo" : "periodi"}`
+              : "—"}
+          </strong>
+          <small title={yearsText}>{yearsText}</small>
+        </div>
+      </div>
+
+      <div className="climatologyChart">
+        {loading && <div className="climateMsg">Calcolo media storica…</div>}
+        {!loading && error && <div className="climateMsg">{error}</div>}
+        {!loading && !error && !validAnomalyCount && (
+          <div className="climateMsg">
+            La media storica esiste, ma non ci sono ancora intervalli comuni
+            sufficienti per calcolare lo scarto.
+          </div>
+        )}
+        {!loading && !error && option && (
+          <ReactECharts
+            option={option}
+            style={{ height: isMobile ? 245 : 260, width: "100%" }}
+            notMerge={true}
+            lazyUpdate={true}
+          />
+        )}
+      </div>
+
+      {!loading && !error && validAnomalyCount > 0 && (
+        <div
+          className="climateSummary"
+          style={{
+            "--positive-color": meta.positiveColor,
+            "--negative-color": meta.negativeColor,
+          }}
+        >
+          {summaryItems.map((item) => (
+            <div className="climateCell" key={item.label}>
+              <span className="climateLabel">{item.label}</span>
+              <strong className={item.tone}>{item.value}</strong>
+              <small>{item.detail}</small>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="climateNote">
+        La media non è salvata manualmente: viene ricalcolata dai JSON intraday
+        presenti nell’archivio. I nuovi dati Wunderground entrano quindi
+        automaticamente nel riferimento storico quando diventano disponibili
+        per i periodi omologhi.
+      </div>
+
+      <style jsx>{`
+        .climatologySection {
+          position: relative;
+          z-index: 3;
+          border-top: 1px solid #e8ebef;
+          background: #fff;
+        }
+
+        .climatologyHead {
+          min-height: 82px;
+          padding: 15px 18px 10px;
+          display: grid;
+          grid-template-columns: 1fr auto 1fr;
+          align-items: center;
+          gap: 18px;
+        }
+
+        .climatologyText {
+          grid-column: 2;
+          text-align: center;
+        }
+
+        .climatologyText h3 {
+          margin: 0;
+          font-size: 17px;
+          font-weight: 950;
+          color: #0f172a;
+        }
+
+        .climatologyText p {
+          max-width: 620px;
+          margin: 4px auto 0;
+          font-size: 10px;
+          font-weight: 750;
+          line-height: 1.45;
+          color: rgba(15, 23, 42, 0.55);
+        }
+
+        .archiveInfo {
+          grid-column: 3;
+          justify-self: end;
+          width: 220px;
+          min-width: 0;
+          padding: 9px 11px;
+          display: grid;
+          gap: 2px;
+          border: 1px solid #e4e8ed;
+          border-radius: 13px;
+          background: #fbfcfd;
+          text-align: center;
+        }
+
+        .archiveInfo span {
+          font-size: 8.5px;
+          font-weight: 950;
+          color: rgba(15, 23, 42, 0.54);
+          text-transform: uppercase;
+          letter-spacing: 0.04em;
+        }
+
+        .archiveInfo strong {
+          font-size: 13px;
+          font-weight: 950;
+          color: #0f172a;
+        }
+
+        .archiveInfo small {
+          overflow: hidden;
+          font-size: 8.5px;
+          font-weight: 750;
+          color: rgba(15, 23, 42, 0.48);
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .climatologyChart {
+          min-height: 260px;
+          padding: 0 8px 2px;
+        }
+
+        .climateMsg {
+          min-height: 240px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 18px;
+          color: rgba(15, 23, 42, 0.62);
+          font-size: 11px;
+          font-weight: 800;
+          text-align: center;
+        }
+
+        .climateSummary {
+          margin: 0 18px 12px;
+          display: grid;
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+          border: 1px solid #e3e7ec;
+          border-radius: 14px;
+          overflow: hidden;
+          background: #fff;
+        }
+
+        .climateCell {
+          min-width: 0;
+          min-height: 64px;
+          padding: 9px 11px;
+          display: grid;
+          align-content: center;
+          gap: 2px;
+          border-right: 1px solid #edf0f3;
+          background: #fbfcfd;
+        }
+
+        .climateCell:last-child {
+          border-right: 0;
+        }
+
+        .climateLabel {
+          overflow: hidden;
+          font-size: 8.5px;
+          font-weight: 900;
+          color: rgba(15, 23, 42, 0.53);
+          text-transform: uppercase;
+          letter-spacing: 0.035em;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .climateCell strong {
+          overflow: hidden;
+          font-size: 15px;
+          font-weight: 950;
+          color: #0f172a;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .climateCell strong.positive {
+          color: var(--positive-color);
+        }
+
+        .climateCell strong.negative {
+          color: var(--negative-color);
+        }
+
+        .climateCell small {
+          overflow: hidden;
+          font-size: 8.5px;
+          font-weight: 750;
+          color: rgba(15, 23, 42, 0.47);
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .climateNote {
+          margin: 0 18px 16px;
+          padding: 10px 12px;
+          border: 1px solid #e8ebef;
+          border-radius: 12px;
+          background: #f8fafc;
+          color: rgba(15, 23, 42, 0.58);
+          font-size: 9.5px;
+          font-weight: 750;
+          line-height: 1.45;
+          text-align: center;
+        }
+
+        @media (max-width: 720px) {
+          .climatologyHead {
+            min-height: 0;
+            padding: 14px 10px 10px;
+            grid-template-columns: 1fr;
+            gap: 10px;
+          }
+
+          .climatologyText,
+          .archiveInfo {
+            grid-column: 1;
+          }
+
+          .climatologyText h3 {
+            font-size: 16px;
+          }
+
+          .archiveInfo {
+            justify-self: stretch;
+            width: auto;
+          }
+
+          .climatologyChart {
+            min-height: 245px;
+            padding-left: 0;
+            padding-right: 0;
+          }
+
+          .climateMsg {
+            min-height: 215px;
+          }
+
+          .climateSummary {
+            margin: 0 10px 12px;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+          }
+
+          .climateCell {
+            min-height: 60px;
+            padding: 8px 9px;
+            border-bottom: 1px solid #edf0f3;
+          }
+
+          .climateCell:nth-child(2n) {
+            border-right: 0;
+          }
+
+          .climateCell:nth-last-child(-n + 2) {
+            border-bottom: 0;
+          }
+
+          .climateCell strong {
+            font-size: 14px;
+          }
+
+          .climateNote {
+            margin: 0 10px 14px;
+            font-size: 9px;
+          }
+        }
+      `}</style>
+    </section>
+  );
+}
+
 function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
   const GROUPS = useMemo(
     () => [
@@ -2940,10 +3700,13 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
   const [refreshTick, setRefreshTick] = useState(0);
   const [loading, setLoading] = useState(false);
   const [comparisonLoading, setComparisonLoading] = useState(false);
+  const [climatologyLoading, setClimatologyLoading] = useState(false);
   const [err, setErr] = useState("");
   const [comparisonError, setComparisonError] = useState("");
+  const [climatologyError, setClimatologyError] = useState("");
   const [data, setData] = useState(null);
   const [comparisonData, setComparisonData] = useState(null);
+  const [climatologyData, setClimatologyData] = useState(null);
   const [viewportWidth, setViewportWidth] = useState(1280);
 
   useEffect(() => {
@@ -2968,12 +3731,27 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
   }, [availableDates]);
 
   useEffect(() => {
-    const timer = window.setInterval(
-      () => setRefreshTick((value) => value + 1),
-      5 * 60 * 1000,
-    );
+    const requestFreshData = () => {
+      setRefreshTick((value) => value + 1);
+    };
 
-    return () => window.clearInterval(timer);
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") requestFreshData();
+    };
+
+    const timer = window.setInterval(requestFreshData, 60 * 1000);
+
+    window.addEventListener("focus", requestFreshData);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", requestFreshData);
+      document.removeEventListener(
+        "visibilitychange",
+        handleVisibilityChange,
+      );
+    };
   }, []);
 
   const comparisonOptions = useMemo(
@@ -3065,6 +3843,7 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
           mode,
           availableDates,
           dailyRainByDate,
+          refreshToken: `current-${refreshTick}-${Date.now()}`,
         });
 
         if (alive) setData(result);
@@ -3117,6 +3896,8 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
           mode,
           availableDates,
           dailyRainByDate,
+          refreshToken: `comparison-${refreshTick}-${Date.now()}`,
+          forceRefreshEndDate: true,
         });
 
         if (alive) setComparisonData(result);
@@ -3142,6 +3923,57 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
     dailyRainByDate,
     mode,
     refreshTick,
+  ]);
+
+
+  useEffect(() => {
+    let alive = true;
+
+    async function runClimatology() {
+      setClimatologyError("");
+      setClimatologyData(null);
+
+      if (!selectedDate || !bounds.startISO || !bounds.endISO) {
+        setClimatologyLoading(false);
+        return;
+      }
+
+      setClimatologyLoading(true);
+
+      try {
+        const result = await loadHistoricalAverage({
+          selectedDate,
+          currentBounds: bounds,
+          mode,
+          availableDates,
+          dailyRainByDate,
+        });
+
+        if (alive) setClimatologyData(result);
+      } catch (error) {
+        if (alive) {
+          setClimatologyError(
+            error?.message ||
+              "Non è stato possibile calcolare la media storica.",
+          );
+        }
+      } finally {
+        if (alive) setClimatologyLoading(false);
+      }
+    }
+
+    runClimatology();
+
+    return () => {
+      alive = false;
+    };
+  }, [
+    availableDates,
+    bounds.endISO,
+    bounds.startISO,
+    dailyRainByDate,
+    mode,
+    selectedDate,
   ]);
 
   const option = useMemo(() => {
@@ -3707,6 +4539,17 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
         onCompareChange={setCompareKey}
         loading={loading || comparisonLoading}
         error={comparisonError}
+        isMobile={isMobileChart}
+      />
+
+      <ClimatologyChart
+        mode={mode}
+        groupKey={groupKey}
+        currentData={data}
+        climatologyData={climatologyData}
+        currentBounds={bounds}
+        loading={loading || climatologyLoading}
+        error={climatologyError}
         isMobile={isMobileChart}
       />
 
