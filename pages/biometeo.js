@@ -9,6 +9,34 @@ const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
 const TIMEZONE = "Europe/Rome";
 const HISTORICAL_CACHE = new Map();
 
+const BIOMETE0_SOURCES = {
+  humidex: {
+    label: "Environment Canada",
+    shortLabel: "Environment Canada",
+    url: "https://www.canada.ca/en/services/environment/weather/severeweather/humidex.html",
+  },
+  heatIndex: {
+    label: "NOAA / National Weather Service",
+    shortLabel: "NOAA / NWS",
+    url: "https://www.weather.gov/ama/heatindex",
+  },
+  windChill: {
+    label: "Environment Canada",
+    shortLabel: "Environment Canada",
+    url: "https://www.canada.ca/en/services/environment/weather/severeweather/wind-chill-index.html",
+  },
+  wbgt: {
+    label: "OSHA",
+    shortLabel: "OSHA",
+    url: "https://www.osha.gov/heat-exposure",
+  },
+  uv: {
+    label: "Organizzazione Mondiale della Sanità",
+    shortLabel: "OMS",
+    url: "https://www.who.int/news-room/fact-sheets/detail/ultraviolet-radiation",
+  },
+};
+
 function readIntradayDates() {
   const dirPath = path.join(process.cwd(), "public", "data", "intraday");
   if (!fs.existsSync(dirPath)) return [];
@@ -117,9 +145,66 @@ function formatObservationTime(value) {
   return `${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
 }
 
-function formatChartTime(timestamp) {
+function dateToISO(date) {
+  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
+}
+
+function addDaysISO(iso, amount) {
+  const date = dateFromISO(iso);
+  if (!date) return iso;
+  date.setDate(date.getDate() + amount);
+  return dateToISO(date);
+}
+
+function dateRangeISO(startISO, endISO) {
+  const start = dateFromISO(startISO);
+  const end = dateFromISO(endISO);
+  if (!start || !end || start > end) return [];
+
+  const dates = [];
+  const cursor = new Date(start);
+  while (cursor <= end) {
+    dates.push(dateToISO(cursor));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return dates;
+}
+
+function periodStartISO(endISO, period) {
+  if (period === "week") return addDaysISO(endISO, -6);
+  if (period === "month") return addDaysISO(endISO, -29);
+  return endISO;
+}
+
+function periodLabel(period) {
+  if (period === "week") return "ultimi 7 giorni";
+  if (period === "month") return "ultimi 30 giorni";
+  return "oggi";
+}
+
+function chartTimeBounds(endISO, period) {
+  const start = dateFromISO(periodStartISO(endISO, period));
+  const end = dateFromISO(addDaysISO(endISO, 1));
+  if (!start || !end) return { min: null, max: null };
+
+  start.setHours(0, 0, 0, 0);
+  end.setHours(0, 0, 0, 0);
+  return { min: start.getTime(), max: end.getTime() };
+}
+
+function formatChartTime(timestamp, period = "day") {
   const date = new Date(timestamp);
-  return `${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
+  const time = `${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
+
+  if (period === "week") {
+    return `${pad2(date.getDate())}/${pad2(date.getMonth() + 1)} ${time}`;
+  }
+
+  if (period === "month") {
+    return `${pad2(date.getDate())}/${pad2(date.getMonth() + 1)}`;
+  }
+
+  return time;
 }
 
 function averageFinite(values) {
@@ -236,34 +321,34 @@ function humidexMeta(value) {
   if (!Number.isFinite(v)) {
     return {
       label: "Non attivo",
-      description: "Visualizzato da 20 °C quando aumenta la sensazione di caldo.",
+      description: "Compare quando caldo e umidità iniziano a farsi sentire.",
       tone: "neutral",
     };
   }
   if (v < 30) {
     return {
       label: "Disagio lieve",
-      description: "Condizioni generalmente tollerabili.",
+      description: "Il caldo umido è percepibile, ma in genere crea poco disagio.",
       tone: "good",
     };
   }
   if (v < 40) {
     return {
       label: "Disagio moderato",
-      description: "Possibile affaticamento durante attività prolungate.",
+      description: "Il caldo può affaticare. Durante attività prolungate fai pause e bevi regolarmente.",
       tone: "watch",
     };
   }
   if (v <= 45) {
     return {
       label: "Forte disagio",
-      description: "Ridurre gli sforzi non necessari.",
+      description: "Evita gli sforzi non necessari e cerca un ambiente più fresco.",
       tone: "high",
     };
   }
   return {
     label: "Condizioni pericolose",
-    description: "Rischio elevato di disturbi da calore.",
+    description: "Il rischio di disturbi da calore aumenta molto. Riduci al minimo gli sforzi e resta al fresco.",
     tone: "danger",
   };
 }
@@ -273,34 +358,41 @@ function heatIndexMeta(value) {
   if (!Number.isFinite(v)) {
     return {
       label: "Non attivo",
-      description: "Il Heat Index non è applicabile nelle condizioni attuali.",
+      description: "Compare solo quando la combinazione di caldo e umidità è significativa.",
       tone: "neutral",
+    };
+  }
+  if (v < 27) {
+    return {
+      label: "Disagio contenuto",
+      description: "Il caldo non crea in genere particolari difficoltà.",
+      tone: "good",
     };
   }
   if (v < 32.2) {
     return {
-      label: "Cautela",
-      description: "Affaticamento possibile con esposizione prolungata.",
+      label: "Attenzione",
+      description: "Con esposizione prolungata o attività fisica può comparire stanchezza. Fai pause e bevi regolarmente.",
       tone: "watch",
     };
   }
   if (v < 39.4) {
     return {
-      label: "Cautela elevata",
-      description: "Possibili crampi o esaurimento da calore.",
+      label: "Attenzione elevata",
+      description: "Il caldo può affaticare molto, soprattutto durante attività fisiche o esposizioni prolungate. Riduci gli sforzi, cerca l’ombra e bevi regolarmente.",
       tone: "high",
     };
   }
   if (v < 51.7) {
     return {
       label: "Pericolo",
-      description: "Esaurimento da calore probabile con esposizione prolungata.",
+      description: "Il rischio di malessere aumenta. Evita gli sforzi nelle ore più calde e cerca un luogo fresco.",
       tone: "danger",
     };
   }
   return {
     label: "Pericolo estremo",
-    description: "Colpo di calore altamente probabile.",
+    description: "Condizioni molto pericolose. Evita l’attività fisica e resta in un ambiente fresco.",
     tone: "danger",
   };
 }
@@ -310,42 +402,50 @@ function windChillMeta(value) {
   if (!Number.isFinite(v)) {
     return {
       label: "Non attivo",
-      description: "Calcolato con temperatura non superiore a 0 °C e vento presente.",
+      description: "Compare soltanto con temperatura non superiore a 0 °C e vento presente.",
       tone: "neutral",
     };
   }
   if (v > -10) {
     return {
-      label: "Freddo percepito",
-      description: "Raffreddamento moderato della pelle esposta.",
+      label: "Rischio basso",
+      description: "Il vento aumenta leggermente la sensazione di freddo.",
       tone: "cool",
     };
   }
   if (v > -28) {
     return {
-      label: "Molto freddo",
-      description: "Aumenta il rischio con esposizione prolungata.",
+      label: "Rischio moderato",
+      description: "Se resti fuori a lungo, copri bene la pelle e proteggiti dal vento.",
+      tone: "watch",
+    };
+  }
+  if (v > -40) {
+    return {
+      label: "Rischio alto",
+      description: "La pelle scoperta può congelare in 10–30 minuti. Copriti completamente.",
       tone: "high",
     };
   }
+  if (v > -48) {
+    return {
+      label: "Rischio molto alto",
+      description: "La pelle scoperta può congelare in 5–10 minuti. Limita fortemente il tempo all’aperto.",
+      tone: "danger",
+    };
+  }
+  if (v > -55) {
+    return {
+      label: "Rischio grave",
+      description: "La pelle scoperta può congelare in pochi minuti. Evita di restare all’aperto.",
+      tone: "danger",
+    };
+  }
   return {
-    label: "Freddo pericoloso",
-    description: "Proteggere rapidamente la pelle esposta.",
+    label: "Rischio estremo",
+    description: "Condizioni esterne pericolose: la pelle scoperta può congelare in meno di 2 minuti.",
     tone: "danger",
   };
-}
-
-function dewpointMeta(value) {
-  const v = n(value);
-  if (!Number.isFinite(v)) {
-    return { label: "Dato non disponibile", tone: "neutral" };
-  }
-  if (v < 10) return { label: "Aria secca", tone: "cool" };
-  if (v < 16) return { label: "Gradevole", tone: "good" };
-  if (v < 19) return { label: "Moderatamente umida", tone: "watch" };
-  if (v < 22) return { label: "Umida", tone: "high" };
-  if (v < 25) return { label: "Afosa", tone: "high" };
-  return { label: "Molto afosa", tone: "danger" };
 }
 
 function uvMeta(value) {
@@ -365,34 +465,34 @@ function wbgtMeta(value) {
   if (!Number.isFinite(v)) {
     return {
       label: "Non attivo",
-      description: "La stima viene mostrata nelle condizioni calde.",
+      description: "Compare quando il caldo può rendere più faticosa l’attività fisica.",
       tone: "neutral",
     };
   }
   if (v < 26) {
     return {
       label: "Stress contenuto",
-      description: "Valore ambientale generalmente moderato.",
+      description: "Per attività leggere il caldo è in genere gestibile, con normali pause e idratazione.",
       tone: "good",
     };
   }
   if (v < 29) {
     return {
-      label: "Attenzione",
-      description: "Ridurre durata e intensità degli sforzi prolungati.",
+      label: "Attenzione indicativa",
+      description: "Durante attività prolungate rallenta, fai pause e bevi regolarmente.",
       tone: "watch",
     };
   }
   if (v < 31) {
     return {
-      label: "Stress elevato",
-      description: "Sono necessarie pause frequenti e idratazione.",
+      label: "Stress elevato indicativo",
+      description: "Riduci l’intensità degli sforzi e aumenta pause e idratazione.",
       tone: "high",
     };
   }
   return {
-    label: "Stress molto elevato",
-    description: "Evitare attività fisica intensa nelle ore più calde.",
+    label: "Stress molto elevato indicativo",
+    description: "Evita attività intensa nelle ore più calde e cerca un ambiente fresco.",
     tone: "danger",
   };
 }
@@ -509,7 +609,7 @@ function historicalDatesForCurrent(intradayDates, currentISO) {
   });
 }
 
-function MetricCard({ title, value, unit, meta, footnote }) {
+function MetricCard({ title, value, unit, meta, footnote, source }) {
   return (
     <article className={`metricCard ${meta?.tone || "neutral"}`}>
       <span className="metricTitle">{title}</span>
@@ -519,11 +619,22 @@ function MetricCard({ title, value, unit, meta, footnote }) {
       </div>
       <div className="metricStatus">{meta?.label || "—"}</div>
       <p>{meta?.description || footnote || ""}</p>
+      {source?.url ? (
+        <a
+          className="metricSource"
+          href={source.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label={`Apri la fonte scientifica per ${title}`}
+        >
+          {source.shortLabel || source.label} ↗
+        </a>
+      ) : null}
 
       <style jsx>{`
         .metricCard {
           min-width: 0;
-          min-height: 168px;
+          min-height: 142px;
           padding: 15px;
           border: 1px solid #e5e7eb;
           border-radius: 18px;
@@ -613,6 +724,26 @@ function MetricCard({ title, value, unit, meta, footnote }) {
           font-weight: 700;
           color: rgba(15, 23, 42, 0.54);
         }
+
+        .metricSource {
+          justify-self: start;
+          width: fit-content;
+          margin-top: 1px;
+          font-size: 8px;
+          line-height: 1.2;
+          font-weight: 800;
+          color: rgba(15, 23, 42, 0.42);
+          text-decoration: none;
+          border-bottom: 1px dotted rgba(15, 23, 42, 0.24);
+          transition: color 140ms ease, border-color 140ms ease;
+        }
+
+        .metricSource:hover,
+        .metricSource:focus-visible {
+          color: rgba(15, 23, 42, 0.72);
+          border-bottom-color: currentColor;
+          outline: none;
+        }
       `}</style>
     </article>
   );
@@ -669,96 +800,294 @@ function SummaryCell({ label, value, detail }) {
   );
 }
 
-function IndexSelector({ value, onChange }) {
-  const options = [
+function ChartControls({
+  selectedIndex,
+  onIndexChange,
+  selectedPeriod,
+  onPeriodChange,
+  loading = false,
+}) {
+  const indexOptions = [
     { key: "humidex", label: "Humidex" },
     { key: "heatIndex", label: "Heat Index" },
     { key: "wbgtShade", label: "WBGT ombra stimato" },
-    { key: "dewpoint", label: "Punto di rugiada" },
+    { key: "windChill", label: "Wind Chill" },
     { key: "uvValue", label: "Indice UV" },
   ];
 
+  const periodOptions = [
+    { key: "day", label: "Oggi" },
+    { key: "week", label: "Ultimi 7 giorni" },
+    { key: "month", label: "Ultimi 30 giorni" },
+  ];
+
   return (
-    <div className="selector" role="group" aria-label="Indice visualizzato">
-      {options.map((option) => (
-        <button
-          key={option.key}
-          type="button"
-          className={value === option.key ? "active" : ""}
-          onClick={() => onChange(option.key)}
+    <div className="chartControls">
+      <label>
+        <span>Valore mostrato</span>
+        <select
+          value={selectedIndex}
+          onChange={(event) => onIndexChange(event.target.value)}
+          disabled={loading}
         >
-          {option.label}
-        </button>
-      ))}
+          {indexOptions.map((option) => (
+            <option key={option.key} value={option.key}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      <label>
+        <span>Periodo</span>
+        <select
+          value={selectedPeriod}
+          onChange={(event) => onPeriodChange(event.target.value)}
+          disabled={loading}
+        >
+          {periodOptions.map((option) => (
+            <option key={option.key} value={option.key}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      </label>
 
       <style jsx>{`
-        .selector {
+        .chartControls {
           display: flex;
           justify-content: center;
-          gap: 7px;
+          align-items: end;
+          gap: 12px;
           flex-wrap: wrap;
         }
 
-        button {
-          min-height: 36px;
-          border: 1px solid #dfe4ea;
-          border-radius: 999px;
-          padding: 8px 13px;
-          background: #fff;
-          color: rgba(15, 23, 42, 0.68);
-          font-family: inherit;
-          font-size: 10px;
-          font-weight: 900;
-          cursor: pointer;
+        label {
+          min-width: 210px;
+          display: grid;
+          gap: 6px;
         }
 
-        button:hover,
-        button.active {
-          border-color: #94a3b8;
-          background: #0f172a;
-          color: #fff;
+        span {
+          font-size: 9px;
+          font-weight: 950;
+          color: rgba(15, 23, 42, 0.56);
+          text-transform: uppercase;
+          letter-spacing: 0.045em;
+          text-align: center;
+        }
+
+        select {
+          min-height: 42px;
+          width: 100%;
+          border: 1px solid #dce2e8;
+          border-radius: 13px;
+          padding: 9px 38px 9px 13px;
+          background: #fff;
+          color: #0f172a;
+          font-family: inherit;
+          font-size: 12px;
+          font-weight: 900;
+          cursor: pointer;
+          box-shadow: 0 4px 12px rgba(15, 23, 42, 0.035);
+        }
+
+        select:focus {
+          outline: 2px solid rgba(15, 23, 42, 0.14);
+          outline-offset: 2px;
+        }
+
+        select:disabled {
+          cursor: wait;
+          opacity: 0.65;
+        }
+
+        @media (max-width: 560px) {
+          .chartControls {
+            display: grid;
+            grid-template-columns: 1fr;
+          }
+
+          label {
+            min-width: 0;
+            width: 100%;
+          }
         }
       `}</style>
     </div>
   );
 }
 
-function BiometeoChart({ rows, selectedIndex }) {
-  const config = {
-    humidex: { title: "Andamento Humidex", unit: "", name: "Humidex" },
+function biometeoChartConfig(selectedIndex) {
+  return {
+    humidex: {
+      title: "Andamento Humidex",
+      unit: "",
+      name: "Humidex",
+      axisMin: 20,
+      axisMax: 50,
+      bands: [
+        { from: 20, to: 30, label: "Disagio basso", color: "rgba(34, 197, 94, 0.11)" },
+        { from: 30, to: 40, label: "Disagio moderato", color: "rgba(234, 179, 8, 0.12)" },
+        { from: 40, to: 45, label: "Forte disagio", color: "rgba(249, 115, 22, 0.13)" },
+        { from: 45, to: 55, label: "Pericolo", color: "rgba(220, 38, 38, 0.14)" },
+      ],
+    },
     heatIndex: {
       title: "Andamento Heat Index",
       unit: "°C",
       name: "Heat Index",
+      axisMin: 25,
+      axisMax: 55,
+      bands: [
+        { from: 25, to: 27, label: "Stress contenuto", color: "rgba(34, 197, 94, 0.11)" },
+        { from: 27, to: 32.2, label: "Attenzione", color: "rgba(234, 179, 8, 0.12)" },
+        { from: 32.2, to: 39.4, label: "Attenzione elevata", color: "rgba(249, 115, 22, 0.13)" },
+        { from: 39.4, to: 51.7, label: "Pericolo", color: "rgba(220, 38, 38, 0.14)" },
+        { from: 51.7, to: 60, label: "Pericolo estremo", color: "rgba(127, 29, 29, 0.18)" },
+      ],
     },
     wbgtShade: {
       title: "Andamento WBGT ombra stimato",
       unit: "°C",
       name: "WBGT ombra",
+      axisMin: 20,
+      axisMax: 34,
+      bands: [
+        { from: 20, to: 26, label: "Stress contenuto", color: "rgba(34, 197, 94, 0.11)" },
+        { from: 26, to: 29, label: "Attenzione", color: "rgba(234, 179, 8, 0.12)" },
+        { from: 29, to: 31, label: "Stress elevato", color: "rgba(249, 115, 22, 0.13)" },
+        { from: 31, to: 40, label: "Stress molto elevato", color: "rgba(220, 38, 38, 0.14)" },
+      ],
     },
-    dewpoint: {
-      title: "Andamento del punto di rugiada",
+    windChill: {
+      title: "Andamento Wind Chill",
       unit: "°C",
-      name: "Punto di rugiada",
+      name: "Wind Chill",
+      axisMin: -60,
+      axisMax: 0,
+      bands: [
+        { from: -70, to: -55, label: "Rischio estremo", color: "rgba(127, 29, 29, 0.18)" },
+        { from: -55, to: -40, label: "Rischio molto alto", color: "rgba(220, 38, 38, 0.15)" },
+        { from: -40, to: -28, label: "Rischio alto", color: "rgba(249, 115, 22, 0.14)" },
+        { from: -28, to: -10, label: "Rischio moderato", color: "rgba(234, 179, 8, 0.12)" },
+        { from: -10, to: 0, label: "Rischio basso", color: "rgba(34, 197, 94, 0.11)" },
+      ],
     },
-    uvValue: { title: "Andamento dell’indice UV", unit: "UV", name: "UV" },
+    uvValue: {
+      title: "Andamento dell’indice UV",
+      unit: "UV",
+      name: "UV",
+      axisMin: 0,
+      axisMax: 12,
+      bands: [
+        { from: 0, to: 3, label: "Basso", color: "rgba(34, 197, 94, 0.11)" },
+        { from: 3, to: 6, label: "Moderato", color: "rgba(234, 179, 8, 0.12)" },
+        { from: 6, to: 8, label: "Alto", color: "rgba(249, 115, 22, 0.13)" },
+        { from: 8, to: 11, label: "Molto alto", color: "rgba(239, 68, 68, 0.13)" },
+        { from: 11, to: 16, label: "Estremo", color: "rgba(153, 27, 27, 0.16)" },
+      ],
+    },
   }[selectedIndex];
+}
 
+function BiometeoChart({ rows, selectedIndex, selectedPeriod, loadedDate }) {
+  const config = biometeoChartConfig(selectedIndex);
   const pairs = rows.map((row) => [row.timestamp, row[selectedIndex]]);
   const validValues = pairs
     .map((point) => n(point[1]))
     .filter(Number.isFinite);
+  const bounds = chartTimeBounds(loadedDate, selectedPeriod);
 
   const option = useMemo(() => {
-    const minValue = validValues.length ? Math.min(...validValues) : 0;
-    const maxValue = validValues.length ? Math.max(...validValues) : 1;
-    const padding = Math.max(1, (maxValue - minValue) * 0.12);
+    const observedMin = validValues.length
+      ? Math.min(...validValues)
+      : config.axisMin;
+    const observedMax = validValues.length
+      ? Math.max(...validValues)
+      : config.axisMax;
+    const yMin = Math.floor(Math.min(observedMin, config.axisMin));
+    const yMax = Math.ceil(Math.max(observedMax, config.axisMax));
+
+    const markAreas = config.bands
+      .map((band) => [
+        {
+          name: band.label,
+          yAxis: Math.max(yMin, band.from),
+          itemStyle: { color: band.color },
+          label: {
+            show: true,
+            position: "insideRight",
+            color: "rgba(15, 23, 42, 0.54)",
+            fontSize: 9,
+            fontWeight: 700,
+          },
+        },
+        { yAxis: Math.min(yMax, band.to) },
+      ])
+      .filter((band) => band[0].yAxis < band[1].yAxis);
+
+    const latestPoint = [...pairs]
+      .reverse()
+      .find((point) => Number.isFinite(n(point?.[1])));
+
+    const series = [
+      {
+        name: config.name,
+        type: "line",
+        data: pairs,
+        showSymbol: false,
+        connectNulls: false,
+        smooth: false,
+        sampling: "lttb",
+        lineStyle: { width: 2.6, color: "#0f172a" },
+        itemStyle: { color: "#0f172a" },
+        areaStyle: { opacity: 0.025, color: "#0f172a" },
+        markArea: {
+          silent: true,
+          data: markAreas,
+        },
+        z: 3,
+      },
+    ];
+
+    if (
+      selectedPeriod === "day" &&
+      loadedDate === currentRomeISO() &&
+      latestPoint
+    ) {
+      series.push({
+        name: "Ultimo dato",
+        type: "effectScatter",
+        data: [latestPoint],
+        symbol: "circle",
+        symbolSize: 9,
+        showEffectOn: "render",
+        rippleEffect: {
+          brushType: "stroke",
+          scale: 4,
+          period: 1.8,
+          number: 3,
+        },
+        itemStyle: {
+          color: "#ef4444",
+          borderColor: "#ffffff",
+          borderWidth: 2,
+          shadowBlur: 10,
+          shadowColor: "rgba(239, 68, 68, 0.65)",
+        },
+        tooltip: { show: false },
+        silent: true,
+        zlevel: 10,
+        z: 100,
+      });
+    }
 
     return {
       animation: true,
-      grid: { left: 62, right: 24, top: 54, bottom: 58 },
+      grid: { left: 62, right: 28, top: 54, bottom: 58 },
       title: {
-        text: config.title,
+        text: `${config.title} – ${periodLabel(selectedPeriod)}`,
         left: "center",
         top: 8,
         textStyle: {
@@ -780,9 +1109,12 @@ function BiometeoChart({ rows, selectedIndex }) {
       },
       xAxis: {
         type: "time",
+        min: bounds.min,
+        max: bounds.max,
+        boundaryGap: false,
         axisLabel: {
           hideOverlap: true,
-          formatter: (value) => formatChartTime(value),
+          formatter: (value) => formatChartTime(value, selectedPeriod),
         },
       },
       yAxis: {
@@ -791,12 +1123,15 @@ function BiometeoChart({ rows, selectedIndex }) {
         nameLocation: "middle",
         nameRotate: 90,
         nameGap: 42,
-        min: selectedIndex === "uvValue" ? 0 : Math.floor(minValue - padding),
-        max: Math.ceil(maxValue + padding),
+        min: yMin,
+        max: yMax,
         axisLabel: {
           formatter: (value) => Number(value).toFixed(1),
         },
-        splitLine: { show: true },
+        splitLine: {
+          show: true,
+          lineStyle: { color: "rgba(148, 163, 184, 0.24)" },
+        },
       },
       dataZoom: [
         { type: "inside", filterMode: "none" },
@@ -809,26 +1144,15 @@ function BiometeoChart({ rows, selectedIndex }) {
           showDetail: false,
         },
       ],
-      series: [
-        {
-          name: config.name,
-          type: "line",
-          data: pairs,
-          showSymbol: false,
-          connectNulls: false,
-          smooth: false,
-          sampling: "lttb",
-          lineStyle: { width: 2.4 },
-          areaStyle: { opacity: 0.08 },
-        },
-      ],
+      series,
     };
-  }, [config.name, config.title, config.unit, pairs, selectedIndex, validValues]);
+  }, [bounds.max, bounds.min, config, pairs, selectedPeriod, loadedDate, validValues]);
 
   if (!validValues.length) {
     return (
       <div className="chartMessage">
-        Questo indice non è applicabile nelle condizioni registrate oggi.
+        Questo valore non è disponibile nel periodo selezionato perché le
+        condizioni necessarie non si sono verificate.
         <style jsx>{`
           .chartMessage {
             min-height: 300px;
@@ -847,12 +1171,60 @@ function BiometeoChart({ rows, selectedIndex }) {
   }
 
   return (
-    <ReactECharts
-      option={option}
-      style={{ height: 360, width: "100%" }}
-      notMerge={true}
-      lazyUpdate={true}
-    />
+    <div className="chartContent">
+      <ReactECharts
+        option={option}
+        style={{ height: 360, width: "100%" }}
+        notMerge={true}
+        lazyUpdate={true}
+      />
+
+      <div className="stressLegend" aria-label="Legenda delle fasce di stress">
+        <span className="low">Stress basso</span>
+        <span className="moderate">Attenzione</span>
+        <span className="high">Stress elevato</span>
+        <span className="danger">Condizioni critiche</span>
+      </div>
+
+      <style jsx>{`
+        .chartContent {
+          padding-bottom: 10px;
+        }
+
+        .stressLegend {
+          display: flex;
+          justify-content: center;
+          gap: 8px;
+          flex-wrap: wrap;
+          padding: 0 12px;
+        }
+
+        .stressLegend span {
+          padding: 5px 9px;
+          border-radius: 999px;
+          font-size: 9px;
+          font-weight: 900;
+          color: #334155;
+          border: 1px solid rgba(148, 163, 184, 0.24);
+        }
+
+        .stressLegend .low {
+          background: rgba(34, 197, 94, 0.13);
+        }
+
+        .stressLegend .moderate {
+          background: rgba(234, 179, 8, 0.15);
+        }
+
+        .stressLegend .high {
+          background: rgba(249, 115, 22, 0.15);
+        }
+
+        .stressLegend .danger {
+          background: rgba(220, 38, 38, 0.15);
+        }
+      `}</style>
+    </div>
   );
 }
 
@@ -861,9 +1233,12 @@ export default function Biometeo({ intradayDates = [], latestDate = null }) {
   const [loadedDate, setLoadedDate] = useState(latestDate);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [lastCheck, setLastCheck] = useState(null);
   const [nextRefresh, setNextRefresh] = useState("");
   const [selectedIndex, setSelectedIndex] = useState("humidex");
+  const [selectedPeriod, setSelectedPeriod] = useState("day");
+  const [chartRows, setChartRows] = useState([]);
+  const [chartLoading, setChartLoading] = useState(false);
+  const [chartError, setChartError] = useState("");
   const [historicalReference, setHistoricalReference] = useState(null);
 
   useEffect(() => {
@@ -899,7 +1274,6 @@ export default function Biometeo({ intradayDates = [], latestDate = null }) {
         setRows([]);
         setLoading(false);
         setError(lastError?.message || "Dati intraday non disponibili.");
-        setLastCheck(new Date());
         return;
       }
 
@@ -918,7 +1292,6 @@ export default function Biometeo({ intradayDates = [], latestDate = null }) {
       setRows(parsedRows);
       setLoadedDate(resolvedDate);
       setLoading(false);
-      setLastCheck(new Date());
 
       const latest = parsedRows[parsedRows.length - 1];
       if (!latest) {
@@ -949,7 +1322,6 @@ export default function Biometeo({ intradayDates = [], latestDate = null }) {
         years: validPoints.length,
         humidex: averageFinite(validPoints.map((point) => point.humidex)),
         heatIndex: averageFinite(validPoints.map((point) => point.heatIndex)),
-        dewpoint: averageFinite(validPoints.map((point) => point.dewpoint)),
         uv: averageFinite(validPoints.map((point) => point.uvValue)),
       });
     }
@@ -981,6 +1353,66 @@ export default function Biometeo({ intradayDates = [], latestDate = null }) {
     };
   }, [intradayDates, latestDate]);
 
+  useEffect(() => {
+    let alive = true;
+
+    async function loadChartPeriod() {
+      if (!loadedDate) {
+        setChartRows([]);
+        return;
+      }
+
+      if (selectedPeriod === "day") {
+        setChartRows(rows);
+        setChartLoading(false);
+        setChartError("");
+        return;
+      }
+
+      setChartLoading(true);
+      setChartError("");
+
+      const dates = dateRangeISO(
+        periodStartISO(loadedDate, selectedPeriod),
+        loadedDate,
+      );
+
+      const batches = await Promise.all(
+        dates.map(async (iso) => {
+          if (iso === loadedDate) return rows;
+
+          try {
+            const raw = await fetchIntradayFile(iso);
+            return raw
+              .map(enrichRow)
+              .filter(isUsableObservation)
+              .sort((a, b) => a.timestamp - b.timestamp);
+          } catch {
+            return [];
+          }
+        }),
+      );
+
+      if (!alive) return;
+
+      const merged = batches
+        .flat()
+        .sort((a, b) => a.timestamp - b.timestamp);
+
+      setChartRows(merged);
+      setChartLoading(false);
+      setChartError(
+        merged.length ? "" : "Nessun dato disponibile per il periodo selezionato.",
+      );
+    }
+
+    loadChartPeriod();
+
+    return () => {
+      alive = false;
+    };
+  }, [loadedDate, rows, selectedPeriod]);
+
   const latest = rows.length ? rows[rows.length - 1] : null;
 
   const summary = useMemo(() => {
@@ -1010,33 +1442,28 @@ export default function Biometeo({ intradayDates = [], latestDate = null }) {
           value: fmt(latest.humidex, 1),
           unit: "",
           meta: humidexMeta(latest.humidex),
+          source: BIOMETE0_SOURCES.humidex,
         },
         {
           title: "Heat Index",
           value: fmt(latest.heatIndex, 1),
           unit: latest.heatIndex == null ? "" : "°C",
           meta: heatIndexMeta(latest.heatIndex),
+          source: BIOMETE0_SOURCES.heatIndex,
         },
         {
           title: "Wind Chill",
           value: fmt(latest.windChill, 1),
           unit: latest.windChill == null ? "" : "°C",
           meta: windChillMeta(latest.windChill),
+          source: BIOMETE0_SOURCES.windChill,
         },
         {
           title: "WBGT ombra stimato",
           value: fmt(latest.wbgtShade, 1),
           unit: latest.wbgtShade == null ? "" : "°C",
           meta: wbgtMeta(latest.wbgtShade),
-        },
-        {
-          title: "Punto di rugiada",
-          value: fmt(latest.dewpoint, 1),
-          unit: "°C",
-          meta: {
-            ...dewpointMeta(latest.dewpoint),
-            description: "Indicatore della quantità effettiva di vapore nell’aria.",
-          },
+          source: BIOMETE0_SOURCES.wbgt,
         },
         {
           title: "Indice UV",
@@ -1046,9 +1473,10 @@ export default function Biometeo({ intradayDates = [], latestDate = null }) {
             ...uvMeta(latest.uvValue),
             description:
               latest.uvValue >= 3
-                ? "È raccomandata la protezione solare durante l’esposizione."
-                : "Rischio UV attualmente contenuto.",
+                ? "Proteggi pelle e occhi: cerca l’ombra, usa abiti adatti e occhiali da sole."
+                : "Il livello UV è basso, ma evita comunque esposizioni inutilmente prolungate.",
           },
+          source: BIOMETE0_SOURCES.uv,
         },
       ]
     : [];
@@ -1065,12 +1493,81 @@ export default function Biometeo({ intradayDates = [], latestDate = null }) {
         title: "Biometeo",
         kicker: "INDICATORI BIOMETEOROLOGICI",
         subtitle:
-          "Disagio fisiologico e stress termico calcolati dalle osservazioni della stazione.",
+          "Come caldo, umidità, vento e raggi UV possono influire sul benessere all’aperto.",
         showPeriod: false,
         currentPath: "/biometeo",
       }}
     >
       <main className="pageContent">
+        <section className="methodSection topGuide">
+          <div className="centeredHead">
+            <h2>Cosa indicano questi valori</h2>
+            <p>Una guida semplice per capire subito i dati mostrati nella pagina</p>
+          </div>
+
+          <div className="methodGrid">
+            <article>
+              <h3>Humidex</h3>
+              <p>
+                Dice quanto il caldo sembra più pesante quando l’aria è umida.
+                Più sale, più il corpo fatica a disperdere il calore.
+              </p>
+              <a href={BIOMETE0_SOURCES.humidex.url} target="_blank" rel="noopener noreferrer">
+                Criteri ufficiali ↗
+              </a>
+            </article>
+            <article>
+              <h3>Heat Index</h3>
+              <p>
+                Indica la temperatura che il corpo può percepire all’ombra
+                combinando caldo e umidità. Non considera il sole diretto.
+              </p>
+              <a href={BIOMETE0_SOURCES.heatIndex.url} target="_blank" rel="noopener noreferrer">
+                Criteri ufficiali ↗
+              </a>
+            </article>
+            <article>
+              <h3>Wind Chill</h3>
+              <p>
+                Mostra quanto il vento fa sentire più freddo rispetto alla
+                temperatura reale. Compare soltanto nelle giornate fredde.
+              </p>
+              <a href={BIOMETE0_SOURCES.windChill.url} target="_blank" rel="noopener noreferrer">
+                Criteri ufficiali ↗
+              </a>
+            </article>
+            <article>
+              <h3>WBGT ombra stimato</h3>
+              <p>
+                Stima quanto il caldo può rendere faticosa l’attività fisica.
+                Le fasce sono orientative perché il rischio cambia con intensità,
+                abbigliamento e abitudine al caldo.
+              </p>
+              <a href={BIOMETE0_SOURCES.wbgt.url} target="_blank" rel="noopener noreferrer">
+                Guida OSHA ↗
+              </a>
+            </article>
+            <article>
+              <h3>Indice UV</h3>
+              <p>
+                Indica quanto sono forti i raggi ultravioletti che possono
+                danneggiare pelle e occhi. Da 3 in su è bene proteggersi.
+              </p>
+              <a href={BIOMETE0_SOURCES.uv.url} target="_blank" rel="noopener noreferrer">
+                Indicazioni OMS ↗
+              </a>
+            </article>
+          </div>
+
+          <div className="disclaimer">
+            Le fasce di Humidex, Heat Index, Wind Chill e UV seguono criteri
+            pubblicati dagli enti indicati nei link. Il WBGT è invece una stima
+            semplificata e le sue fasce sono orientative: il rischio reale cambia
+            con attività, acclimatazione, abbigliamento e tempo di esposizione.
+            Questi valori non sostituiscono indicazioni mediche o professionali.
+          </div>
+        </section>
+
         <section className="statusCard">
           <div className="statusHead">
             <div className="statusSpacer" />
@@ -1185,15 +1682,6 @@ export default function Biometeo({ intradayDates = [], latestDate = null }) {
                     : "nessun anno confrontabile"
                 }
               />
-              <SummaryCell
-                label="Ultimo controllo"
-                value={
-                  lastCheck
-                    ? `${pad2(lastCheck.getHours())}:${pad2(lastCheck.getMinutes())}`
-                    : "—"
-                }
-                detail="aggiornamenti programmati alle :20 e :50"
-              />
             </div>
           </section>
         )}
@@ -1202,63 +1690,39 @@ export default function Biometeo({ intradayDates = [], latestDate = null }) {
           <section className="chartSection">
             <div className="centeredHead">
               <h2>Andamento biometeorologico</h2>
-              <p>Dati osservati ogni 15 minuti nel corso della giornata</p>
+              <p>
+                Scegli il valore e il periodo: lo sfondo passa dal verde al
+                rosso quando le condizioni diventano più impegnative
+              </p>
             </div>
 
-            <IndexSelector value={selectedIndex} onChange={setSelectedIndex} />
+            <ChartControls
+              selectedIndex={selectedIndex}
+              onIndexChange={setSelectedIndex}
+              selectedPeriod={selectedPeriod}
+              onPeriodChange={setSelectedPeriod}
+              loading={chartLoading}
+            />
 
             <div className="chartWrap">
-              <BiometeoChart rows={rows} selectedIndex={selectedIndex} />
+              {chartLoading ? (
+                <div className="chartLoading">
+                  Caricamento dei dati del periodo selezionato…
+                </div>
+              ) : chartError ? (
+                <div className="chartLoading error">{chartError}</div>
+              ) : (
+                <BiometeoChart
+                  rows={chartRows}
+                  selectedIndex={selectedIndex}
+                  selectedPeriod={selectedPeriod}
+                  loadedDate={loadedDate}
+                />
+              )}
             </div>
           </section>
         )}
 
-        <section className="methodSection">
-          <div className="centeredHead">
-            <h2>Come leggere gli indicatori</h2>
-            <p>Gli indici descrivono aspetti diversi del disagio fisiologico</p>
-          </div>
-
-          <div className="methodGrid">
-            <article>
-              <h3>Humidex</h3>
-              <p>
-                Combina temperatura e punto di rugiada. È mostrato quando la
-                temperatura raggiunge almeno 20 °C e l’umidità aumenta
-                effettivamente la sensazione di caldo.
-              </p>
-            </article>
-            <article>
-              <h3>Heat Index</h3>
-              <p>
-                Temperatura apparente in ombra e con vento debole. Non
-                rappresenta il carico aggiuntivo della radiazione solare diretta.
-              </p>
-            </article>
-            <article>
-              <h3>Wind Chill</h3>
-              <p>
-                Raffreddamento percepito sulla pelle esposta. È calcolato solo
-                con temperatura non superiore a 0 °C e vento presente.
-              </p>
-            </article>
-            <article>
-              <h3>WBGT ombra stimato</h3>
-              <p>
-                Stima semplificata basata su temperatura e umidità. Non
-                sostituisce una misura effettuata con termometro a globo in
-                ambito lavorativo, sportivo o sanitario.
-              </p>
-            </article>
-          </div>
-
-          <div className="disclaimer">
-            Questi indicatori descrivono l’ambiente esterno e non tengono conto
-            di età, stato di salute, abbigliamento, acclimatazione, attività
-            fisica o esposizione individuale. Non costituiscono una valutazione
-            medica né una certificazione del rischio professionale.
-          </div>
-        </section>
       </main>
 
       <style jsx>{`
@@ -1399,7 +1863,7 @@ export default function Biometeo({ intradayDates = [], latestDate = null }) {
         .metricGrid {
           padding: 16px 18px 18px;
           display: grid;
-          grid-template-columns: repeat(3, minmax(0, 1fr));
+          grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
           gap: 12px;
         }
 
@@ -1417,23 +1881,11 @@ export default function Biometeo({ intradayDates = [], latestDate = null }) {
         .summaryGrid {
           display: grid;
           grid-template-columns: repeat(4, minmax(0, 1fr));
+          gap: 1px;
           border: 1px solid #e8ebef;
           border-radius: 16px;
           overflow: hidden;
-          background: #fff;
-        }
-
-        .summaryGrid :global(.summaryCell) {
-          border-right: 1px solid #eef0f3;
-          border-bottom: 1px solid #eef0f3;
-        }
-
-        .summaryGrid :global(.summaryCell:nth-child(4n)) {
-          border-right: 0;
-        }
-
-        .summaryGrid :global(.summaryCell:nth-last-child(-n + 4)) {
-          border-bottom: 0;
+          background: #eef0f3;
         }
 
         .chartWrap {
@@ -1444,9 +1896,29 @@ export default function Biometeo({ intradayDates = [], latestDate = null }) {
           overflow: hidden;
         }
 
+        .chartLoading {
+          min-height: 330px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 20px;
+          text-align: center;
+          font-size: 12px;
+          font-weight: 850;
+          color: rgba(15, 23, 42, 0.62);
+        }
+
+        .chartLoading.error {
+          color: #b91c1c;
+        }
+
+        .topGuide {
+          order: -1;
+        }
+
         .methodGrid {
           display: grid;
-          grid-template-columns: repeat(4, minmax(0, 1fr));
+          grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
           gap: 10px;
         }
 
@@ -1473,6 +1945,24 @@ export default function Biometeo({ intradayDates = [], latestDate = null }) {
           color: rgba(15, 23, 42, 0.58);
         }
 
+        .methodGrid a {
+          display: inline-block;
+          margin-top: 8px;
+          font-size: 9px;
+          line-height: 1.3;
+          font-weight: 900;
+          color: rgba(15, 23, 42, 0.58);
+          text-decoration: underline;
+          text-decoration-color: rgba(15, 23, 42, 0.22);
+          text-underline-offset: 3px;
+        }
+
+        .methodGrid a:hover,
+        .methodGrid a:focus-visible {
+          color: #0f172a;
+          text-decoration-color: currentColor;
+        }
+
         .disclaimer {
           margin-top: 12px;
           padding: 12px 14px;
@@ -1493,22 +1983,6 @@ export default function Biometeo({ intradayDates = [], latestDate = null }) {
 
           .summaryGrid {
             grid-template-columns: repeat(2, minmax(0, 1fr));
-          }
-
-          .summaryGrid :global(.summaryCell:nth-child(4n)) {
-            border-right: 1px solid #eef0f3;
-          }
-
-          .summaryGrid :global(.summaryCell:nth-child(2n)) {
-            border-right: 0;
-          }
-
-          .summaryGrid :global(.summaryCell:nth-last-child(-n + 4)) {
-            border-bottom: 1px solid #eef0f3;
-          }
-
-          .summaryGrid :global(.summaryCell:nth-last-child(-n + 2)) {
-            border-bottom: 0;
           }
 
           .methodGrid {
