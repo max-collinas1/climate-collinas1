@@ -20,6 +20,7 @@ export default function SiteHeader({
     { href: "/", label: "Home" },
     { href: "/records", label: "Record" },
     { href: "/radar", label: "Condizioni attuali" },
+    { href: "/biometeo", label: "Biometeo" },
     { href: "/grafici-previsione", label: "Grafici di previsione" },
     { href: "/confronto-climatico", label: "Confronto climatico" },
   ];
