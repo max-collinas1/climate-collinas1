@@ -74,7 +74,20 @@ function fmtDateIT(yyyyMMdd) {
 
 function fmtGeneratedAt(iso) {
   if (!iso || typeof iso !== "string") return "—";
-  return iso.slice(0, 19).replace("T", " ");
+
+  const date = new Date(iso);
+
+  if (Number.isNaN(date.getTime())) return "—";
+
+  return new Intl.DateTimeFormat("it-IT", {
+    timeZone: "Europe/Rome",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).format(date);
 }
 
 const MONTHS_IT_SHORT = ["Gen", "Feb", "Mar", "Apr", "Mag", "Giu", "Lug", "Ago", "Set", "Ott", "Nov", "Dic"];
