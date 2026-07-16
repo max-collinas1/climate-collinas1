@@ -3,8 +3,11 @@ import path from "node:path";
 
 const ROOT = process.cwd();
 
-const API_URL =
+const HISTORY_API_URL =
   "https://api.weather.com/v2/pws/observations/all/1day";
+
+const CURRENT_API_URL =
+  "https://api.weather.com/v2/pws/observations/current";
 
 const AUTO_DIR = path.join(
   ROOT,
@@ -426,7 +429,11 @@ function selectQuarterHourRows(
         /*
          * Viene preferita:
          * 1. l'osservazione più vicina;
-         * 2. a parità di distanza, quella successiva allo slot.
+         * 2. a parità di distanza, quella successiva allo slot;
+         * 3. a ulteriore parità, quella con epoch più recente.
+         *
+         * In questo modo l'osservazione current può aggiornare
+         * quella della cronologia rapida quando hanno lo stesso orario.
          */
         if (
           distance < bestDistance ||
@@ -434,6 +441,16 @@ function selectQuarterHourRows(
             distance === bestDistance &&
             candidateIsAfter &&
             !currentBestIsAfter
+          ) ||
+          (
+            distance === bestDistance &&
+            candidateIsAfter ===
+              currentBestIsAfter &&
+            bestIndex >= 0 &&
+            candidate.epoch >
+              dayObservations[
+                bestIndex
+              ].epoch
           )
         ) {
           bestDistance = distance;
@@ -887,20 +904,8 @@ async function fetchWithRetry(
   );
 }
 
-async function main() {
-  if (!API_KEY) {
-    throw new Error(
-      "Variabile WU_API_KEY assente. Inserisci la chiave nei GitHub Actions Secrets."
-    );
-  }
-
-  if (!STATION_ID) {
-    throw new Error(
-      "Variabile WU_STATION_ID assente."
-    );
-  }
-
-  const url = new URL(API_URL);
+function buildWuUrl(baseUrl) {
+  const url = new URL(baseUrl);
 
   url.searchParams.set(
     "stationId",
@@ -927,6 +932,28 @@ async function main() {
     API_KEY
   );
 
+  return url;
+}
+
+async function main() {
+  if (!API_KEY) {
+    throw new Error(
+      "Variabile WU_API_KEY assente. Inserisci la chiave nei GitHub Actions Secrets."
+    );
+  }
+
+  if (!STATION_ID) {
+    throw new Error(
+      "Variabile WU_STATION_ID assente."
+    );
+  }
+
+  const historyUrl =
+    buildWuUrl(HISTORY_API_URL);
+
+  const currentUrl =
+    buildWuUrl(CURRENT_API_URL);
+
   console.log(
     `[WU] Stazione: ${STATION_ID}`
   );
@@ -935,18 +962,73 @@ async function main() {
     `[WU] Data iniziale archivio automatico: ${START_DATE}`
   );
 
-  const payload =
-    await fetchWithRetry(url);
+  /*
+   * La cronologia rapida rimane la fonte principale.
+   *
+   * Permette di recuperare i campioni recenti, la parte finale
+   * del giorno precedente e gli eventuali quarti d'ora mancanti.
+   */
+  const historyPayload =
+    await fetchWithRetry(historyUrl);
 
-  const observations =
+  const historyObservations =
     Array.isArray(
-      payload?.observations
+      historyPayload?.observations
     )
-      ? payload.observations
+      ? historyPayload.observations
       : [];
 
+  /*
+   * L'endpoint current restituisce esclusivamente l'ultima
+   * osservazione trasmessa dalla stazione.
+   *
+   * Può contenere l'ultimo quarto d'ora prima che questo compaia
+   * nella cronologia rapida.
+   *
+   * Un errore del current non deve interrompere il workflow:
+   * in quel caso si continua usando soltanto la cronologia.
+   */
+  let currentObservations = [];
+
+  try {
+    const currentPayload =
+      await fetchWithRetry(currentUrl);
+
+    currentObservations =
+      Array.isArray(
+        currentPayload?.observations
+      )
+        ? currentPayload.observations
+        : [];
+  } catch (error) {
+    console.warn(
+      `[WU] Avviso: dato corrente non disponibile: ${
+        error?.message || error
+      }`
+    );
+  }
+
+  /*
+   * L'osservazione corrente viene aggiunta alla cronologia.
+   *
+   * La funzione selectQuarterHourRows assegnerà ogni osservazione
+   * allo slot da 15 minuti più vicino, senza generare slot futuri.
+   */
+  const observations = [
+    ...historyObservations,
+    ...currentObservations,
+  ];
+
   console.log(
-    `[WU] Osservazioni ricevute: ${observations.length}`
+    `[WU] Osservazioni cronologia rapida: ${historyObservations.length}`
+  );
+
+  console.log(
+    `[WU] Osservazioni correnti: ${currentObservations.length}`
+  );
+
+  console.log(
+    `[WU] Osservazioni complessive elaborate: ${observations.length}`
   );
 
   /*
