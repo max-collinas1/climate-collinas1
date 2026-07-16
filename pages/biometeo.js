@@ -11,29 +11,29 @@ const HISTORICAL_CACHE = new Map();
 
 const BIOMETE0_SOURCES = {
   humidex: {
-    label: "Environment Canada",
-    shortLabel: "Environment Canada",
-    url: "https://www.canada.ca/en/services/environment/weather/severeweather/humidex.html",
+    label: "ARPAV – Humidex",
+    shortLabel: "ARPAV",
+    url: "https://www.arpa.veneto.it/dati-ambientali/bollettini/meteo/indice-disagio-fisico/humidex",
   },
   heatIndex: {
-    label: "NOAA / National Weather Service",
-    shortLabel: "NOAA / NWS",
-    url: "https://www.weather.gov/ama/heatindex",
+    label: "ARPAS Sardegna – Indice di calore",
+    shortLabel: "ARPAS",
+    url: "https://www.sar.sardegna.it/documentazione/bio/indicecalore.asp",
   },
   windChill: {
-    label: "Environment Canada",
-    shortLabel: "Environment Canada",
-    url: "https://www.canada.ca/en/services/environment/weather/severeweather/wind-chill-index.html",
+    label: "ARPA Piemonte – Wind Chill",
+    shortLabel: "ARPA Piemonte",
+    url: "https://www.arpa.piemonte.it/rischi_naturali/snippets_arpa/wind_chill/",
   },
   wbgt: {
-    label: "OSHA",
-    shortLabel: "OSHA",
-    url: "https://www.osha.gov/heat-exposure",
+    label: "CeSNIR – Metodo WBGT",
+    shortLabel: "CeSNIR",
+    url: "https://www.cesnir.com/microclima-wbgt-ratio-e-corretto-uso/",
   },
   uv: {
-    label: "Organizzazione Mondiale della Sanità",
-    shortLabel: "OMS",
-    url: "https://www.who.int/news-room/fact-sheets/detail/ultraviolet-radiation",
+    label: "ARPAS Sardegna – Indice UV",
+    shortLabel: "ARPAS",
+    url: "https://www.sar.sardegna.it/documentazione/bio/indiceUV.asp",
   },
 };
 
@@ -1513,7 +1513,7 @@ export default function Biometeo({ intradayDates = [], latestDate = null }) {
                 Più sale, più il corpo fatica a disperdere il calore.
               </p>
               <a href={BIOMETE0_SOURCES.humidex.url} target="_blank" rel="noopener noreferrer">
-                Criteri ufficiali ↗
+                Definizione ARPAV ↗
               </a>
             </article>
             <article>
@@ -1523,7 +1523,7 @@ export default function Biometeo({ intradayDates = [], latestDate = null }) {
                 combinando caldo e umidità. Non considera il sole diretto.
               </p>
               <a href={BIOMETE0_SOURCES.heatIndex.url} target="_blank" rel="noopener noreferrer">
-                Criteri ufficiali ↗
+                Definizione ARPAS ↗
               </a>
             </article>
             <article>
@@ -1533,7 +1533,7 @@ export default function Biometeo({ intradayDates = [], latestDate = null }) {
                 temperatura reale. Compare soltanto nelle giornate fredde.
               </p>
               <a href={BIOMETE0_SOURCES.windChill.url} target="_blank" rel="noopener noreferrer">
-                Criteri ufficiali ↗
+                Definizione ARPAS ↗
               </a>
             </article>
             <article>
@@ -1544,7 +1544,7 @@ export default function Biometeo({ intradayDates = [], latestDate = null }) {
                 abbigliamento e abitudine al caldo.
               </p>
               <a href={BIOMETE0_SOURCES.wbgt.url} target="_blank" rel="noopener noreferrer">
-                Guida OSHA ↗
+                Metodo WBGT CeSNIR ↗
               </a>
             </article>
             <article>
@@ -1554,17 +1554,18 @@ export default function Biometeo({ intradayDates = [], latestDate = null }) {
                 danneggiare pelle e occhi. Da 3 in su è bene proteggersi.
               </p>
               <a href={BIOMETE0_SOURCES.uv.url} target="_blank" rel="noopener noreferrer">
-                Indicazioni OMS ↗
+                Definizione ARPA ↗
               </a>
             </article>
           </div>
 
           <div className="disclaimer">
-            Le fasce di Humidex, Heat Index, Wind Chill e UV seguono criteri
-            pubblicati dagli enti indicati nei link. Il WBGT è invece una stima
-            semplificata e le sue fasce sono orientative: il rischio reale cambia
-            con attività, acclimatazione, abbigliamento e tempo di esposizione.
-            Questi valori non sostituiscono indicazioni mediche o professionali.
+            Le definizioni e i criteri generali degli indici sono descritti
+            nelle fonti italiane istituzionali e tecnico-scientifiche indicate
+            nei link. Il WBGT mostrato qui resta una stima semplificata e le sue
+            fasce sono orientative: il rischio reale cambia con attività,
+            acclimatazione, abbigliamento e tempo di esposizione. Questi valori
+            non sostituiscono indicazioni mediche o professionali.
           </div>
         </section>
 
