@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import dynamic from "next/dynamic";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/router";
 import SiteLayout from "../components/SiteLayout";
 
@@ -74,7 +74,7 @@ function fmt(x, d = 1) {
 }
 
 function round1(x) {
-  const v = Number(x);
+  const v = n(x);
   if (!Number.isFinite(v)) return null;
   return Math.round((v + Number.EPSILON) * 10) / 10;
 }
@@ -509,6 +509,39 @@ function makeRealtimePulseSeries(dataPairs, timestamp, yAxisIndex = 0) {
   };
 }
 
+function makeRealtimeMarkLine(timestamp) {
+  const value = Number(timestamp);
+  if (!Number.isFinite(value)) return undefined;
+
+  return {
+    silent: true,
+    symbol: "none",
+    animation: false,
+    label: { show: false },
+    lineStyle: {
+      type: "dashed",
+      width: 1.2,
+      color: "rgba(100, 116, 139, 0.55)",
+    },
+    data: [{ xAxis: value }],
+  };
+}
+
+function lastValidDataIndex(pairs) {
+  if (!Array.isArray(pairs)) return -1;
+
+  for (let index = pairs.length - 1; index >= 0; index -= 1) {
+    const timestamp = Number(pairs[index]?.[0]);
+    const value = n(pairs[index]?.[1]);
+
+    if (Number.isFinite(timestamp) && Number.isFinite(value)) {
+      return index;
+    }
+  }
+
+  return -1;
+}
+
 function makePeriodDataZoom(mode, isMobile = false) {
   return [
     {
@@ -559,20 +592,8 @@ function makePeriodTimeline(startISO, endISO, stepMinutes = 60) {
 
 // -------------------- helper dati giornalieri --------------------
 function dailyTempField(row, field) {
-  const v = n(row?.[field]);
-  if (!Number.isFinite(v)) return NaN;
-
-  const tmin = n(row?.tmin);
-  const tmax = n(row?.tmax);
-  const tmean = n(row?.tmean);
-  const tempVals = [tmin, tmax, tmean].filter(Number.isFinite);
-
-  if (!tempVals.length) return NaN;
-
-  const hasSomeNonZeroTemp = tempVals.some((x) => Math.abs(x) > 0.001);
-  if (!hasSomeNonZeroTemp && Math.abs(v) <= 0.001) return NaN;
-
-  return v;
+  const value = n(row?.[field]);
+  return Number.isFinite(value) ? value : NaN;
 }
 
 function dailyTmin(row) {
@@ -591,13 +612,6 @@ function dailyTmean(row) {
     Number.isFinite(tmin) && Number.isFinite(tmax) ? (tmin + tmax) / 2 : NaN;
 
   if (Number.isFinite(raw)) {
-    if (
-      Math.abs(raw) <= 0.001 &&
-      Number.isFinite(mid) &&
-      Math.abs(mid) > 0.25
-    ) {
-      return mid;
-    }
     return raw;
   }
 
@@ -955,6 +969,8 @@ export default function Home({
 const FORECAST_LATITUDE = 39.6413;
 const FORECAST_LONGITUDE = 8.8399;
 const FORECAST_TIMEZONE = "Europe/Rome";
+const FORECAST_REFRESH_MS = 60 * 60 * 1000;
+const FORECAST_CACHE_KEY = "meteo-collinas:forecast-cache-v2";
 
 const FORECAST_BANDS = [
   { key: "night", label: "Notte", timeLabel: "00–06", start: 0, end: 6, night: true },
@@ -965,7 +981,7 @@ const FORECAST_BANDS = [
 
 function percentileFinite(values, percentile) {
   const sorted = (Array.isArray(values) ? values : [])
-    .map((value) => Number(value))
+    .map((value) => n(value))
     .filter(Number.isFinite)
     .sort((a, b) => a - b);
 
@@ -1051,18 +1067,74 @@ function consensusForecastRange(
   return integerForecastRange([], fallbackValue);
 }
 
-function integerObservedRange(values) {
-  const valid = (Array.isArray(values) ? values : [])
+function consensusPeriodTemperatureRange(
+  ensembleMinimums,
+  ensembleMaximums,
+  deterministicMinimums = [],
+  deterministicMaximums = [],
+) {
+  const memberMinimums = (Array.isArray(ensembleMinimums)
+    ? ensembleMinimums
+    : []
+  )
     .map((value) => n(value))
     .filter(Number.isFinite);
 
-  if (!valid.length) return null;
+  const memberMaximums = (Array.isArray(ensembleMaximums)
+    ? ensembleMaximums
+    : []
+  )
+    .map((value) => n(value))
+    .filter(Number.isFinite);
 
-  return {
-    low: Math.floor(Math.min(...valid)),
-    high: Math.ceil(Math.max(...valid)),
-    ensemble: false,
-  };
+  const modelMinimums = (Array.isArray(deterministicMinimums)
+    ? deterministicMinimums
+    : []
+  )
+    .map((value) => n(value))
+    .filter(Number.isFinite);
+
+  const modelMaximums = (Array.isArray(deterministicMaximums)
+    ? deterministicMaximums
+    : []
+  )
+    .map((value) => n(value))
+    .filter(Number.isFinite);
+
+  /*
+   * Per ogni fascia oraria il limite inferiore deriva dalle minime
+   * previste dai singoli scenari, mentre il limite superiore deriva
+   * dalle loro massime. Vengono usati gli stessi percentili 20–80
+   * applicati alle temperature giornaliere.
+   */
+  if (memberMinimums.length && memberMaximums.length) {
+    const low = percentileFinite(
+      [...memberMinimums, ...modelMinimums],
+      0.2,
+    );
+    const high = percentileFinite(
+      [...memberMaximums, ...modelMaximums],
+      0.8,
+    );
+
+    if (Number.isFinite(low) && Number.isFinite(high)) {
+      return {
+        low: Math.floor(Math.min(low, high)),
+        high: Math.ceil(Math.max(low, high)),
+        ensemble: true,
+      };
+    }
+  }
+
+  if (modelMinimums.length && modelMaximums.length) {
+    return {
+      low: Math.floor(Math.min(...modelMinimums)),
+      high: Math.ceil(Math.max(...modelMaximums)),
+      ensemble: false,
+    };
+  }
+
+  return null;
 }
 
 function formatForecastRange(range) {
@@ -1153,9 +1225,9 @@ function weatherMetaFromHourly({
   rainProbability = 0,
   precipitation = 0,
 }) {
-  const validCodes = codes.map((value) => Number(value)).filter(Number.isFinite);
+  const validCodes = codes.map((value) => n(value)).filter(Number.isFinite);
   const validCloud = cloudCover
-    .map((value) => Number(value))
+    .map((value) => n(value))
     .filter(Number.isFinite);
 
   const countCodes = (accepted) =>
@@ -1783,9 +1855,27 @@ function buildShortForecast(iconDeterministic, aromeDeterministic, ensemble) {
       const consensusPrecipitation = consensusAverage(
         modelBands.map((summary) => summary.precipitationTotal),
       );
-      const combinedTemperatures = modelBands.flatMap(
-        (summary) => summary.temperatureValues,
-      );
+
+      const memberBandMinimums = [];
+      const memberBandMaximums = [];
+
+      for (const key of temperatureKeys) {
+        const values = ensembleIndexes
+          .map((index) => n(hourlyEnsemble?.[key]?.[index]))
+          .filter(Number.isFinite);
+
+        if (values.length) {
+          memberBandMinimums.push(Math.min(...values));
+          memberBandMaximums.push(Math.max(...values));
+        }
+      }
+
+      const deterministicBandMinimums = modelBands
+        .map((summary) => summary.temperatureMin)
+        .filter(Number.isFinite);
+      const deterministicBandMaximums = modelBands
+        .map((summary) => summary.temperatureMax)
+        .filter(Number.isFinite);
 
       const expectedHours = Math.max(1, band.end - band.start);
       const aromeAvailableHours = Number(aromeBand.availableHourCount || 0);
@@ -1799,7 +1889,12 @@ function buildShortForecast(iconDeterministic, aromeDeterministic, ensemble) {
       return {
         ...band,
         weather: consensusWeatherMeta(modelBands, rainProbability),
-        temperatureRange: integerObservedRange(combinedTemperatures),
+        temperatureRange: consensusPeriodTemperatureRange(
+          memberBandMinimums,
+          memberBandMaximums,
+          deterministicBandMinimums,
+          deterministicBandMaximums,
+        ),
         rainProbability,
         rainRange: formatRainRange(
           ensembleRain.totals,
@@ -1869,6 +1964,60 @@ function buildShortForecast(iconDeterministic, aromeDeterministic, ensemble) {
           ? "ICON + AROME parziale"
           : "ICON-2I";
 
+    let maxRange = consensusForecastRange(
+      memberMaximums,
+      deterministicMaximums,
+      daily?.temperature_2m_max?.[dayIndex],
+    );
+    let minRange = consensusForecastRange(
+      memberMinimums,
+      deterministicMinimums,
+      daily?.temperature_2m_min?.[dayIndex],
+    );
+
+    /*
+     * La fascia giornaliera deve contenere le fasce orarie:
+     * la massima giornaliera non può essere inferiore al valore più
+     * alto previsto in una delle quattro parti del giorno e la minima
+     * non può essere superiore al valore più basso.
+     */
+    const highestPeriodTemperature = maxFinite(
+      periods.map((period) => period.temperatureRange?.high),
+    );
+    const lowestPeriodTemperature = minFinite(
+      periods.map((period) => period.temperatureRange?.low),
+    );
+
+    if (Number.isFinite(highestPeriodTemperature)) {
+      if (maxRange) {
+        maxRange = {
+          ...maxRange,
+          high: Math.max(maxRange.high, highestPeriodTemperature),
+        };
+      } else {
+        maxRange = {
+          low: highestPeriodTemperature,
+          high: highestPeriodTemperature,
+          ensemble: false,
+        };
+      }
+    }
+
+    if (Number.isFinite(lowestPeriodTemperature)) {
+      if (minRange) {
+        minRange = {
+          ...minRange,
+          low: Math.min(minRange.low, lowestPeriodTemperature),
+        };
+      } else {
+        minRange = {
+          low: lowestPeriodTemperature,
+          high: lowestPeriodTemperature,
+          ensemble: false,
+        };
+      }
+    }
+
     return {
       iso,
       title: forecastDateLabel(iso, dayIndex),
@@ -1876,16 +2025,8 @@ function buildShortForecast(iconDeterministic, aromeDeterministic, ensemble) {
       modelLabel,
       aromeUsed,
       aromeCoverage,
-      maxRange: consensusForecastRange(
-        memberMaximums,
-        deterministicMaximums,
-        daily?.temperature_2m_max?.[dayIndex],
-      ),
-      minRange: consensusForecastRange(
-        memberMinimums,
-        deterministicMinimums,
-        daily?.temperature_2m_min?.[dayIndex],
-      ),
+      maxRange,
+      minRange,
       rainProbability,
       rainPeriod:
         wettestPeriod?.rainProbability >= 20 ? wettestPeriod.label : "",
@@ -1902,6 +2043,44 @@ function buildShortForecast(iconDeterministic, aromeDeterministic, ensemble) {
   });
 }
 
+function readForecastCache() {
+  if (typeof window === "undefined") return null;
+
+  try {
+    const raw = window.localStorage.getItem(FORECAST_CACHE_KEY);
+    if (!raw) return null;
+
+    const parsed = JSON.parse(raw);
+    const forecast = Array.isArray(parsed?.forecast) ? parsed.forecast : [];
+    const updatedAt = Number(parsed?.updatedAt);
+
+    if (!forecast.length || !Number.isFinite(updatedAt)) return null;
+
+    return {
+      forecast,
+      updatedAt,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeForecastCache(forecast, updatedAt) {
+  if (typeof window === "undefined") return;
+
+  try {
+    window.localStorage.setItem(
+      FORECAST_CACHE_KEY,
+      JSON.stringify({
+        forecast,
+        updatedAt,
+      }),
+    );
+  } catch {
+    // Il sito continua a funzionare anche se il browser blocca localStorage.
+  }
+}
+
 function ForecastSection() {
   const [forecast, setForecast] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -1911,6 +2090,30 @@ function ForecastSection() {
   useEffect(() => {
     let alive = true;
     let timer = null;
+
+    const scheduleNextUpdate = (lastConsultation) => {
+      if (!alive) return;
+
+      if (timer) {
+        window.clearTimeout(timer);
+        timer = null;
+      }
+
+      const last = Number(lastConsultation);
+      const elapsed = Number.isFinite(last)
+        ? Math.max(0, Date.now() - last)
+        : 0;
+      const delay = Math.max(1000, FORECAST_REFRESH_MS - elapsed);
+
+      timer = window.setTimeout(async () => {
+        const nextConsultation = await loadForecast();
+        scheduleNextUpdate(
+          Number.isFinite(nextConsultation)
+            ? nextConsultation
+            : Date.now(),
+        );
+      }, delay);
+    };
 
     const loadForecast = async () => {
       try {
@@ -1986,40 +2189,68 @@ function ForecastSection() {
           aromeDeterministic,
           ensemble,
         );
+
         if (!built.length) {
           throw new Error("La previsione non contiene giorni utilizzabili.");
         }
 
+        const consultationTime = Date.now();
+
         if (alive) {
           setForecast(built);
-          setUpdatedAt(new Date());
+          setUpdatedAt(new Date(consultationTime));
+          setLoading(false);
+          writeForecastCache(built, consultationTime);
         }
+
+        return consultationTime;
       } catch (loadError) {
         if (alive) {
           setError(
             loadError?.message ||
               "Non è stato possibile caricare le previsioni a breve termine.",
           );
+          setLoading(false);
         }
-      } finally {
-        if (alive) setLoading(false);
+
+        return null;
       }
     };
 
-    const reloadWhenVisible = () => {
-      if (document.visibilityState === "visible") loadForecast();
-    };
+    /*
+     * L'apertura della pagina non provoca una nuova consultazione quando
+     * esiste già una previsione salvata nel browser. La previsione in cache
+     * viene mostrata subito e la richiesta successiva parte soltanto allo
+     * scadere dei 60 minuti dall'ultima consultazione.
+     *
+     * Solo al primo accesso assoluto, quando la cache non esiste ancora,
+     * viene eseguita una richiesta iniziale per evitare una sezione vuota.
+     */
+    const cached = readForecastCache();
 
-    loadForecast();
-    timer = window.setInterval(loadForecast, 30 * 60 * 1000);
-    window.addEventListener("focus", loadForecast);
-    document.addEventListener("visibilitychange", reloadWhenVisible);
+    if (cached) {
+      setForecast(cached.forecast);
+      setUpdatedAt(new Date(cached.updatedAt));
+      setLoading(false);
+      /*
+       * Anche riaprendo la pagina non parte una nuova richiesta:
+       * la prossima consultazione viene pianificata tra 60 minuti.
+       */
+      scheduleNextUpdate(Date.now());
+    } else {
+      loadForecast().then((consultationTime) => {
+        if (!alive) return;
+        scheduleNextUpdate(
+          Number.isFinite(consultationTime)
+            ? consultationTime
+            : Date.now(),
+        );
+      });
+    }
 
     return () => {
       alive = false;
-      if (timer) window.clearInterval(timer);
-      window.removeEventListener("focus", loadForecast);
-      document.removeEventListener("visibilitychange", reloadWhenVisible);
+      if (timer) window.clearTimeout(timer);
     };
   }, []);
 
@@ -2159,8 +2390,10 @@ function ForecastSection() {
         <div>
           <strong>Oltre le 72 ore</strong>
           <span>
-            La tendenza a più lungo termine va valutata attraverso dispersione
-            e scenari ensemble, non con una singola icona giornaliera.
+            Le previsioni confrontano ICON-2I, AROME HD e gli scenari
+            dell’ensemble ICON-EU. Gli intervalli indicano la fascia più
+            probabile tra le diverse simulazioni; oltre tre giorni
+            l’incertezza aumenta e va letta nei grafici ensemble.
           </span>
         </div>
 
@@ -3710,6 +3943,38 @@ async function fetchIntradayJson(
   return result;
 }
 
+function latestIntradayTimestamp(rows) {
+  let latest = null;
+
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const value = String(row?.t || "");
+    const match = value.match(
+      /^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})$/,
+    );
+
+    if (!match) continue;
+
+    const timestamp = new Date(
+      Number(match[1]),
+      Number(match[2]) - 1,
+      Number(match[3]),
+      Number(match[4]),
+      Number(match[5]),
+      0,
+      0,
+    ).getTime();
+
+    if (
+      Number.isFinite(timestamp) &&
+      (!Number.isFinite(latest) || timestamp > latest)
+    ) {
+      latest = timestamp;
+    }
+  }
+
+  return Number.isFinite(latest) ? latest : null;
+}
+
 async function loadIntradayPeriod({
   startISO,
   endISO,
@@ -3823,7 +4088,12 @@ async function loadIntradayPeriod({
           }
 
           const addMean = (keyBase, value) => {
-            const vv = Number(value);
+            /*
+             * n() distingue i dati mancanti da un vero valore pari a zero:
+             * null, undefined e stringa vuota vengono esclusi dalla media,
+             * mentre 0 rimane un'osservazione valida.
+             */
+            const vv = n(value);
             if (!Number.isFinite(vv)) return;
             bucket[`${keyBase}_sum`] += vv;
             bucket[`${keyBase}_cnt`] += 1;
@@ -3837,12 +4107,12 @@ async function loadIntradayPeriod({
           addMean("uv", r?.uv);
           addMean("solar", r?.solar_wm2);
 
-          const gust = Number(r?.gust_kmh);
+          const gust = n(r?.gust_kmh);
           if (Number.isFinite(gust)) {
             bucket.gust_max = Math.max(bucket.gust_max, gust);
           }
 
-          const rain = Number(r?.rain_15m_mm);
+          const rain = n(r?.rain_15m_mm);
           if (Number.isFinite(rain)) {
             bucketTotals.set(
               bucketTimestamp,
@@ -3850,7 +4120,7 @@ async function loadIntradayPeriod({
             );
           }
 
-          const direction = Number(r?.wind_dir_deg);
+          const direction = n(r?.wind_dir_deg);
           if (Number.isFinite(direction)) {
             const radians = (direction * Math.PI) / 180;
             bucket.dir_cos += Math.cos(radians);
@@ -5185,9 +5455,11 @@ function ClimatologyChart({
 
       <div className="climateNote">
         La media non è salvata manualmente: viene ricalcolata dai JSON intraday
-        presenti nell’archivio. I nuovi dati Wunderground entrano quindi
-        automaticamente nel riferimento storico quando diventano disponibili
-        per i periodi omologhi.
+        presenti nell’archivio. Un dato mancante viene escluso soltanto da
+        quell’orario e non viene trasformato in 0; un valore reale pari a 0
+        resta invece valido. I nuovi dati Wunderground entrano automaticamente
+        nel riferimento storico quando diventano disponibili per i periodi
+        omologhi.
       </div>
 
       <style jsx>{`
@@ -5474,6 +5746,9 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
   const [comparisonData, setComparisonData] = useState(null);
   const [climatologyData, setClimatologyData] = useState(null);
   const [viewportWidth, setViewportWidth] = useState(1280);
+  const chartRef = useRef(null);
+  const currentPeriodKeyRef = useRef("");
+  const latestDataTimestampRef = useRef(null);
 
   useEffect(() => {
     const updateViewportWidth = () => setViewportWidth(window.innerWidth);
@@ -5495,30 +5770,6 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
       return availableDates[availableDates.length - 1];
     });
   }, [availableDates]);
-
-  useEffect(() => {
-    const requestFreshData = () => {
-      setRefreshTick((value) => value + 1);
-    };
-
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === "visible") requestFreshData();
-    };
-
-    const timer = window.setInterval(requestFreshData, 60 * 1000);
-
-    window.addEventListener("focus", requestFreshData);
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-
-    return () => {
-      window.clearInterval(timer);
-      window.removeEventListener("focus", requestFreshData);
-      document.removeEventListener(
-        "visibilitychange",
-        handleVisibilityChange,
-      );
-    };
-  }, []);
 
   const comparisonOptions = useMemo(
     () => comparisonOptionsForMode(mode),
@@ -5558,6 +5809,83 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
     ? availableDates[availableDates.length - 1]
     : null;
 
+  /*
+   * Il JSON di oggi viene controllato in modo leggero una volta al minuto.
+   * Il grafico viene ricaricato soltanto quando compare davvero un orario
+   * più recente; in assenza di nuovi dati la pagina resta immobile.
+   */
+  useEffect(() => {
+    if (
+      mode !== "day" ||
+      !latestAvailableDate ||
+      selectedDate !== latestAvailableDate
+    ) {
+      return undefined;
+    }
+
+    let alive = true;
+    let checking = false;
+
+    const checkForNewObservation = async () => {
+      if (!alive || checking || document.visibilityState !== "visible") {
+        return;
+      }
+
+      checking = true;
+
+      try {
+        const rows = await fetchIntradayJson(
+          latestAvailableDate,
+          true,
+          `live-check-${Date.now()}`,
+        );
+        const latestTimestamp = latestIntradayTimestamp(rows);
+        const currentTimestamp = Number(latestDataTimestampRef.current);
+
+        if (
+          Number.isFinite(latestTimestamp) &&
+          Number.isFinite(currentTimestamp) &&
+          latestTimestamp > currentTimestamp
+        ) {
+          setRefreshTick((value) => value + 1);
+        }
+      } finally {
+        checking = false;
+      }
+    };
+
+    const handleFocus = () => {
+      checkForNewObservation();
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        checkForNewObservation();
+      }
+    };
+
+    const timer = window.setInterval(
+      checkForNewObservation,
+      60 * 1000,
+    );
+
+    window.addEventListener("focus", handleFocus);
+    document.addEventListener(
+      "visibilitychange",
+      handleVisibilityChange,
+    );
+
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+      window.removeEventListener("focus", handleFocus);
+      document.removeEventListener(
+        "visibilitychange",
+        handleVisibilityChange,
+      );
+    };
+  }, [latestAvailableDate, mode, selectedDate]);
+
   const showRealtimePulse =
     mode === "day" && selectedDate === latestAvailableDate;
 
@@ -5591,8 +5919,15 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
     let alive = true;
 
     async function run() {
-      setErr("");
-      setData(null);
+      const requestKey = `${mode}:${bounds.startISO}:${bounds.endISO}`;
+      const silentRefresh =
+        currentPeriodKeyRef.current === requestKey &&
+        Number(refreshTick) > 0;
+
+      if (!silentRefresh) {
+        setErr("");
+        setData(null);
+      }
 
       if (!selectedDate || !bounds.startISO || !bounds.endISO) {
         setLoading(false);
@@ -5600,7 +5935,7 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
         return;
       }
 
-      setLoading(true);
+      if (!silentRefresh) setLoading(true);
 
       try {
         const result = await loadIntradayPeriod({
@@ -5612,16 +5947,27 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
           refreshToken: `current-${refreshTick}-${Date.now()}`,
         });
 
-        if (alive) setData(result);
-      } catch (error) {
         if (alive) {
+          setData(result);
+          currentPeriodKeyRef.current = requestKey;
+
+          if (
+            mode === "day" &&
+            selectedDate === latestAvailableDate &&
+            Number.isFinite(Number(result?.latestTimestamp))
+          ) {
+            latestDataTimestampRef.current = Number(result.latestTimestamp);
+          }
+        }
+      } catch (error) {
+        if (alive && !silentRefresh) {
           setErr(
             error?.message ||
               "Errore nel caricamento o nella lettura dei JSON intraday.",
           );
         }
       } finally {
-        if (alive) setLoading(false);
+        if (alive && !silentRefresh) setLoading(false);
       }
     }
 
@@ -5635,6 +5981,7 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
     bounds.endISO,
     bounds.startISO,
     dailyRainByDate,
+    latestAvailableDate,
     mode,
     refreshTick,
     selectedDate,
@@ -5662,7 +6009,7 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
           mode,
           availableDates,
           dailyRainByDate,
-          refreshToken: `comparison-${refreshTick}-${Date.now()}`,
+          refreshToken: `comparison-${Date.now()}`,
           forceRefreshEndDate: true,
         });
 
@@ -5688,7 +6035,6 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
     compareDescriptor,
     dailyRainByDate,
     mode,
-    refreshTick,
   ]);
 
 
@@ -5741,6 +6087,48 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
     mode,
     selectedDate,
   ]);
+
+  const latestDataTimeLabel = useMemo(() => {
+    if (
+      !showRealtimePulse ||
+      !Number.isFinite(Number(data?.latestTimestamp))
+    ) {
+      return "";
+    }
+
+    const latestDate = new Date(Number(data.latestTimestamp));
+    return `${pad2(latestDate.getHours())}:${pad2(latestDate.getMinutes())}`;
+  }, [data?.latestTimestamp, showRealtimePulse]);
+
+  const livePrimarySeries = useMemo(() => {
+    if (!data) return [];
+
+    if (groupKey === "rain") return data.rainH;
+    if (groupKey === "rh") return data.rh;
+    if (groupKey === "wind") return data.wind;
+    if (groupKey === "press") return data.press;
+    if (groupKey === "uv") return data.uv;
+    if (groupKey === "solar") return data.solar;
+    return data.temp;
+  }, [data, groupKey]);
+
+  const latestTooltipDataIndex = useMemo(
+    () => lastValidDataIndex(livePrimarySeries),
+    [livePrimarySeries],
+  );
+
+  const showLatestTooltip = useCallback(() => {
+    if (!showRealtimePulse || latestTooltipDataIndex < 0) return;
+
+    const chart = chartRef.current?.getEchartsInstance?.();
+    if (!chart) return;
+
+    chart.dispatchAction({
+      type: "showTip",
+      seriesIndex: 0,
+      dataIndex: latestTooltipDataIndex,
+    });
+  }, [latestTooltipDataIndex, showRealtimePulse]);
 
   const option = useMemo(() => {
     if (!data) return null;
@@ -5810,10 +6198,28 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
       },
     };
 
+    const liveAxisPointer = showRealtimePulse
+      ? {
+          type: "line",
+          snap: true,
+          lineStyle: {
+            type: "dashed",
+            width: 1.2,
+            color: "rgba(100, 116, 139, 0.55)",
+          },
+        }
+      : { type: "none" };
+
+    const realtimeMarkLine = showRealtimePulse
+      ? makeRealtimeMarkLine(data.latestTimestamp)
+      : undefined;
+
     const tooltipCommon = {
       trigger: "axis",
+      triggerOn: "mousemove|click",
+      alwaysShowContent: showRealtimePulse,
       confine: true,
-      axisPointer: { type: "none" },
+      axisPointer: liveAxisPointer,
       valueFormatter: (value) => {
         if (value === null || value === undefined) return "—";
         const vv = Number(value);
@@ -5904,6 +6310,7 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
             smooth: false,
             sampling: "lttb",
             lineStyle: { width: 2 },
+            markLine: realtimeMarkLine,
           },
           {
             name: "Punto di rugiada (°C)",
@@ -5953,6 +6360,7 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
             data: data.rainH,
             yAxisIndex: 0,
             barMaxWidth: mode === "day" ? 12 : 10,
+            markLine: realtimeMarkLine,
           },
           {
             name: "Cumulata (mm)",
@@ -5992,6 +6400,7 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
             smooth: false,
             sampling: "lttb",
             lineStyle: { width: 2 },
+            markLine: realtimeMarkLine,
           },
           ...(pulse ? [pulse] : []),
         ],
@@ -6019,8 +6428,10 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
         grid: gridWithLegend,
         tooltip: {
           trigger: "axis",
+          triggerOn: "mousemove|click",
+          alwaysShowContent: showRealtimePulse,
           confine: true,
-          axisPointer: { type: "none" },
+          axisPointer: liveAxisPointer,
           formatter: (params) => {
             const time = params?.[0]?.axisValueLabel ?? "";
             const lines = [time];
@@ -6073,6 +6484,7 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
             sampling: "lttb",
             yAxisIndex: 0,
             lineStyle: { width: 2 },
+            markLine: realtimeMarkLine,
           },
           {
             name: "Raffiche (km/h)",
@@ -6126,6 +6538,7 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
             smooth: false,
             sampling: "lttb",
             lineStyle: { width: 2 },
+            markLine: realtimeMarkLine,
           },
           ...(pulse ? [pulse] : []),
         ],
@@ -6153,6 +6566,7 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
             smooth: false,
             sampling: "lttb",
             lineStyle: { width: 2 },
+            markLine: realtimeMarkLine,
           },
           ...(pulse ? [pulse] : []),
         ],
@@ -6179,6 +6593,7 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
           smooth: false,
           sampling: "lttb",
           lineStyle: { width: 2 },
+          markLine: realtimeMarkLine,
         },
         ...(pulse ? [pulse] : []),
       ],
@@ -6191,6 +6606,20 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
     isMobileChart,
     isVeryNarrowChart,
     mode,
+    showRealtimePulse,
+  ]);
+
+  useEffect(() => {
+    if (!option || !showRealtimePulse || latestTooltipDataIndex < 0) {
+      return undefined;
+    }
+
+    const timer = window.setTimeout(showLatestTooltip, 140);
+    return () => window.clearTimeout(timer);
+  }, [
+    latestTooltipDataIndex,
+    option,
+    showLatestTooltip,
     showRealtimePulse,
   ]);
 
@@ -6228,7 +6657,9 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
 
         <div className="periodText">
           <div className="periodTitle">{periodTitle}</div>
-          <div className="periodSub">Live data</div>
+          <div className="periodSub">
+            Live data{latestDataTimeLabel ? ` · ${latestDataTimeLabel}` : ""}
+          </div>
         </div>
 
         <div className="menu parameterMenu rightMenu">
@@ -6284,10 +6715,15 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
         {!loading && err && <div className="msg">{err}</div>}
         {!loading && !err && option && (
           <ReactECharts
+            ref={chartRef}
             option={option}
             style={{ height: chartHeight, width: "100%" }}
             notMerge={true}
             lazyUpdate={true}
+            onChartReady={showLatestTooltip}
+            onEvents={{
+              globalout: showLatestTooltip,
+            }}
           />
         )}
       </div>
