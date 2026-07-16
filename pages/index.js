@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import dynamic from "next/dynamic";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/router";
 import SiteLayout from "../components/SiteLayout";
 
@@ -509,37 +509,29 @@ function makeRealtimePulseSeries(dataPairs, timestamp, yAxisIndex = 0) {
   };
 }
 
-function makeRealtimeMarkLine(timestamp) {
-  const value = Number(timestamp);
-  if (!Number.isFinite(value)) return undefined;
+/*
+ * Mantiene gli eventuali vuoti interni alla serie, ma elimina tutti i punti
+ * successivi all'ultima osservazione realmente disponibile.
+ *
+ * In questo modo l'asse temporale può continuare fino alla fine del giorno,
+ * mentre tooltip e linea verticale non possono spostarsi su orari futuri.
+ */
+function trimTrailingNullPoints(pairs) {
+  if (!Array.isArray(pairs) || !pairs.length) return [];
 
-  return {
-    silent: true,
-    symbol: "none",
-    animation: false,
-    label: { show: false },
-    lineStyle: {
-      type: "dashed",
-      width: 1.2,
-      color: "rgba(100, 116, 139, 0.55)",
-    },
-    data: [{ xAxis: value }],
-  };
-}
-
-function lastValidDataIndex(pairs) {
-  if (!Array.isArray(pairs)) return -1;
+  let lastValidIndex = -1;
 
   for (let index = pairs.length - 1; index >= 0; index -= 1) {
     const timestamp = Number(pairs[index]?.[0]);
     const value = n(pairs[index]?.[1]);
 
     if (Number.isFinite(timestamp) && Number.isFinite(value)) {
-      return index;
+      lastValidIndex = index;
+      break;
     }
   }
 
-  return -1;
+  return lastValidIndex >= 0 ? pairs.slice(0, lastValidIndex + 1) : [];
 }
 
 function makePeriodDataZoom(mode, isMobile = false) {
@@ -4693,25 +4685,30 @@ function ComparisonChart({
     mode,
   ]);
 
-  const validDeltaCount = useMemo(
-    () => seriesValues(deltaSeries).length,
+  const displayDeltaSeries = useMemo(
+    () => trimTrailingNullPoints(deltaSeries),
     [deltaSeries],
+  );
+
+  const validDeltaCount = useMemo(
+    () => seriesValues(displayDeltaSeries).length,
+    [displayDeltaSeries],
   );
 
   const splitSeries = useMemo(
-    () => splitDeltaSeriesBySign(deltaSeries),
-    [deltaSeries],
+    () => splitDeltaSeriesBySign(displayDeltaSeries),
+    [displayDeltaSeries],
   );
 
   const deltaStats = useMemo(
-    () => deltaStatsFromSeries(deltaSeries),
-    [deltaSeries],
+    () => deltaStatsFromSeries(displayDeltaSeries),
+    [displayDeltaSeries],
   );
 
   const option = useMemo(() => {
     if (!validDeltaCount) return null;
 
-    const axis = symmetricAxisFromPairs(deltaSeries);
+    const axis = symmetricAxisFromPairs(displayDeltaSeries);
 
     const xAxis = {
       type: "time",
@@ -4742,14 +4739,24 @@ function ComparisonChart({
         : { left: 70, right: 34, top: 35, bottom: 58 },
       tooltip: {
         trigger: "axis",
+        triggerOn: "mousemove|click",
         confine: true,
-        axisPointer: { type: "none" },
+        axisPointer: {
+          type: "line",
+          snap: true,
+          label: { show: false },
+          lineStyle: {
+            type: "dashed",
+            width: 1.2,
+            color: "rgba(100, 116, 139, 0.55)",
+          },
+        },
         formatter: (params) => {
           const axisTimestamp = Number(
             params?.[0]?.axisValue ?? params?.[0]?.data?.[0],
           );
 
-          const validPoints = seriesValues(deltaSeries);
+          const validPoints = seriesValues(displayDeltaSeries);
           if (!validPoints.length) return "";
 
           let selectedPoint = validPoints[0];
@@ -4768,9 +4775,7 @@ function ComparisonChart({
           }
 
           const value = selectedPoint.value;
-          const time =
-            params?.[0]?.axisValueLabel ||
-            formatSummaryTimestamp(selectedPoint.timestamp, mode);
+          const time = formatSummaryTimestamp(selectedPoint.timestamp, mode);
 
           const markerColor =
             value > 0
@@ -4859,7 +4864,7 @@ function ComparisonChart({
   }, [
     currentBounds.endISO,
     currentBounds.startISO,
-    deltaSeries,
+    displayDeltaSeries,
     isMobile,
     meta.negativeColor,
     meta.negativeText,
@@ -5193,25 +5198,30 @@ function ClimatologyChart({
     mode,
   ]);
 
-  const validAnomalyCount = useMemo(
-    () => seriesValues(anomalySeries).length,
+  const displayAnomalySeries = useMemo(
+    () => trimTrailingNullPoints(anomalySeries),
     [anomalySeries],
+  );
+
+  const validAnomalyCount = useMemo(
+    () => seriesValues(displayAnomalySeries).length,
+    [displayAnomalySeries],
   );
 
   const splitSeries = useMemo(
-    () => splitDeltaSeriesBySign(anomalySeries),
-    [anomalySeries],
+    () => splitDeltaSeriesBySign(displayAnomalySeries),
+    [displayAnomalySeries],
   );
 
   const anomalyStats = useMemo(
-    () => deltaStatsFromSeries(anomalySeries),
-    [anomalySeries],
+    () => deltaStatsFromSeries(displayAnomalySeries),
+    [displayAnomalySeries],
   );
 
   const option = useMemo(() => {
     if (!validAnomalyCount) return null;
 
-    const axis = symmetricAxisFromPairs(anomalySeries);
+    const axis = symmetricAxisFromPairs(displayAnomalySeries);
 
     return {
       animation: true,
@@ -5221,13 +5231,23 @@ function ClimatologyChart({
         : { left: 70, right: 34, top: 35, bottom: 58 },
       tooltip: {
         trigger: "axis",
+        triggerOn: "mousemove|click",
         confine: true,
-        axisPointer: { type: "none" },
+        axisPointer: {
+          type: "line",
+          snap: true,
+          label: { show: false },
+          lineStyle: {
+            type: "dashed",
+            width: 1.2,
+            color: "rgba(100, 116, 139, 0.55)",
+          },
+        },
         formatter: (params) => {
           const axisTimestamp = Number(
             params?.[0]?.axisValue ?? params?.[0]?.data?.[0],
           );
-          const validPoints = seriesValues(anomalySeries);
+          const validPoints = seriesValues(displayAnomalySeries);
           if (!validPoints.length) return "";
 
           let selectedPoint = validPoints[0];
@@ -5243,9 +5263,7 @@ function ClimatologyChart({
           }
 
           const value = selectedPoint.value;
-          const time =
-            params?.[0]?.axisValueLabel ||
-            formatSummaryTimestamp(selectedPoint.timestamp, mode);
+          const time = formatSummaryTimestamp(selectedPoint.timestamp, mode);
           const markerColor =
             value > 0
               ? meta.positiveColor
@@ -5339,9 +5357,9 @@ function ClimatologyChart({
       ],
     };
   }, [
-    anomalySeries,
     currentBounds.endISO,
     currentBounds.startISO,
+    displayAnomalySeries,
     isMobile,
     meta.negativeColor,
     meta.positiveColor,
@@ -5746,7 +5764,6 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
   const [comparisonData, setComparisonData] = useState(null);
   const [climatologyData, setClimatologyData] = useState(null);
   const [viewportWidth, setViewportWidth] = useState(1280);
-  const chartRef = useRef(null);
   const currentPeriodKeyRef = useRef("");
   const latestDataTimestampRef = useRef(null);
 
@@ -6100,36 +6117,6 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
     return `${pad2(latestDate.getHours())}:${pad2(latestDate.getMinutes())}`;
   }, [data?.latestTimestamp, showRealtimePulse]);
 
-  const livePrimarySeries = useMemo(() => {
-    if (!data) return [];
-
-    if (groupKey === "rain") return data.rainH;
-    if (groupKey === "rh") return data.rh;
-    if (groupKey === "wind") return data.wind;
-    if (groupKey === "press") return data.press;
-    if (groupKey === "uv") return data.uv;
-    if (groupKey === "solar") return data.solar;
-    return data.temp;
-  }, [data, groupKey]);
-
-  const latestTooltipDataIndex = useMemo(
-    () => lastValidDataIndex(livePrimarySeries),
-    [livePrimarySeries],
-  );
-
-  const showLatestTooltip = useCallback(() => {
-    if (!showRealtimePulse || latestTooltipDataIndex < 0) return;
-
-    const chart = chartRef.current?.getEchartsInstance?.();
-    if (!chart) return;
-
-    chart.dispatchAction({
-      type: "showTip",
-      seriesIndex: 0,
-      dataIndex: latestTooltipDataIndex,
-    });
-  }, [latestTooltipDataIndex, showRealtimePulse]);
-
   const option = useMemo(() => {
     if (!data) return null;
 
@@ -6198,28 +6185,24 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
       },
     };
 
-    const liveAxisPointer = showRealtimePulse
-      ? {
-          type: "line",
-          snap: true,
-          lineStyle: {
-            type: "dashed",
-            width: 1.2,
-            color: "rgba(100, 116, 139, 0.55)",
-          },
-        }
-      : { type: "none" };
+    const hoverAxisPointer = {
+      type: "line",
+      snap: true,
+      label: { show: false },
+      lineStyle: {
+        type: "dashed",
+        width: 1.2,
+        color: "rgba(100, 116, 139, 0.55)",
+      },
+    };
 
-    const realtimeMarkLine = showRealtimePulse
-      ? makeRealtimeMarkLine(data.latestTimestamp)
-      : undefined;
+    const chartPairs = (pairs) => trimTrailingNullPoints(pairs);
 
     const tooltipCommon = {
       trigger: "axis",
       triggerOn: "mousemove|click",
-      alwaysShowContent: showRealtimePulse,
       confine: true,
-      axisPointer: liveAxisPointer,
+      axisPointer: hoverAxisPointer,
       valueFormatter: (value) => {
         if (value === null || value === undefined) return "—";
         const vv = Number(value);
@@ -6304,18 +6287,17 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
           {
             name: "Temperatura (°C)",
             type: "line",
-            data: data.temp,
+            data: chartPairs(data.temp),
             showSymbol: false,
             connectNulls: false,
             smooth: false,
             sampling: "lttb",
             lineStyle: { width: 2 },
-            markLine: realtimeMarkLine,
           },
           {
             name: "Punto di rugiada (°C)",
             type: "line",
-            data: data.dew,
+            data: chartPairs(data.dew),
             showSymbol: false,
             connectNulls: false,
             smooth: false,
@@ -6357,15 +6339,14 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
           {
             name: rainStepLabel,
             type: "bar",
-            data: data.rainH,
+            data: chartPairs(data.rainH),
             yAxisIndex: 0,
             barMaxWidth: mode === "day" ? 12 : 10,
-            markLine: realtimeMarkLine,
           },
           {
             name: "Cumulata (mm)",
             type: "line",
-            data: data.rainCum,
+            data: chartPairs(data.rainCum),
             yAxisIndex: 1,
             showSymbol: false,
             connectNulls: false,
@@ -6394,13 +6375,12 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
           {
             name: "Umidità (%)",
             type: "line",
-            data: data.rh,
+            data: chartPairs(data.rh),
             showSymbol: false,
             connectNulls: false,
             smooth: false,
             sampling: "lttb",
             lineStyle: { width: 2 },
-            markLine: realtimeMarkLine,
           },
           ...(pulse ? [pulse] : []),
         ],
@@ -6429,26 +6409,30 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
         tooltip: {
           trigger: "axis",
           triggerOn: "mousemove|click",
-          alwaysShowContent: showRealtimePulse,
           confine: true,
-          axisPointer: liveAxisPointer,
+          axisPointer: hoverAxisPointer,
           formatter: (params) => {
-            const time = params?.[0]?.axisValueLabel ?? "";
+            const validParams = (Array.isArray(params) ? params : []).filter(
+              (item) => Number.isFinite(n(item?.data?.[1])),
+            );
+
+            if (!validParams.length) return "";
+
+            const timestamp = Number(validParams[0]?.data?.[0]);
+            const time = Number.isFinite(timestamp)
+              ? formatSummaryTimestamp(timestamp, mode)
+              : "";
             const lines = [time];
 
-            for (const p of params || []) {
+            for (const p of validParams) {
               const value = p.data?.[1];
               if (p.seriesName === "Direzione") {
                 lines.push(
-                  `${p.marker}${p.seriesName}: ${
-                    value == null ? "—" : degToCardinal8(value)
-                  }`,
+                  `${p.marker}${p.seriesName}: ${degToCardinal8(value)}`,
                 );
               } else {
                 lines.push(
-                  `${p.marker}${p.seriesName}: ${
-                    value == null ? "—" : Number(value).toFixed(1)
-                  }`,
+                  `${p.marker}${p.seriesName}: ${Number(value).toFixed(1)}`,
                 );
               }
             }
@@ -6477,19 +6461,18 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
           {
             name: "Vento medio (km/h)",
             type: "line",
-            data: data.wind,
+            data: chartPairs(data.wind),
             showSymbol: false,
             connectNulls: false,
             smooth: false,
             sampling: "lttb",
             yAxisIndex: 0,
             lineStyle: { width: 2 },
-            markLine: realtimeMarkLine,
           },
           {
             name: "Raffiche (km/h)",
             type: "line",
-            data: data.gust,
+            data: chartPairs(data.gust),
             showSymbol: false,
             connectNulls: false,
             smooth: false,
@@ -6500,7 +6483,7 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
           {
             name: "Direzione",
             type: "scatter",
-            data: data.dirMean,
+            data: chartPairs(data.dirMean),
             yAxisIndex: 1,
             symbolSize: mode === "month" ? 3 : 5,
           },
@@ -6532,13 +6515,12 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
           {
             name: "Pressione (hPa)",
             type: "line",
-            data: data.press,
+            data: chartPairs(data.press),
             showSymbol: false,
             connectNulls: false,
             smooth: false,
             sampling: "lttb",
             lineStyle: { width: 2 },
-            markLine: realtimeMarkLine,
           },
           ...(pulse ? [pulse] : []),
         ],
@@ -6560,13 +6542,12 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
           {
             name: "Indice UV",
             type: "line",
-            data: data.uv,
+            data: chartPairs(data.uv),
             showSymbol: false,
             connectNulls: false,
             smooth: false,
             sampling: "lttb",
             lineStyle: { width: 2 },
-            markLine: realtimeMarkLine,
           },
           ...(pulse ? [pulse] : []),
         ],
@@ -6587,13 +6568,12 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
         {
           name: "Radiazione solare (W/m²)",
           type: "line",
-          data: data.solar,
+          data: chartPairs(data.solar),
           showSymbol: false,
           connectNulls: false,
           smooth: false,
           sampling: "lttb",
           lineStyle: { width: 2 },
-          markLine: realtimeMarkLine,
         },
         ...(pulse ? [pulse] : []),
       ],
@@ -6606,20 +6586,6 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
     isMobileChart,
     isVeryNarrowChart,
     mode,
-    showRealtimePulse,
-  ]);
-
-  useEffect(() => {
-    if (!option || !showRealtimePulse || latestTooltipDataIndex < 0) {
-      return undefined;
-    }
-
-    const timer = window.setTimeout(showLatestTooltip, 140);
-    return () => window.clearTimeout(timer);
-  }, [
-    latestTooltipDataIndex,
-    option,
-    showLatestTooltip,
     showRealtimePulse,
   ]);
 
@@ -6715,15 +6681,10 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
         {!loading && err && <div className="msg">{err}</div>}
         {!loading && !err && option && (
           <ReactECharts
-            ref={chartRef}
             option={option}
             style={{ height: chartHeight, width: "100%" }}
             notMerge={true}
             lazyUpdate={true}
-            onChartReady={showLatestTooltip}
-            onEvents={{
-              globalout: showLatestTooltip,
-            }}
           />
         )}
       </div>
