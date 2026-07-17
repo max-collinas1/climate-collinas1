@@ -1951,7 +1951,7 @@ function buildShortForecast(iconDeterministic, aromeDeterministic, ensemble) {
     const aromeUsed = aromeCoverage !== "none";
     const modelLabel =
       aromeCoverage === "full"
-        ? "Consenso ICON + AROME"
+        ? "ICON + AROME"
         : aromeCoverage === "partial"
           ? "ICON + AROME parziale"
           : "ICON-2I";
@@ -2328,7 +2328,7 @@ function ForecastSection() {
             {hasFullArome && hasPartialArome
               ? "Copertura AROME completa o parziale secondo la scadenza"
               : hasFullArome
-                ? "Consenso ICON–AROME su tutte le fasce disponibili"
+                ? "ICON e AROME disponibili su tutte le fasce"
                 : hasPartialArome
                   ? "AROME disponibile soltanto su alcune fasce"
                   : "AROME temporaneamente non disponibile"}
@@ -2383,33 +2383,41 @@ function ForecastSection() {
                 </div>
               </div>
 
-              <div className="periodGrid">
+              <div
+                className="periodGrid"
+                role="list"
+                aria-label={`Dettaglio delle fasce orarie di ${day.title}`}
+              >
                 {day.periods.map((period) => (
                   <div
                     className={`periodForecast ${period.past ? "isPast" : ""}`}
                     key={period.key}
+                    role="listitem"
                   >
                     <div className="periodTop">
                       <strong>{period.label}</strong>
                       <span>{period.timeLabel}</span>
                     </div>
 
-                    <div className="periodIcon">
-                      <WeatherForecastIcon
-                        kind={period.weather.kind}
-                        night={period.night}
-                      />
-                    </div>
+                    <div className="periodBody">
+                      <div className="periodIcon">
+                        <WeatherForecastIcon
+                          kind={period.weather.kind}
+                          night={period.night}
+                        />
+                      </div>
 
-                    <div className="periodCondition">
-                      {period.weather.label}
-                    </div>
-
-                    <div className="periodValues">
-                      <strong>{formatForecastRange(period.temperatureRange)}</strong>
-                      <span>
-                        Pioggia {period.rainProbability}% · {period.rainRange}
-                      </span>
+                      <div className="periodDetails">
+                        <div className="periodCondition">
+                          {period.weather.label}
+                        </div>
+                        <strong className="periodTemperature">
+                          {formatForecastRange(period.temperatureRange)}
+                        </strong>
+                        <span className="periodRain">
+                          Pioggia {period.rainProbability}% · {period.rainRange}
+                        </span>
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -2599,27 +2607,27 @@ function ForecastSection() {
         }
 
         .dailySummary {
-          margin-top: 11px;
+          margin-top: 9px;
           display: grid;
           grid-template-columns: repeat(2, minmax(0, 1fr));
-          gap: 7px;
+          gap: 6px;
         }
 
         .summaryItem {
           min-width: 0;
-          min-height: 62px;
-          padding: 8px 9px;
+          min-height: 50px;
+          padding: 5px 8px;
           display: grid;
           align-content: center;
-          gap: 2px;
+          gap: 1px;
           border: 1px solid #e7ebef;
-          border-radius: 12px;
+          border-radius: 11px;
           background: #fbfcfd;
           text-align: center;
         }
 
         .summaryItem > span {
-          font-size: 8px;
+          font-size: 7.5px;
           font-weight: 950;
           color: rgba(15, 23, 42, 0.5);
           text-transform: uppercase;
@@ -2628,7 +2636,7 @@ function ForecastSection() {
 
         .summaryItem strong {
           overflow: hidden;
-          font-size: 14px;
+          font-size: 13.5px;
           font-weight: 950;
           color: #0f172a;
           text-overflow: ellipsis;
@@ -2656,6 +2664,12 @@ function ForecastSection() {
           color: #0284c7;
         }
 
+        .rainSummary small {
+          font-size: 10px;
+          font-weight: 900;
+          color: #0369a1;
+        }
+
         .periodGrid {
           margin-top: 10px;
           display: grid;
@@ -2665,13 +2679,14 @@ function ForecastSection() {
 
         .periodForecast {
           min-width: 0;
-          min-height: 164px;
-          padding: 9px;
+          min-height: 84px;
+          padding: 8px 10px;
           display: grid;
-          grid-template-rows: auto 50px auto auto;
+          grid-template-rows: auto 1fr;
+          gap: 5px;
           align-content: start;
           border: 1px solid #e5eaf0;
-          border-radius: 14px;
+          border-radius: 12px;
           background:
             linear-gradient(180deg, rgba(248, 250, 252, 0.82), #ffffff);
           transition:
@@ -2688,32 +2703,45 @@ function ForecastSection() {
         }
 
         .periodForecast.isPast {
-          opacity: 0.52;
+          opacity: 0.68;
         }
 
         .periodTop {
           display: flex;
           align-items: baseline;
           justify-content: space-between;
-          gap: 6px;
+          gap: 8px;
+          padding-bottom: 4px;
+          border-bottom: 1px solid rgba(226, 232, 240, 0.78);
         }
 
         .periodTop strong {
-          font-size: 11px;
+          min-width: 0;
+          font-size: 10.5px;
           font-weight: 950;
           color: #0f172a;
+          white-space: nowrap;
         }
 
         .periodTop span {
-          font-size: 8px;
+          flex: 0 0 auto;
+          font-size: 7.8px;
           font-weight: 850;
           color: rgba(15, 23, 42, 0.46);
         }
 
+        .periodBody {
+          min-width: 0;
+          display: grid;
+          grid-template-columns: 34px minmax(0, 1fr);
+          align-items: center;
+          gap: 8px;
+        }
+
         .periodIcon {
-          width: 58px;
-          height: 50px;
-          margin: 2px auto 0;
+          width: 32px;
+          height: 30px;
+          margin: 0;
         }
 
         .periodIcon :global(svg) {
@@ -2723,39 +2751,47 @@ function ForecastSection() {
           overflow: visible;
         }
 
-        .periodCondition {
-          min-height: 29px;
-          display: flex;
+        .periodDetails {
+          min-width: 0;
+          display: grid;
+          grid-template-columns: 1fr;
+          grid-template-areas:
+            "temperature"
+            "condition"
+            "rain";
           align-items: center;
-          justify-content: center;
-          font-size: 9.5px;
+          gap: 1px;
+          text-align: left;
+        }
+
+        .periodCondition {
+          grid-area: condition;
+          min-width: 0;
+          font-size: 8.7px;
           font-weight: 900;
           line-height: 1.15;
           color: #334155;
-          text-align: center;
+          white-space: normal;
+          overflow-wrap: anywhere;
         }
 
-        .periodValues {
-          margin-top: 4px;
-          display: grid;
-          gap: 2px;
-          text-align: center;
-        }
-
-        .periodValues strong {
-          font-size: 12px;
+        .periodTemperature {
+          grid-area: temperature;
+          font-size: 11.5px;
           font-weight: 950;
           color: #0f172a;
           white-space: nowrap;
         }
 
-        .periodValues span {
-          overflow: hidden;
-          font-size: 7.8px;
-          font-weight: 750;
-          color: rgba(15, 23, 42, 0.48);
-          text-overflow: ellipsis;
-          white-space: nowrap;
+        .periodRain {
+          grid-area: rain;
+          min-width: 0;
+          font-size: 8px;
+          font-weight: 800;
+          line-height: 1.15;
+          color: rgba(15, 23, 42, 0.56);
+          white-space: normal;
+          overflow-wrap: anywhere;
         }
 
         .forecastFooter {
@@ -2920,17 +2956,36 @@ function ForecastSection() {
           }
 
           .summaryItem {
-            min-height: 58px;
+            min-height: 48px;
+            padding-top: 5px;
+            padding-bottom: 5px;
           }
 
           .periodForecast {
-            min-height: 154px;
-            grid-template-rows: auto 44px auto auto;
+            min-height: 82px;
+            padding: 8px;
+          }
+
+          .periodBody {
+            grid-template-columns: 30px minmax(0, 1fr);
+            gap: 6px;
           }
 
           .periodIcon {
-            width: 48px;
-            height: 44px;
+            width: 28px;
+            height: 26px;
+          }
+
+          .periodDetails {
+            gap: 1px;
+          }
+
+          .periodTemperature {
+            font-size: 11px;
+          }
+
+          .periodRain {
+            font-size: 7.7px;
           }
 
           .forecastFooter {
@@ -2963,23 +3018,43 @@ function ForecastSection() {
             font-size: 12.5px;
           }
 
+          .rainSummary small {
+            font-size: 9.5px;
+          }
+
           .periodForecast {
-            min-height: 146px;
-            padding: 8px;
-            grid-template-rows: auto 40px auto auto;
+            min-height: 78px;
+            padding: 7px;
+          }
+
+          .periodBody {
+            grid-template-columns: 26px minmax(0, 1fr);
+            gap: 5px;
           }
 
           .periodIcon {
-            width: 44px;
-            height: 40px;
+            width: 24px;
+            height: 23px;
           }
 
           .periodTop strong {
+            font-size: 9.5px;
+          }
+
+          .periodTop span {
+            font-size: 7px;
+          }
+
+          .periodTemperature {
             font-size: 10px;
           }
 
-          .periodValues strong {
-            font-size: 11px;
+          .periodCondition {
+            font-size: 8px;
+          }
+
+          .periodRain {
+            font-size: 6.8px;
           }
         }
       `}</style>
