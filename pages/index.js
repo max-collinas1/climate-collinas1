@@ -2082,8 +2082,10 @@ function ForecastSection() {
   useEffect(() => {
     let alive = true;
     let timer = null;
+    let requestInFlight = false;
+    let lastConsultationAt = null;
 
-    const scheduleNextUpdate = (lastConsultation) => {
+    const scheduleNextUpdate = (lastConsultation = lastConsultationAt) => {
       if (!alive) return;
 
       if (timer) {
@@ -2094,7 +2096,7 @@ function ForecastSection() {
       const last = Number(lastConsultation);
       const elapsed = Number.isFinite(last)
         ? Math.max(0, Date.now() - last)
-        : 0;
+        : FORECAST_REFRESH_MS;
       const delay = Math.max(1000, FORECAST_REFRESH_MS - elapsed);
 
       timer = window.setTimeout(async () => {
@@ -2108,6 +2110,10 @@ function ForecastSection() {
     };
 
     const loadForecast = async () => {
+      if (requestInFlight) return lastConsultationAt;
+
+      requestInFlight = true;
+
       try {
         setError("");
 
@@ -2187,6 +2193,7 @@ function ForecastSection() {
         }
 
         const consultationTime = Date.now();
+        lastConsultationAt = consultationTime;
 
         if (alive) {
           setForecast(built);
@@ -2206,43 +2213,77 @@ function ForecastSection() {
         }
 
         return null;
+      } finally {
+        requestInFlight = false;
       }
     };
 
+    const refreshIfDue = async () => {
+      if (!alive) return;
+
+      const last = Number(lastConsultationAt);
+      const refreshDue =
+        !Number.isFinite(last) ||
+        Date.now() - last >= FORECAST_REFRESH_MS;
+
+      if (!refreshDue) {
+        scheduleNextUpdate(last);
+        return;
+      }
+
+      const consultationTime = await loadForecast();
+
+      if (!alive) return;
+
+      scheduleNextUpdate(
+        Number.isFinite(consultationTime)
+          ? consultationTime
+          : Date.now(),
+      );
+    };
+
     /*
-     * L'apertura della pagina non provoca una nuova consultazione quando
-     * esiste già una previsione salvata nel browser. La previsione in cache
-     * viene mostrata subito e la richiesta successiva parte soltanto allo
-     * scadere dei 60 minuti dall'ultima consultazione.
+     * La cache viene mostrata immediatamente. Se ha meno di 60 minuti,
+     * la nuova richiesta parte allo scadere dell'ora effettiva dall'ultima
+     * consultazione; se è più vecchia, viene aggiornata subito.
      *
-     * Solo al primo accesso assoluto, quando la cache non esiste ancora,
-     * viene eseguita una richiesta iniziale per evitare una sezione vuota.
+     * In questo modo chiudere o riaprire la pagina non fa ripartire da zero
+     * il conteggio dei 60 minuti e non può lasciare le previsioni ferme al
+     * giorno precedente.
      */
     const cached = readForecastCache();
 
     if (cached) {
+      lastConsultationAt = cached.updatedAt;
       setForecast(cached.forecast);
       setUpdatedAt(new Date(cached.updatedAt));
       setLoading(false);
-      /*
-       * Anche riaprendo la pagina non parte una nuova richiesta:
-       * la prossima consultazione viene pianificata tra 60 minuti.
-       */
-      scheduleNextUpdate(Date.now());
+      refreshIfDue();
     } else {
-      loadForecast().then((consultationTime) => {
-        if (!alive) return;
-        scheduleNextUpdate(
-          Number.isFinite(consultationTime)
-            ? consultationTime
-            : Date.now(),
-        );
-      });
+      refreshIfDue();
     }
+
+    const handleFocus = () => {
+      refreshIfDue();
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        refreshIfDue();
+      }
+    };
+
+    window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
 
     return () => {
       alive = false;
       if (timer) window.clearTimeout(timer);
+      window.removeEventListener("focus", handleFocus);
+      document.removeEventListener(
+        "visibilitychange",
+        handleVisibilityChange,
+      );
     };
   }, []);
 
@@ -2624,10 +2665,10 @@ function ForecastSection() {
 
         .periodForecast {
           min-width: 0;
-          min-height: 176px;
+          min-height: 164px;
           padding: 9px;
           display: grid;
-          grid-template-rows: auto 56px auto auto;
+          grid-template-rows: auto 50px auto auto;
           align-content: start;
           border: 1px solid #e5eaf0;
           border-radius: 14px;
@@ -2670,8 +2711,8 @@ function ForecastSection() {
         }
 
         .periodIcon {
-          width: 64px;
-          height: 56px;
+          width: 58px;
+          height: 50px;
           margin: 2px auto 0;
         }
 
@@ -2883,7 +2924,13 @@ function ForecastSection() {
           }
 
           .periodForecast {
-            min-height: 168px;
+            min-height: 154px;
+            grid-template-rows: auto 44px auto auto;
+          }
+
+          .periodIcon {
+            width: 48px;
+            height: 44px;
           }
 
           .forecastFooter {
@@ -2917,13 +2964,14 @@ function ForecastSection() {
           }
 
           .periodForecast {
-            min-height: 160px;
+            min-height: 146px;
             padding: 8px;
+            grid-template-rows: auto 40px auto auto;
           }
 
           .periodIcon {
-            width: 58px;
-            height: 52px;
+            width: 44px;
+            height: 40px;
           }
 
           .periodTop strong {
