@@ -3689,6 +3689,26 @@ function comparisonDescriptor(mode, compareKey, selectedDate) {
   };
 }
 
+function comparisonTitleForDescriptor(descriptor) {
+  const key = String(descriptor?.key || "");
+
+  if (key === "yesterday") return "Differenza rispetto a ieri";
+  if (key === "thirty_days") return "Differenza rispetto a 30 giorni fa";
+  if (key === "year_day") return "Differenza rispetto a un anno fa";
+  if (key === "prev_week") {
+    return "Differenza rispetto alla settimana precedente";
+  }
+  if (key === "year_week") {
+    return "Differenza rispetto alla stessa settimana di un anno fa";
+  }
+  if (key === "prev_month") return "Differenza rispetto al mese precedente";
+  if (key === "year_month") {
+    return "Differenza rispetto allo stesso mese di un anno fa";
+  }
+
+  return "Differenza rispetto al periodo di confronto";
+}
+
 function localDayIndex(timestamp, startISO) {
   const d = new Date(timestamp);
   const start = isoToLocalDate(startISO, 0);
@@ -3954,33 +3974,24 @@ function deltaStatsFromSeries(pairs) {
     return {
       count: 0,
       mean: null,
-      maxPositive: null,
-      minNegative: null,
+      max: null,
+      maxTimestamp: null,
+      min: null,
+      minTimestamp: null,
       last: null,
       lastTimestamp: null,
     };
   }
 
   let total = 0;
-  let maxPositive = null;
-  let minNegative = null;
+  let maxPoint = values[0];
+  let minPoint = values[0];
 
   for (const point of values) {
     total += point.value;
 
-    if (
-      point.value > 0 &&
-      (maxPositive === null || point.value > maxPositive)
-    ) {
-      maxPositive = point.value;
-    }
-
-    if (
-      point.value < 0 &&
-      (minNegative === null || point.value < minNegative)
-    ) {
-      minNegative = point.value;
-    }
+    if (point.value > maxPoint.value) maxPoint = point;
+    if (point.value < minPoint.value) minPoint = point;
   }
 
   const lastPoint = values[values.length - 1];
@@ -3988,8 +3999,10 @@ function deltaStatsFromSeries(pairs) {
   return {
     count: values.length,
     mean: total / values.length,
-    maxPositive,
-    minNegative,
+    max: maxPoint.value,
+    maxTimestamp: maxPoint.timestamp,
+    min: minPoint.value,
+    minTimestamp: minPoint.timestamp,
     last: lastPoint.value,
     lastTimestamp: lastPoint.timestamp,
   };
@@ -4549,56 +4562,342 @@ async function loadHistoricalAverage({
   };
 }
 
+function ArchivePeriodTable({ selectedDate }) {
+  const links = useMemo(() => {
+    const match = String(selectedDate || "").match(
+      /^(\d{4})-(\d{2})-(\d{2})$/,
+    );
+
+    if (!match) return [];
+
+    const [, year, month, day] = match;
+    const monthIndex = Number(month) - 1;
+    const monthName = MONTHS_IT_FULL[monthIndex] || month;
+
+    return [
+      {
+        key: "day",
+        label: "Giorno",
+        value: `${Number(day)} ${monthName.toLowerCase()} ${year}`,
+        href: `/giorni/${selectedDate}`,
+      },
+      {
+        key: "month",
+        label: "Mese",
+        value: `${monthName} ${year}`,
+        href: `/mesi/${year}/${month}`,
+      },
+      {
+        key: "year",
+        label: "Anno",
+        value: year,
+        href: `/anni/${year}`,
+      },
+    ];
+  }, [selectedDate]);
+
+  if (!links.length) return null;
+
+  return (
+    <nav
+      className="archiveTableWrap"
+      aria-label="Collegamenti ai dati completi del giorno, del mese e dell’anno"
+    >
+      <div className="archiveEyebrow">Collegamenti diretti</div>
+
+      <div className="archiveTable">
+        {links.map((link) => (
+          <a key={link.key} href={link.href}>
+            <span>{link.label}</span>
+            <strong>{link.value}</strong>
+          </a>
+        ))}
+      </div>
+
+      <style jsx>{`
+        .archiveTableWrap {
+          padding: 9px 18px 10px;
+          border-bottom: 1px solid #eef0f2;
+          background: #fbfcfd;
+        }
+
+        .archiveEyebrow {
+          margin-bottom: 6px;
+          font-size: 8px;
+          font-weight: 950;
+          color: rgba(15, 23, 42, 0.5);
+          text-align: center;
+          text-transform: uppercase;
+          letter-spacing: 0.07em;
+        }
+
+        .archiveTable {
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          overflow: hidden;
+          border: 1px solid #e2e7ed;
+          border-radius: 12px;
+          background: #fff;
+        }
+
+        a {
+          min-width: 0;
+          min-height: 43px;
+          padding: 6px 8px;
+          display: grid;
+          place-content: center;
+          justify-items: center;
+          gap: 2px;
+          border-right: 1px solid #e8ecf0;
+          color: #0f172a;
+          text-align: center;
+          text-decoration: none;
+          transition:
+            background 120ms ease,
+            color 120ms ease;
+        }
+
+        a:last-child {
+          border-right: 0;
+        }
+
+        a:hover,
+        a:focus-visible {
+          background: #f1f5f9;
+          outline: none;
+        }
+
+        span {
+          font-size: 8px;
+          font-weight: 950;
+          color: rgba(15, 23, 42, 0.5);
+          text-transform: uppercase;
+          letter-spacing: 0.045em;
+          white-space: nowrap;
+        }
+
+        strong {
+          min-width: 0;
+          overflow: hidden;
+          font-size: 10.5px;
+          font-weight: 900;
+          color: #0f172a;
+          text-align: center;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        @media (max-width: 720px) {
+          .archiveTableWrap {
+            padding: 7px 10px 8px;
+          }
+
+          .archiveEyebrow {
+            margin-bottom: 5px;
+            font-size: 7.5px;
+          }
+
+          .archiveTable {
+            border-radius: 10px;
+          }
+
+          a {
+            min-height: 42px;
+            padding: 5px 4px;
+          }
+
+          span {
+            font-size: 7px;
+          }
+
+          strong {
+            font-size: 8.8px;
+          }
+        }
+
+        @media (max-width: 390px) {
+          strong {
+            font-size: 8px;
+          }
+        }
+      `}</style>
+    </nav>
+  );
+}
+
+function SummaryParameterIcon({ type }) {
+  if (type === "temperature") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M10 14.6V5a2 2 0 1 1 4 0v9.6a4.5 4.5 0 1 1-4 0Z" />
+        <path d="M12 8v8" />
+      </svg>
+    );
+  }
+
+  if (type === "humidity") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M12 3.2S6.7 9.1 6.7 14a5.3 5.3 0 0 0 10.6 0C17.3 9.1 12 3.2 12 3.2Z" />
+      </svg>
+    );
+  }
+
+  if (type === "rain") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M7.2 15.2h9.3a3.5 3.5 0 0 0 .3-7A5 5 0 0 0 7.3 7a4.1 4.1 0 0 0-.1 8.2Z" />
+        <path d="m8.5 18-1 2M12.5 18l-1 2M16.5 18l-1 2" />
+      </svg>
+    );
+  }
+
+  if (type === "wind") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M3 8h10.5a2.5 2.5 0 1 0-2.3-3.4" />
+        <path d="M3 12h15a2.5 2.5 0 1 1-2.3 3.4" />
+        <path d="M3 16h7" />
+      </svg>
+    );
+  }
+
+  if (type === "pressure") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M5 17a7 7 0 1 1 14 0" />
+        <path d="m12 12 4-3" />
+        <path d="M7 18h10" />
+      </svg>
+    );
+  }
+
+  if (type === "solar") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <circle cx="12" cy="12" r="4" />
+        <path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="12" cy="12" r="5" />
+      <path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4" />
+      <path d="M9.2 12.2h5.6" />
+    </svg>
+  );
+}
+
 function PeriodSummary({ data, mode }) {
   const items = useMemo(() => {
     if (!data) return [];
 
     const tempStats = seriesStats(data.temp);
-    const gustStats = seriesStats(data.gust);
-    const windStats = seriesStats(data.wind);
     const rhStats = seriesStats(data.rh);
+    const windStats = seriesStats(data.wind);
+    const gustStats = seriesStats(data.gust);
     const pressStats = seriesStats(data.press);
+    const solarStats = seriesStats(data.solar);
+    const uvStats = seriesStats(data.uv);
+
+    const metric = (label, value, detail = "") => ({
+      label,
+      value,
+      detail,
+    });
 
     return [
       {
-        label: "Temperatura minima",
-        value: `${fmt(tempStats.min, 1)} °C`,
-        detail: formatSummaryTimestamp(tempStats.minTimestamp, mode),
-      },
-      {
-        label: "Temperatura massima",
-        value: `${fmt(tempStats.max, 1)} °C`,
-        detail: formatSummaryTimestamp(tempStats.maxTimestamp, mode),
-      },
-      {
-        label: "Temperatura media",
+        key: "temperature",
+        label: "Temperature",
+        mainLabel: "Media",
         value: `${fmt(tempStats.mean, 1)} °C`,
-        detail: "sui dati disponibili",
+        metrics: [
+          metric(
+            "Minima",
+            `${fmt(tempStats.min, 1)} °C`,
+            formatSummaryTimestamp(tempStats.minTimestamp, mode),
+          ),
+          metric(
+            "Massima",
+            `${fmt(tempStats.max, 1)} °C`,
+            formatSummaryTimestamp(tempStats.maxTimestamp, mode),
+          ),
+        ],
       },
       {
-        label: "Precipitazione",
-        value: `${fmt(data.rainTotal, 1)} mm`,
-        detail: "cumulata del periodo",
-      },
-      {
-        label: "Vento medio",
-        value: `${fmt(windStats.mean, 1)} km/h`,
-        detail: "media del periodo",
-      },
-      {
-        label: "Raffica massima",
-        value: `${fmt(gustStats.max, 1)} km/h`,
-        detail: formatSummaryTimestamp(gustStats.maxTimestamp, mode),
-      },
-      {
-        label: "Umidità media",
+        key: "humidity",
+        label: "Umidità",
+        mainLabel: "Media",
         value: `${fmt(rhStats.mean, 1)} %`,
-        detail: "media del periodo",
+        metrics: [
+          metric("Minima", `${fmt(rhStats.min, 1)} %`),
+          metric("Massima", `${fmt(rhStats.max, 1)} %`),
+        ],
       },
       {
-        label: "Pressione media",
+        key: "rain",
+        label: "Precipitazioni",
+        mainLabel: "Totale",
+        value: `${fmt(data.rainTotal, 1)} mm`,
+        description: "Cumulata del periodo",
+        metrics: [],
+      },
+      {
+        key: "wind",
+        label: "Vento",
+        mainLabel: "Media",
+        value: `${fmt(windStats.mean, 1)} km/h`,
+        metrics: [
+          metric(
+            "Massimo",
+            `${fmt(windStats.max, 1)} km/h`,
+            formatSummaryTimestamp(windStats.maxTimestamp, mode),
+          ),
+          metric(
+            "Raffica massima",
+            `${fmt(gustStats.max, 1)} km/h`,
+            formatSummaryTimestamp(gustStats.maxTimestamp, mode),
+          ),
+        ],
+      },
+      {
+        key: "pressure",
+        label: "Pressione",
+        mainLabel: "Media",
         value: `${fmt(pressStats.mean, 1)} hPa`,
-        detail: "media del periodo",
+        metrics: [
+          metric("Minima", `${fmt(pressStats.min, 1)} hPa`),
+          metric("Massima", `${fmt(pressStats.max, 1)} hPa`),
+        ],
+      },
+      {
+        key: "solar",
+        label: "Radiazione solare",
+        mainLabel: "Media",
+        value: `${fmt(solarStats.mean, 0)} W/m²`,
+        metrics: [
+          metric(
+            "Massima",
+            `${fmt(solarStats.max, 0)} W/m²`,
+            formatSummaryTimestamp(solarStats.maxTimestamp, mode),
+          ),
+        ],
+      },
+      {
+        key: "uv",
+        label: "Indice UV",
+        mainLabel: "Media",
+        value: fmt(uvStats.mean, 1),
+        metrics: [
+          metric(
+            "Massimo",
+            fmt(uvStats.max, 1),
+            formatSummaryTimestamp(uvStats.maxTimestamp, mode),
+          ),
+        ],
       },
     ];
   }, [data, mode]);
@@ -4609,36 +4908,56 @@ function PeriodSummary({ data, mode }) {
     <section className="summarySection" aria-label="Riepilogo del periodo">
       <div className="summaryHead">
         <h3>Riepilogo del periodo</h3>
-        <span>Valori calcolati sui dati effettivamente disponibili</span>
       </div>
 
       <div className="summaryGrid">
         {items.map((item) => (
-          <div className="summaryCell" key={item.label}>
-            <span className="summaryLabel">{item.label}</span>
-            <strong>{item.value}</strong>
-            <small>{item.detail}</small>
+          <div className={`summaryCell ${item.key}`} key={item.key}>
+            <div className="summaryIdentity">
+              <span className="summaryIcon">
+                <SummaryParameterIcon type={item.key} />
+              </span>
+              <span className="summaryLabel">{item.label}</span>
+            </div>
+
+            <div className="summaryMain">
+              <small>{item.mainLabel}</small>
+              <strong>{item.value}</strong>
+              {item.description ? <p>{item.description}</p> : null}
+            </div>
+
+            {item.metrics.length > 0 && (
+              <div
+                className={`summaryMetrics ${
+                  item.metrics.length === 1 ? "oneMetric" : ""
+                }`}
+              >
+                {item.metrics.map((entry) => (
+                  <div className="summaryMetric" key={`${item.key}-${entry.label}`}>
+                    <span>{entry.label}</span>
+                    <b>{entry.value}</b>
+                    {entry.detail ? <small>{entry.detail}</small> : null}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         ))}
       </div>
 
       <style jsx>{`
         .summarySection {
-          padding: 16px 18px 18px;
+          padding: 14px 18px 16px;
           border-bottom: 1px solid #eef0f2;
           background: #fff;
         }
 
         .summaryHead {
-          display: grid;
-          grid-template-columns: 1fr auto 1fr;
-          align-items: baseline;
-          gap: 14px;
-          margin-bottom: 11px;
+          margin-bottom: 10px;
+          text-align: center;
         }
 
         h3 {
-          grid-column: 2;
           margin: 0;
           font-size: 16px;
           font-weight: 950;
@@ -4646,69 +4965,202 @@ function PeriodSummary({ data, mode }) {
           text-align: center;
         }
 
-        .summaryHead span {
-          grid-column: 3;
-          justify-self: end;
-          font-size: 10px;
-          font-weight: 750;
-          color: rgba(15, 23, 42, 0.52);
-          text-align: right;
-        }
-
         .summaryGrid {
           display: grid;
-          grid-template-columns: repeat(4, minmax(0, 1fr));
-          border: 1px solid #e8ebef;
-          border-radius: 16px;
-          overflow: hidden;
-          background: #fff;
+          grid-template-columns: repeat(12, minmax(0, 1fr));
+          gap: 8px;
         }
 
         .summaryCell {
+          --accent: #475569;
+          --soft: rgba(71, 85, 105, 0.09);
+          grid-column: span 3;
           min-width: 0;
-          min-height: 78px;
-          padding: 11px 13px;
+          min-height: 118px;
+          padding: 10px 11px;
           display: grid;
-          align-content: center;
-          gap: 3px;
-          border-right: 1px solid #eef0f3;
-          border-bottom: 1px solid #eef0f3;
-          background: #fbfcfd;
+          align-content: start;
+          justify-items: center;
+          gap: 5px;
+          border: 1px solid color-mix(in srgb, var(--accent) 24%, #e5e7eb);
+          border-top: 3px solid var(--accent);
+          border-radius: 14px;
+          background:
+            linear-gradient(180deg, var(--soft), rgba(255, 255, 255, 0.96) 58%);
+          text-align: center;
+          box-shadow: 0 3px 10px rgba(15, 23, 42, 0.025);
         }
 
-        .summaryCell:nth-child(4n) {
-          border-right: 0;
+        .summaryCell:nth-child(n + 5) {
+          grid-column: span 4;
         }
 
-        .summaryCell:nth-last-child(-n + 4) {
-          border-bottom: 0;
+        .summaryCell.temperature {
+          --accent: #ea580c;
+          --soft: rgba(249, 115, 22, 0.1);
+        }
+
+        .summaryCell.humidity {
+          --accent: #0891b2;
+          --soft: rgba(6, 182, 212, 0.1);
+        }
+
+        .summaryCell.rain {
+          --accent: #0284c7;
+          --soft: rgba(14, 165, 233, 0.11);
+        }
+
+        .summaryCell.wind {
+          --accent: #7c3aed;
+          --soft: rgba(124, 58, 237, 0.09);
+        }
+
+        .summaryCell.pressure {
+          --accent: #475569;
+          --soft: rgba(100, 116, 139, 0.09);
+        }
+
+        .summaryCell.solar {
+          --accent: #d97706;
+          --soft: rgba(245, 158, 11, 0.11);
+        }
+
+        .summaryCell.uv {
+          --accent: #9333ea;
+          --soft: rgba(147, 51, 234, 0.09);
+        }
+
+        .summaryIdentity {
+          min-width: 0;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 6px;
+        }
+
+        .summaryIcon {
+          width: 25px;
+          height: 25px;
+          flex: 0 0 25px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          border-radius: 8px;
+          background: var(--soft);
+          color: var(--accent);
+        }
+
+        .summaryIcon :global(svg) {
+          width: 16px;
+          height: 16px;
+          fill: none;
+          stroke: currentColor;
+          stroke-width: 1.8;
+          stroke-linecap: round;
+          stroke-linejoin: round;
         }
 
         .summaryLabel {
+          min-width: 0;
           overflow: hidden;
           font-size: 9px;
-          font-weight: 900;
-          color: rgba(15, 23, 42, 0.55);
+          font-weight: 950;
+          color: var(--accent);
+          text-align: center;
           text-transform: uppercase;
-          letter-spacing: 0.035em;
+          letter-spacing: 0.045em;
           text-overflow: ellipsis;
           white-space: nowrap;
         }
 
-        strong {
+        .summaryMain {
+          min-width: 0;
+          display: grid;
+          justify-items: center;
+          gap: 0;
+          text-align: center;
+        }
+
+        .summaryMain small {
+          font-size: 7px;
+          font-weight: 850;
+          color: rgba(15, 23, 42, 0.44);
+          text-transform: uppercase;
+          letter-spacing: 0.04em;
+        }
+
+        .summaryMain strong {
+          max-width: 100%;
           overflow: hidden;
           font-size: 17px;
           font-weight: 950;
-          color: #0f172a;
+          color: var(--accent);
+          text-align: center;
           text-overflow: ellipsis;
           white-space: nowrap;
         }
 
-        small {
+        .summaryMain p {
+          margin: 2px 0 0;
+          font-size: 8px;
+          font-weight: 750;
+          color: rgba(15, 23, 42, 0.46);
+        }
+
+        .summaryMetrics {
+          width: 100%;
+          margin-top: auto;
+          padding-top: 5px;
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 5px;
+          border-top: 1px solid color-mix(in srgb, var(--accent) 15%, #e2e8f0);
+        }
+
+        .summaryMetrics.oneMetric {
+          grid-template-columns: minmax(0, 1fr);
+        }
+
+        .summaryMetric {
+          min-width: 0;
+          padding: 3px 4px;
+          display: grid;
+          justify-items: center;
+          gap: 0;
+          border-radius: 7px;
+          background: rgba(255, 255, 255, 0.62);
+          text-align: center;
+        }
+
+        .summaryMetric span {
+          max-width: 100%;
+          overflow: hidden;
+          font-size: 6.8px;
+          font-weight: 850;
+          color: rgba(15, 23, 42, 0.47);
+          text-align: center;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .summaryMetric b {
+          max-width: 100%;
           overflow: hidden;
           font-size: 9px;
+          font-weight: 950;
+          color: #0f172a;
+          text-align: center;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .summaryMetric small {
+          max-width: 100%;
+          overflow: hidden;
+          font-size: 6.7px;
           font-weight: 750;
-          color: rgba(15, 23, 42, 0.48);
+          color: rgba(15, 23, 42, 0.42);
+          text-align: center;
           text-overflow: ellipsis;
           white-space: nowrap;
         }
@@ -4718,59 +5170,103 @@ function PeriodSummary({ data, mode }) {
             grid-template-columns: repeat(2, minmax(0, 1fr));
           }
 
-          .summaryCell:nth-child(4n) {
-            border-right: 1px solid #eef0f3;
+          .summaryCell,
+          .summaryCell:nth-child(n + 5) {
+            grid-column: span 1;
           }
 
-          .summaryCell:nth-child(2n) {
-            border-right: 0;
-          }
-
-          .summaryCell:nth-last-child(-n + 4) {
-            border-bottom: 1px solid #eef0f3;
-          }
-
-          .summaryCell:nth-last-child(-n + 2) {
-            border-bottom: 0;
+          .summaryCell:last-child {
+            grid-column: 1 / -1;
           }
         }
 
         @media (max-width: 560px) {
           .summarySection {
-            padding: 14px 10px 16px;
-          }
-
-          .summaryHead {
-            grid-template-columns: 1fr;
-            gap: 3px;
-            text-align: center;
+            padding: 12px 10px 13px;
           }
 
           h3 {
-            grid-column: 1;
             font-size: 15px;
           }
 
-          .summaryHead span {
-            grid-column: 1;
-            justify-self: center;
-            font-size: 9px;
-            text-align: center;
+          .summaryGrid {
+            gap: 7px;
           }
 
           .summaryCell {
-            min-height: 72px;
-            padding: 9px 10px;
+            min-height: 112px;
+            padding: 8px 7px;
+            border-radius: 12px;
           }
 
-          strong {
-            font-size: 15px;
+          .summaryIdentity {
+            gap: 4px;
+          }
+
+          .summaryIcon {
+            width: 23px;
+            height: 23px;
+            flex-basis: 23px;
+          }
+
+          .summaryIcon :global(svg) {
+            width: 15px;
+            height: 15px;
+          }
+
+          .summaryLabel {
+            font-size: 7.5px;
+          }
+
+          .summaryMain strong {
+            font-size: 14px;
+          }
+
+          .summaryMetric {
+            padding-left: 2px;
+            padding-right: 2px;
+          }
+
+          .summaryMetric b {
+            font-size: 8px;
+          }
+
+          .summaryMetric span,
+          .summaryMetric small {
+            font-size: 6.2px;
+          }
+        }
+
+        @media (max-width: 390px) {
+          .summaryCell {
+            min-height: 108px;
+            padding-left: 5px;
+            padding-right: 5px;
+          }
+
+          .summaryIcon {
+            width: 21px;
+            height: 21px;
+            flex-basis: 21px;
+          }
+
+          .summaryLabel {
+            font-size: 7px;
+          }
+
+          .summaryMain strong {
+            font-size: 13px;
+          }
+
+          .summaryMetric b {
+            font-size: 7.3px;
           }
         }
       `}</style>
     </section>
   );
 }
+
 
 function ComparisonChart({
   mode,
@@ -4858,7 +5354,7 @@ function ComparisonChart({
       animation: true,
       animationDuration: 220,
       grid: isMobile
-        ? { left: 50, right: 18, top: 35, bottom: 54 }
+        ? { left: 48, right: 14, top: 28, bottom: 42 }
         : { left: 70, right: 34, top: 35, bottom: 58 },
       tooltip: {
         trigger: "axis",
@@ -5015,16 +5511,20 @@ function ComparisonChart({
       tone: deltaTone(deltaStats.mean),
     },
     {
-      label: "Massimo positivo",
-      value: formatSignedDelta(deltaStats.maxPositive, meta.unit),
-      detail: meta.positiveText,
-      tone: "positive",
+      label: "Differenza massima",
+      value: formatSignedDelta(deltaStats.max, meta.unit),
+      detail: Number.isFinite(Number(deltaStats.maxTimestamp))
+        ? formatSummaryTimestamp(deltaStats.maxTimestamp, mode)
+        : "—",
+      tone: deltaTone(deltaStats.max),
     },
     {
-      label: "Massimo negativo",
-      value: formatSignedDelta(deltaStats.minNegative, meta.unit),
-      detail: meta.negativeText,
-      tone: "negative",
+      label: "Differenza minima",
+      value: formatSignedDelta(deltaStats.min, meta.unit),
+      detail: Number.isFinite(Number(deltaStats.minTimestamp))
+        ? formatSummaryTimestamp(deltaStats.minTimestamp, mode)
+        : "—",
+      tone: deltaTone(deltaStats.min),
     },
     {
       label: "Ultima differenza",
@@ -5040,9 +5540,9 @@ function ComparisonChart({
     <section className="comparisonSection" aria-label="Grafico di confronto">
       <div className="comparisonHead">
         <div className="comparisonText">
-          <h3>{meta.differenceTitle}</h3>
+          <h3>{comparisonTitleForDescriptor(descriptor)}</h3>
           <p>
-            Periodo corrente meno {descriptor?.label || "periodo di confronto"}
+            {meta.shortLabel} · periodo corrente meno {descriptor?.label || "periodo di confronto"}
             {descriptor ? ` · ${comparisonPeriodText}` : ""}
           </p>
         </div>
@@ -5070,7 +5570,7 @@ function ComparisonChart({
         {!loading && !error && option && (
           <ReactECharts
             option={option}
-            style={{ height: isMobile ? 245 : 260, width: "100%" }}
+            style={{ height: isMobile ? 210 : 260, width: "100%" }}
             notMerge={true}
             lazyUpdate={true}
           />
@@ -5086,7 +5586,7 @@ function ComparisonChart({
           }}
         >
           {summaryItems.map((item) => (
-            <div className="deltaCell" key={item.label}>
+            <div className={`deltaCell tone-${item.tone}`} key={item.label}>
               <span className="deltaLabel">{item.label}</span>
               <strong className={item.tone}>{item.value}</strong>
               <small>{item.detail}</small>
@@ -5168,33 +5668,56 @@ function ComparisonChart({
         }
 
         .deltaSummary {
-          margin: 0 18px 16px;
+          width: min(calc(100% - 36px), 920px);
+          margin: 0 auto 12px;
           display: grid;
           grid-template-columns: repeat(4, minmax(0, 1fr));
-          border: 1px solid #e3e7ec;
-          border-radius: 14px;
-          overflow: hidden;
-          background: #fff;
+          gap: 6px;
         }
 
         .deltaCell {
           min-width: 0;
-          min-height: 64px;
-          padding: 9px 11px;
+          min-height: 42px;
+          padding: 5px 8px;
           display: grid;
           align-content: center;
-          gap: 2px;
-          border-right: 1px solid #edf0f3;
-          background: rgba(255, 255, 255, 0.9);
+          justify-items: center;
+          gap: 0;
+          text-align: center;
+          border: 1px solid #e3e7ec;
+          border-radius: 9px;
+          background: linear-gradient(180deg, #ffffff, #fafbfc);
         }
 
-        .deltaCell:last-child {
-          border-right: 0;
+        .deltaCell.tone-positive {
+          border-color: color-mix(
+            in srgb,
+            var(--positive-color) 24%,
+            #e3e7ec
+          );
+          background: color-mix(
+            in srgb,
+            var(--positive-color) 6%,
+            #ffffff
+          );
+        }
+
+        .deltaCell.tone-negative {
+          border-color: color-mix(
+            in srgb,
+            var(--negative-color) 24%,
+            #e3e7ec
+          );
+          background: color-mix(
+            in srgb,
+            var(--negative-color) 6%,
+            #ffffff
+          );
         }
 
         .deltaLabel {
           overflow: hidden;
-          font-size: 8.5px;
+          font-size: 7.5px;
           font-weight: 900;
           color: rgba(15, 23, 42, 0.53);
           text-transform: uppercase;
@@ -5205,7 +5728,7 @@ function ComparisonChart({
 
         .deltaCell strong {
           overflow: hidden;
-          font-size: 15px;
+          font-size: 13px;
           font-weight: 950;
           color: #0f172a;
           text-overflow: ellipsis;
@@ -5222,7 +5745,7 @@ function ComparisonChart({
 
         .deltaCell small {
           overflow: hidden;
-          font-size: 8.5px;
+          font-size: 7.5px;
           font-weight: 750;
           color: rgba(15, 23, 42, 0.47);
           text-overflow: ellipsis;
@@ -5253,36 +5776,29 @@ function ComparisonChart({
           }
 
           .comparisonChart {
-            min-height: 245px;
+            min-height: 210px;
             padding-left: 0;
             padding-right: 0;
           }
 
           .compareMsg {
-            min-height: 215px;
+            min-height: 188px;
           }
 
           .deltaSummary {
-            margin: 0 10px 14px;
+            width: calc(100% - 20px);
+            margin: 0 auto 10px;
             grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 5px;
           }
 
           .deltaCell {
-            min-height: 60px;
-            padding: 8px 9px;
-            border-bottom: 1px solid #edf0f3;
-          }
-
-          .deltaCell:nth-child(2n) {
-            border-right: 0;
-          }
-
-          .deltaCell:nth-last-child(-n + 2) {
-            border-bottom: 0;
+            min-height: 42px;
+            padding: 5px 7px;
           }
 
           .deltaCell strong {
-            font-size: 14px;
+            font-size: 12.5px;
           }
         }
       `}</style>
@@ -5350,7 +5866,7 @@ function ClimatologyChart({
       animation: true,
       animationDuration: 220,
       grid: isMobile
-        ? { left: 50, right: 18, top: 35, bottom: 54 }
+        ? { left: 48, right: 14, top: 28, bottom: 42 }
         : { left: 70, right: 34, top: 35, bottom: 58 },
       tooltip: {
         trigger: "axis",
@@ -5511,16 +6027,20 @@ function ClimatologyChart({
       tone: deltaTone(anomalyStats.mean),
     },
     {
-      label: "Massimo sopra media",
-      value: formatSignedDelta(anomalyStats.maxPositive, meta.unit),
-      detail: meta.positiveText,
-      tone: "positive",
+      label: "Scarto massimo",
+      value: formatSignedDelta(anomalyStats.max, meta.unit),
+      detail: Number.isFinite(Number(anomalyStats.maxTimestamp))
+        ? formatSummaryTimestamp(anomalyStats.maxTimestamp, mode)
+        : "—",
+      tone: deltaTone(anomalyStats.max),
     },
     {
-      label: "Massimo sotto media",
-      value: formatSignedDelta(anomalyStats.minNegative, meta.unit),
-      detail: meta.negativeText,
-      tone: "negative",
+      label: "Scarto minimo",
+      value: formatSignedDelta(anomalyStats.min, meta.unit),
+      detail: Number.isFinite(Number(anomalyStats.minTimestamp))
+        ? formatSummaryTimestamp(anomalyStats.minTimestamp, mode)
+        : "—",
+      tone: deltaTone(anomalyStats.min),
     },
     {
       label: "Ultimo scarto",
@@ -5569,7 +6089,7 @@ function ClimatologyChart({
         {!loading && !error && option && (
           <ReactECharts
             option={option}
-            style={{ height: isMobile ? 245 : 260, width: "100%" }}
+            style={{ height: isMobile ? 210 : 260, width: "100%" }}
             notMerge={true}
             lazyUpdate={true}
           />
@@ -5585,7 +6105,7 @@ function ClimatologyChart({
           }}
         >
           {summaryItems.map((item) => (
-            <div className="climateCell" key={item.label}>
+            <div className={`climateCell tone-${item.tone}`} key={item.label}>
               <span className="climateLabel">{item.label}</span>
               <strong className={item.tone}>{item.value}</strong>
               <small>{item.detail}</small>
@@ -5696,33 +6216,56 @@ function ClimatologyChart({
         }
 
         .climateSummary {
-          margin: 0 18px 12px;
+          width: min(calc(100% - 36px), 920px);
+          margin: 0 auto 10px;
           display: grid;
           grid-template-columns: repeat(4, minmax(0, 1fr));
-          border: 1px solid #e3e7ec;
-          border-radius: 14px;
-          overflow: hidden;
-          background: #fff;
+          gap: 6px;
         }
 
         .climateCell {
           min-width: 0;
-          min-height: 64px;
-          padding: 9px 11px;
+          min-height: 42px;
+          padding: 5px 8px;
           display: grid;
           align-content: center;
-          gap: 2px;
-          border-right: 1px solid #edf0f3;
-          background: #fbfcfd;
+          justify-items: center;
+          gap: 0;
+          text-align: center;
+          border: 1px solid #e3e7ec;
+          border-radius: 9px;
+          background: linear-gradient(180deg, #ffffff, #fafbfc);
         }
 
-        .climateCell:last-child {
-          border-right: 0;
+        .climateCell.tone-positive {
+          border-color: color-mix(
+            in srgb,
+            var(--positive-color) 24%,
+            #e3e7ec
+          );
+          background: color-mix(
+            in srgb,
+            var(--positive-color) 6%,
+            #ffffff
+          );
+        }
+
+        .climateCell.tone-negative {
+          border-color: color-mix(
+            in srgb,
+            var(--negative-color) 24%,
+            #e3e7ec
+          );
+          background: color-mix(
+            in srgb,
+            var(--negative-color) 6%,
+            #ffffff
+          );
         }
 
         .climateLabel {
           overflow: hidden;
-          font-size: 8.5px;
+          font-size: 7.5px;
           font-weight: 900;
           color: rgba(15, 23, 42, 0.53);
           text-transform: uppercase;
@@ -5733,7 +6276,7 @@ function ClimatologyChart({
 
         .climateCell strong {
           overflow: hidden;
-          font-size: 15px;
+          font-size: 13px;
           font-weight: 950;
           color: #0f172a;
           text-overflow: ellipsis;
@@ -5750,7 +6293,7 @@ function ClimatologyChart({
 
         .climateCell small {
           overflow: hidden;
-          font-size: 8.5px;
+          font-size: 7.5px;
           font-weight: 750;
           color: rgba(15, 23, 42, 0.47);
           text-overflow: ellipsis;
@@ -5793,36 +6336,29 @@ function ClimatologyChart({
           }
 
           .climatologyChart {
-            min-height: 245px;
+            min-height: 210px;
             padding-left: 0;
             padding-right: 0;
           }
 
           .climateMsg {
-            min-height: 215px;
+            min-height: 188px;
           }
 
           .climateSummary {
-            margin: 0 10px 12px;
+            width: calc(100% - 20px);
+            margin: 0 auto 10px;
             grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 5px;
           }
 
           .climateCell {
-            min-height: 60px;
-            padding: 8px 9px;
-            border-bottom: 1px solid #edf0f3;
-          }
-
-          .climateCell:nth-child(2n) {
-            border-right: 0;
-          }
-
-          .climateCell:nth-last-child(-n + 2) {
-            border-bottom: 0;
+            min-height: 42px;
+            padding: 5px 7px;
           }
 
           .climateCell strong {
-            font-size: 14px;
+            font-size: 12.5px;
           }
 
           .climateNote {
@@ -6244,10 +6780,10 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
     if (!data) return null;
 
     const baseLegend = {
-      bottom: isMobileChart ? 34 : 36,
+      bottom: isMobileChart ? 27 : 36,
       left: "center",
       orient: isMobileChart ? "vertical" : "horizontal",
-      itemGap: isMobileChart ? 7 : 18,
+      itemGap: isMobileChart ? 5 : 18,
       textStyle: {
         fontSize: isMobileChart ? 11 : 12,
         fontWeight: 700,
@@ -6256,12 +6792,12 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
     };
 
     const gridNoLegend = isMobileChart
-      ? { left: 50, right: 22, top: 88, bottom: 74, containLabel: false }
+      ? { left: 50, right: 22, top: 72, bottom: 62, containLabel: false }
       : { left: 70, right: 34, top: 78, bottom: 92 };
 
     const gridWithLegend = isMobileChart
-      ? { left: 50, right: 50, top: 96, bottom: 142, containLabel: false }
-      : { left: 70, right: 70, top: 92, bottom: 100 };
+      ? { left: 50, right: 22, top: 78, bottom: 112, containLabel: false }
+      : { left: 70, right: 34, top: 92, bottom: 100 };
 
     const toolboxZoom = {
       feature: {
@@ -6269,7 +6805,7 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
         restore: {},
       },
       right: isMobileChart ? 6 : 12,
-      top: isMobileChart ? 46 : 38,
+      top: isMobileChart ? 38 : 38,
       itemSize: isMobileChart ? 16 : 18,
       itemGap: isMobileChart ? 8 : 10,
     };
@@ -6277,7 +6813,7 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
     const chartTitle = (text) => ({
       text,
       left: "center",
-      top: isMobileChart ? 7 : 8,
+      top: isMobileChart ? 5 : 8,
       textStyle: {
         fontSize: isVeryNarrowChart ? 16 : isMobileChart ? 17 : 18,
         fontWeight: 700,
@@ -6714,14 +7250,16 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
 
   const chartHeight = isMobileChart
     ? groupKey === "wind"
-      ? 455
-      : 415
+      ? 370
+      : 340
     : 420;
 
   return (
     <div className="periodCard" aria-label={periodTitle}>
+      <ArchivePeriodTable selectedDate={selectedDate} />
+
       <div className="periodHead">
-        <div className="leftControls">
+        <div className="leftControls desktopControls">
           <div className="menu leftMenu">
             <span className="menuLabel">Tipo di grafico</span>
             <CustomSelect
@@ -6751,7 +7289,7 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
           </div>
         </div>
 
-        <div className="menu parameterMenu rightMenu">
+        <div className="menu parameterMenu rightMenu desktopControls">
           <span className="menuLabel">Seleziona parametro</span>
           <CustomSelect
             value={groupKey}
@@ -6797,7 +7335,44 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
         </button>
       </div>
 
-      {!loading && !err && data && <PeriodSummary data={data} mode={mode} />}
+      {!loading && !err && data && (
+        <PeriodSummary data={data} mode={mode} />
+      )}
+
+      <div className="mobileChartControls" aria-label="Selezione del grafico">
+        <div className="leftControls">
+          <div className="menu leftMenu">
+            <span className="menuLabel">Tipo di grafico</span>
+            <CustomSelect
+              value={mode}
+              options={PERIODS}
+              onChange={setMode}
+              ariaLabel="Tipo di grafico"
+            />
+          </div>
+
+          <button
+            type="button"
+            className="todayButton"
+            onClick={goToToday}
+            disabled={!latestAvailableDate || isTodayView}
+            aria-label="Torna al grafico di oggi"
+            title="Torna al grafico di oggi"
+          >
+            Oggi
+          </button>
+        </div>
+
+        <div className="menu parameterMenu rightMenu">
+          <span className="menuLabel">Seleziona parametro</span>
+          <CustomSelect
+            value={groupKey}
+            options={GROUPS}
+            onChange={setGroupKey}
+            ariaLabel="Seleziona parametro"
+          />
+        </div>
+      </div>
 
       <div className="chartArea">
         {loading && <div className="msg">Caricamento del grafico…</div>}
@@ -6884,6 +7459,10 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
         .menu {
           display: grid;
           gap: 5px;
+        }
+
+        .mobileChartControls {
+          display: none;
         }
 
         .leftControls {
@@ -7032,7 +7611,7 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
           width: 100%;
           min-width: 0;
           min-height: 430px;
-          padding: 6px 8px 2px;
+          padding: 0 8px 2px;
           box-sizing: border-box;
         }
 
@@ -7093,8 +7672,36 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
 
           .periodHead {
             min-height: 0;
-            padding: 16px 12px;
-            gap: 14px;
+            padding: 14px 12px;
+            grid-template-areas: "title";
+            gap: 0;
+          }
+
+          .periodHead .desktopControls {
+            display: none;
+          }
+
+          .mobileChartControls {
+            position: relative;
+            z-index: 25;
+            padding: 12px 10px 10px;
+            display: grid;
+            gap: 10px;
+            border-bottom: 1px solid #eef0f2;
+            background: #fbfcfd;
+          }
+
+          .mobileChartControls .leftControls {
+            grid-area: auto;
+            grid-column: auto;
+            justify-self: stretch;
+            justify-content: stretch;
+          }
+
+          .mobileChartControls .rightMenu {
+            grid-area: auto;
+            grid-column: auto;
+            justify-self: stretch;
           }
 
           .periodText {
@@ -7169,13 +7776,13 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
           }
 
           .chartArea {
-            min-height: 415px;
-            padding: 4px 0 0;
+            min-height: 340px;
+            padding: 0;
             overflow: hidden;
           }
 
           .msg {
-            min-height: 375px;
+            min-height: 310px;
           }
         }
 
