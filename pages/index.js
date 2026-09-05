@@ -226,20 +226,6 @@ function addDaysISO(iso, amount) {
   return dateToISO(d);
 }
 
-function addMonthsISO(iso, amount) {
-  const d = isoToLocalDate(iso);
-  if (!d) return iso;
-
-  const originalDay = d.getDate();
-  d.setDate(1);
-  d.setMonth(d.getMonth() + amount);
-
-  const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0, 12).getDate();
-  d.setDate(Math.min(originalDay, lastDay));
-
-  return dateToISO(d);
-}
-
 function dateRangeISO(startISO, endISO) {
   const start = isoToLocalDate(startISO);
   const end = isoToLocalDate(endISO);
@@ -259,28 +245,30 @@ function dateRangeISO(startISO, endISO) {
 function getPeriodBounds(mode, selectedDate) {
   if (!selectedDate) return { startISO: null, endISO: null };
 
+  // "Oggi" è un giorno di calendario: 00:00–24:00 della data selezionata.
   if (mode === "day") {
     return { startISO: selectedDate, endISO: selectedDate };
   }
 
+  // Per 7 e 30 giorni carichiamo anche il giorno iniziale necessario a
+  // costruire una finestra mobile esatta fino all'ultima osservazione.
   if (mode === "week") {
     return {
-      startISO: addDaysISO(selectedDate, -6),
+      startISO: addDaysISO(selectedDate, -7),
       endISO: selectedDate,
     };
   }
 
-  const d = isoToLocalDate(selectedDate);
-  if (!d) return { startISO: selectedDate, endISO: selectedDate };
+  if (mode === "month") {
+    return {
+      startISO: addDaysISO(selectedDate, -30),
+      endISO: selectedDate,
+    };
+  }
 
-  const start = new Date(d.getFullYear(), d.getMonth(), 1, 12);
-  const end = new Date(d.getFullYear(), d.getMonth() + 1, 0, 12);
-
-  return {
-    startISO: dateToISO(start),
-    endISO: dateToISO(end),
-  };
+  return { startISO: selectedDate, endISO: selectedDate };
 }
+
 
 function formatLongDate(iso) {
   const d = isoToLocalDate(iso);
@@ -289,25 +277,17 @@ function formatLongDate(iso) {
   return `${WEEKDAYS_IT[d.getDay()]} ${d.getDate()} ${MONTHS_IT_LOWER[d.getMonth()]} ${d.getFullYear()}`;
 }
 
-function formatCompactDate(iso) {
-  const d = isoToLocalDate(iso);
-  if (!d) return iso || "—";
-  return `${pad2(d.getDate())}/${pad2(d.getMonth() + 1)}/${d.getFullYear()}`;
-}
-
 function formatPeriodLabel(mode, selectedDate) {
-  const bounds = getPeriodBounds(mode, selectedDate);
+  if (!selectedDate) return "—";
 
   if (mode === "day") return formatLongDate(selectedDate);
-
-  if (mode === "week") {
-    return `${formatCompactDate(bounds.startISO)} – ${formatCompactDate(bounds.endISO)}`;
+  if (mode === "week" || mode === "month") {
+    return `Fino a ${formatLongDate(selectedDate)}`;
   }
 
-  const d = isoToLocalDate(selectedDate);
-  if (!d) return selectedDate || "—";
-  return `${MONTHS_IT_FULL[d.getMonth()]} ${d.getFullYear()}`;
+  return formatLongDate(selectedDate);
 }
+
 
 function nearestAvailableDate(dates, targetISO, direction = 0) {
   if (!Array.isArray(dates) || !dates.length) return targetISO || null;
@@ -361,21 +341,11 @@ function moveSelectedDate(dates, selectedDate, mode, direction) {
     return dates[nextIndex];
   }
 
-  if (mode === "week") {
-    const target = addDaysISO(selectedDate, direction * 7);
-    return nearestAvailableDate(dates, target, direction);
-  }
-
-  const target = addMonthsISO(selectedDate, direction);
-  const targetMonth = target.slice(0, 7);
-  const monthDates = dates.filter((iso) => iso.startsWith(targetMonth));
-
-  if (monthDates.length) {
-    return nearestAvailableDate(monthDates, target, direction);
-  }
-
+  const days = mode === "week" ? 7 : 30;
+  const target = addDaysISO(selectedDate, direction * days);
   return nearestAvailableDate(dates, target, direction);
 }
+
 
 function navigationDisabled(dates, selectedDate, mode, direction) {
   if (!dates.length || !selectedDate) return true;
@@ -388,15 +358,13 @@ function navigationDisabled(dates, selectedDate, mode, direction) {
 
   const first = dates[0];
   const last = dates[dates.length - 1];
+  const currentBounds = getPeriodBounds(mode, selectedDate);
 
-  if (mode === "week") {
-    return direction < 0 ? selectedDate <= first : selectedDate >= last;
-  }
+  if (!currentBounds?.startISO || !currentBounds?.endISO) return true;
 
-  const selectedMonth = selectedDate.slice(0, 7);
   return direction < 0
-    ? selectedMonth <= first.slice(0, 7)
-    : selectedMonth >= last.slice(0, 7);
+    ? currentBounds.startISO <= first
+    : currentBounds.endISO >= last;
 }
 
 // -------------------- helper grafici --------------------
@@ -509,13 +477,6 @@ function makeRealtimePulseSeries(dataPairs, timestamp, yAxisIndex = 0) {
   };
 }
 
-/*
- * Mantiene gli eventuali vuoti interni alla serie, ma elimina tutti i punti
- * successivi all'ultima osservazione realmente disponibile.
- *
- * In questo modo l'asse temporale può continuare fino alla fine del giorno,
- * mentre tooltip e linea verticale non possono spostarsi su orari futuri.
- */
 function trimTrailingNullPoints(pairs) {
   if (!Array.isArray(pairs) || !pairs.length) return [];
 
@@ -534,7 +495,7 @@ function trimTrailingNullPoints(pairs) {
   return lastValidIndex >= 0 ? pairs.slice(0, lastValidIndex + 1) : [];
 }
 
-function makePeriodDataZoom(mode, isMobile = false) {
+function makePeriodDataZoom() {
   return [
     {
       type: "inside",
@@ -544,17 +505,79 @@ function makePeriodDataZoom(mode, isMobile = false) {
       moveOnMouseWheel: true,
       moveOnMouseMove: true,
     },
-    {
-      type: "slider",
-      xAxisIndex: 0,
-      start: 0,
-      end: 100,
-      bottom: isMobile ? 6 : 8,
-      height: isMobile ? 18 : 22,
-      showDetail: false,
-      brushSelect: mode !== "day",
-    },
   ];
+}
+
+function formatChartDateReference(mode, startTimestamp, endTimestamp, selectedDate) {
+  if (mode === "day") {
+    const date = isoToLocalDate(selectedDate);
+    if (!date) return "";
+    return `${date.getDate()} ${MONTHS_IT_LOWER[date.getMonth()]} ${date.getFullYear()}`;
+  }
+
+  const start = Number.isFinite(Number(startTimestamp))
+    ? new Date(Number(startTimestamp))
+    : null;
+  const end = Number.isFinite(Number(endTimestamp))
+    ? new Date(Number(endTimestamp))
+    : null;
+
+  if (!start || !end) return "";
+
+  const startDay = start.getDate();
+  const endDay = end.getDate();
+  const startMonth = MONTHS_IT_LOWER[start.getMonth()];
+  const endMonth = MONTHS_IT_LOWER[end.getMonth()];
+  const startYear = start.getFullYear();
+  const endYear = end.getFullYear();
+
+  if (startYear === endYear && start.getMonth() === end.getMonth()) {
+    return `Dal ${startDay} al ${endDay} ${endMonth} ${endYear}`;
+  }
+
+  if (startYear === endYear) {
+    return `Dal ${startDay} ${startMonth} al ${endDay} ${endMonth} ${endYear}`;
+  }
+
+  return `Dal ${startDay} ${startMonth} ${startYear} al ${endDay} ${endMonth} ${endYear}`;
+}
+
+function makeDailyBoundaryMarkLine(mode, startTimestamp, endTimestamp) {
+  if (mode === "day") return null;
+
+  const start = Number(startTimestamp);
+  const end = Number(endTimestamp);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start >= end) {
+    return null;
+  }
+
+  const first = new Date(start);
+  first.setHours(0, 0, 0, 0);
+  if (first.getTime() <= start) first.setDate(first.getDate() + 1);
+
+  const data = [];
+  const cursor = new Date(first);
+  let guard = 0;
+
+  while (cursor.getTime() < end && guard < 40) {
+    data.push({ xAxis: cursor.getTime() });
+    cursor.setDate(cursor.getDate() + 1);
+    guard += 1;
+  }
+
+  if (!data.length) return null;
+
+  return {
+    silent: true,
+    symbol: "none",
+    label: { show: false },
+    lineStyle: {
+      color: "rgba(148, 163, 184, 0.18)",
+      width: 1,
+      type: "solid",
+    },
+    data,
+  };
 }
 
 function makePeriodTimeline(startISO, endISO, stepMinutes = 60) {
@@ -699,14 +722,6 @@ export async function getStaticProps() {
     };
   });
 
-  const rainVals = yearStats.map((y) => n(y.rain)).filter(Number.isFinite);
-  const rainMin = rainVals.length ? Math.min(...rainVals) : 0;
-  const rainMax = rainVals.length ? Math.max(...rainVals) : 0;
-
-  const tmeanVals = yearStats.map((y) => n(y.tmean)).filter(Number.isFinite);
-  const tmeanMin = tmeanVals.length ? Math.min(...tmeanVals) : 0;
-  const tmeanMax = tmeanVals.length ? Math.max(...tmeanVals) : 0;
-
   const dailyDates = rows
     .map((r) => String(r?.date || "").slice(0, 10))
     .filter((iso) => /^\d{4}-\d{2}-\d{2}$/.test(iso));
@@ -726,14 +741,36 @@ export async function getStaticProps() {
     }
   }
 
+  // Dati giornalieri compatti usati esclusivamente dal grafico annuale
+  // della Home. Limitiamo il payload agli ultimi 6 anni mostrati in pagina.
+  const annualDataByYear = {};
+  for (const year of years.slice(0, 6)) {
+    annualDataByYear[year] = (byYear.get(year) || []).map((row) => {
+      const tmin = dailyTmin(row);
+      const tmean = dailyTmean(row);
+      const tmax = dailyTmax(row);
+      const rain = dailyRain(row);
+      const gust = dailyGust(row);
+
+      return {
+        date: String(row?.date || ""),
+        tmin: Number.isFinite(tmin) ? round1(tmin) : null,
+        tmean: Number.isFinite(tmean) ? round1(tmean) : null,
+        tmax: Number.isFinite(tmax) ? round1(tmax) : null,
+        rain: Number.isFinite(rain) ? round1(rain) : null,
+        gust: Number.isFinite(gust) ? round1(gust) : null,
+      };
+    });
+  }
+
   return {
     props: {
       start,
       end,
       yearStats,
-      norm: { rainMin, rainMax, tmeanMin, tmeanMax },
       intradayDates,
       dailyRainByDate,
+      annualDataByYear,
     },
     revalidate: 300,
   };
@@ -744,30 +781,23 @@ export default function Home({
   yearStats = [],
   start = null,
   end = null,
-  norm = { rainMin: 0, rainMax: 0, tmeanMin: 0, tmeanMax: 0 },
   intradayDates = [],
   dailyRainByDate = {},
+  annualDataByYear = {},
 }) {
-  const [q, setQ] = useState("");
-
-  const filtered = useMemo(() => {
-    const s = String(q || "").trim();
-    if (!s) return yearStats;
-    return yearStats.filter((y) => String(y.year).includes(s));
-  }, [q, yearStats]);
-
   return (
     <SiteLayout
       headerProps={{
         title: "Meteo Collinas",
         kicker: "ARCHIVIO METEO",
-        subtitle: "Dati storici della stazione, organizzati per anno e mese.",
         start,
         end,
         showPeriod: false,
         currentPath: "/",
       }}
     >
+      <CivilProtectionSection />
+
       <ForecastSection />
 
       <div className="chartWrap">
@@ -777,192 +807,1346 @@ export default function Home({
         />
       </div>
 
-      <section className="section">
-        <div className="sectionHead">
-          <div className="sectionText">
-            <h2>Seleziona un anno</h2>
-            <div className="hint">
-              Apri una scheda per consultare mesi, statistiche e dati
-              giornalieri.
-            </div>
-          </div>
-
-          <label className="searchWrap" aria-label="Filtra anni">
-            <span className="searchLabel">Filtro</span>
-            <input
-              className="search"
-              placeholder="es. 2025"
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              inputMode="numeric"
-            />
-          </label>
-        </div>
-
-        <div className="grid">
-          {filtered.map((y) => (
-            <YearCard key={y.year} y={y} norm={norm} />
-          ))}
-
-          {!yearStats.length && (
-            <div className="empty">
-              Nessun dato ancora. Metti i CSV in{" "}
-              <code>data_raw/clean/AAAA</code> e lancia{" "}
-              <code>node ./scripts/build-data.js</code>.
-            </div>
-          )}
-
-          {yearStats.length > 0 && filtered.length === 0 && (
-            <div className="empty">
-              Nessun anno trovato per <code>{q}</code>. Cancella il filtro.
-            </div>
-          )}
-        </div>
-      </section>
+      <HomeLowerSection
+        yearStats={yearStats}
+        annualDataByYear={annualDataByYear}
+      />
 
       <style jsx>{`
         .chartWrap {
           margin-top: 18px;
-        }
-
-        .section {
-          margin: 22px auto 0;
-        }
-
-        .sectionHead {
-          min-height: 60px;
-          display: grid;
-          grid-template-columns: 1fr auto 1fr;
-          align-items: center;
-          gap: 16px;
-          margin: 8px 0 12px;
-        }
-
-        .sectionText {
-          grid-column: 2;
-          text-align: center;
-        }
-
-        h2 {
-          margin: 0;
-          font-size: 22px;
-          font-weight: 950;
-          letter-spacing: -0.02em;
-          color: #0f172a;
-        }
-
-        .hint {
-          margin-top: 4px;
-          font-size: 12px;
-          color: rgba(15, 23, 42, 0.62);
-        }
-
-        .searchWrap {
-          grid-column: 3;
-          justify-self: end;
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          min-width: 235px;
-          border: 1px solid #e5e7eb;
-          background: rgba(255, 255, 255, 0.96);
-          padding: 9px 11px;
-          border-radius: 14px;
-          box-shadow: 0 4px 14px rgba(15, 23, 42, 0.035);
-        }
-
-        .searchLabel {
-          font-size: 11px;
-          font-weight: 950;
-          color: rgba(15, 23, 42, 0.62);
-          text-transform: uppercase;
-          letter-spacing: 0.04em;
-        }
-
-        .search {
-          min-width: 0;
-          width: 100px;
-          border: none;
-          outline: none;
-          background: transparent;
-          font-size: 13px;
-          font-weight: 900;
-          color: #0f172a;
-        }
-
-        .grid {
-          display: grid;
-          grid-template-columns: repeat(4, minmax(0, 1fr));
-          gap: 12px;
-        }
-
-        .empty {
-          grid-column: 1 / -1;
-          padding: 16px;
-          border: 1px dashed #d9d9d9;
-          border-radius: 16px;
-          color: rgba(15, 23, 42, 0.78);
-          background: rgba(255, 255, 255, 0.7);
-        }
-
-        code {
-          background: #f1f5f9;
-          padding: 2px 6px;
-          border-radius: 10px;
-          border: 1px solid #e2e8f0;
-          font-size: 12px;
-        }
-
-        @media (max-width: 1320px) {
-          .grid {
-            grid-template-columns: repeat(3, minmax(0, 1fr));
-          }
-        }
-
-        @media (max-width: 980px) {
-          .sectionHead {
-            grid-template-columns: 1fr;
-          }
-
-          .sectionText,
-          .searchWrap {
-            grid-column: 1;
-          }
-
-          .searchWrap {
-            justify-self: center;
-          }
-
-          .grid {
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-          }
-        }
-
-        @media (max-width: 640px) {
-          .grid {
-            grid-template-columns: 1fr;
-          }
-
-          .searchWrap {
-            width: 100%;
-            box-sizing: border-box;
-          }
-
-          .search {
-            width: 100%;
-          }
         }
       `}</style>
     </SiteLayout>
   );
 }
 
+function CivilProtectionSection() {
+  return (
+    <section
+      className="civilProtectionSection"
+      aria-label="Protezione Civile e avvisi ufficiali"
+    >
+      <div className="civilHeading">
+        <span className="civilShield" aria-hidden="true">◇</span>
+        <div>
+          <h2>Protezione Civile e avvisi</h2>
+          <p>
+            Informazioni ufficiali su allerte, criticità e avvisi per il territorio
+            di Collinas e la Sardegna.
+          </p>
+        </div>
+      </div>
+
+      <div className="civilBody">
+        <div className="civilStatusCard">
+          <span className="civilStatusIcon" aria-hidden="true">◇</span>
+          <div>
+            <span className="civilEyebrow">Stato attuale</span>
+            <strong>Consulta gli avvisi in corso</strong>
+            <p>
+              Lo stato mostrato sul sito non sostituisce le comunicazioni ufficiali:
+              verifica sempre gli ultimi bollettini pubblicati dalla Regione Sardegna.
+            </p>
+          </div>
+        </div>
+
+        <div className="civilLinksCard">
+          <div className="civilLinksTitle">
+            <span className="civilLinkIcon" aria-hidden="true">↗</span>
+            <div>
+              <span className="civilEyebrow">Link ufficiali</span>
+              <strong>Approfondisci e consulta</strong>
+              <p>Bollettini, allerte e comunicazioni della Protezione Civile regionale.</p>
+            </div>
+          </div>
+
+          <div className="civilLinks">
+            <a
+              href="https://www.sardegnaambiente.it/protezionecivile/"
+              target="_blank"
+              rel="noreferrer"
+            >
+              <span aria-hidden="true">↗</span>
+              <span>
+                <b>Bollettini e avvisi</b>
+                <small>Protezione Civile Sardegna</small>
+              </span>
+              <i aria-hidden="true">›</i>
+            </a>
+            <a
+              href="https://www.sardegnaambiente.it/"
+              target="_blank"
+              rel="noreferrer"
+            >
+              <span aria-hidden="true">↗</span>
+              <span>
+                <b>Portale regionale</b>
+                <small>Regione Sardegna</small>
+              </span>
+              <i aria-hidden="true">›</i>
+            </a>
+          </div>
+        </div>
+      </div>
+
+      <style jsx>{`
+        .civilProtectionSection {
+          margin: 18px auto 0;
+          padding: 18px;
+          border: 1px solid #e1e8f0;
+          border-radius: 22px;
+          background: #ffffff;
+          box-shadow: 0 10px 28px rgba(15, 23, 42, 0.045);
+        }
+
+        .civilHeading {
+          display: flex;
+          align-items: center;
+          gap: 14px;
+          margin-bottom: 14px;
+        }
+
+        .civilShield,
+        .civilStatusIcon,
+        .civilLinkIcon {
+          flex: 0 0 auto;
+          display: grid;
+          place-items: center;
+          border-radius: 50%;
+          font-weight: 950;
+        }
+
+        .civilShield {
+          width: 48px;
+          height: 48px;
+          background: #eaf3ff;
+          color: #1667d9;
+          font-size: 27px;
+        }
+
+        .civilHeading h2,
+        .civilHeading p,
+        .civilStatusCard p,
+        .civilLinksTitle p {
+          margin: 0;
+        }
+
+        .civilHeading h2 {
+          font-size: 22px;
+          line-height: 1.08;
+          font-weight: 950;
+          letter-spacing: -0.025em;
+          color: #0f172a;
+        }
+
+        .civilHeading p {
+          margin-top: 3px;
+          font-size: 11px;
+          color: #64748b;
+        }
+
+        .civilBody {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+          gap: 12px;
+        }
+
+        .civilStatusCard,
+        .civilLinksCard {
+          min-width: 0;
+          border: 1px solid #e3e9ef;
+          border-radius: 17px;
+          padding: 16px;
+          background: #fbfdff;
+        }
+
+        .civilStatusCard {
+          display: grid;
+          grid-template-columns: 58px minmax(0, 1fr);
+          align-items: center;
+          gap: 14px;
+          background: linear-gradient(135deg, #f3fff8 0%, #ffffff 100%);
+          border-color: #d9efe2;
+        }
+
+        .civilStatusIcon {
+          width: 58px;
+          height: 58px;
+          background: #dcfce7;
+          color: #0a9b59;
+          font-size: 33px;
+        }
+
+        .civilEyebrow {
+          display: block;
+          margin-bottom: 4px;
+          font-size: 9px;
+          font-weight: 950;
+          letter-spacing: 0.06em;
+          text-transform: uppercase;
+          color: #64748b;
+        }
+
+        .civilStatusCard strong,
+        .civilLinksTitle strong {
+          display: block;
+          font-size: 17px;
+          line-height: 1.12;
+          font-weight: 950;
+          color: #0f172a;
+        }
+
+        .civilStatusCard p,
+        .civilLinksTitle p {
+          margin-top: 6px;
+          font-size: 10px;
+          line-height: 1.4;
+          color: #64748b;
+        }
+
+        .civilLinksTitle {
+          display: grid;
+          grid-template-columns: 46px minmax(0, 1fr);
+          align-items: center;
+          gap: 12px;
+        }
+
+        .civilLinkIcon {
+          width: 46px;
+          height: 46px;
+          background: #eaf3ff;
+          color: #1768d9;
+          font-size: 20px;
+        }
+
+        .civilLinks {
+          margin-top: 12px;
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 8px;
+        }
+
+        .civilLinks a {
+          min-width: 0;
+          min-height: 52px;
+          padding: 9px 11px;
+          display: grid;
+          grid-template-columns: 24px minmax(0, 1fr) auto;
+          align-items: center;
+          gap: 8px;
+          border: 1px solid #e0e9f5;
+          border-radius: 12px;
+          background: #eef5ff;
+          color: #0f5bc7;
+          text-decoration: none;
+          transition: transform 120ms ease, border-color 120ms ease, background 120ms ease;
+        }
+
+        .civilLinks a:hover {
+          transform: translateY(-1px);
+          border-color: #b6d2f7;
+          background: #e6f1ff;
+        }
+
+        .civilLinks a > span:first-child {
+          font-size: 17px;
+          font-weight: 900;
+          text-align: center;
+        }
+
+        .civilLinks a > span:nth-child(2) {
+          min-width: 0;
+          display: grid;
+          gap: 2px;
+        }
+
+        .civilLinks b {
+          overflow: hidden;
+          font-size: 10.5px;
+          font-weight: 950;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .civilLinks small {
+          overflow: hidden;
+          font-size: 8.5px;
+          color: #5f7fa9;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .civilLinks i {
+          font-size: 20px;
+          font-style: normal;
+          color: #1768d9;
+        }
+
+        @media (max-width: 760px) {
+          .civilProtectionSection {
+            padding: 14px;
+            border-radius: 18px;
+          }
+
+          .civilHeading h2 {
+            font-size: 19px;
+          }
+
+          .civilBody {
+            grid-template-columns: 1fr;
+          }
+        }
+
+        @media (max-width: 480px) {
+          .civilHeading {
+            align-items: flex-start;
+          }
+
+          .civilShield {
+            width: 42px;
+            height: 42px;
+            font-size: 24px;
+          }
+
+          .civilHeading h2 {
+            font-size: 17px;
+          }
+
+          .civilHeading p {
+            font-size: 9.5px;
+          }
+
+          .civilStatusCard {
+            grid-template-columns: 46px minmax(0, 1fr);
+            padding: 13px;
+          }
+
+          .civilStatusIcon {
+            width: 46px;
+            height: 46px;
+            font-size: 27px;
+          }
+
+          .civilStatusCard strong,
+          .civilLinksTitle strong {
+            font-size: 14px;
+          }
+
+          .civilLinks {
+            grid-template-columns: 1fr;
+          }
+        }
+      `}</style>
+    </section>
+  );
+}
+
+function HomeLowerSection({ yearStats = [], annualDataByYear = {} }) {
+  const router = useRouter();
+  const years = Array.isArray(yearStats) ? yearStats.slice(0, 6) : [];
+  const [selectedYear, setSelectedYear] = useState(years[0]?.year || "");
+  const [annualParameter, setAnnualParameter] = useState("temperature");
+
+  const selectedStats =
+    years.find((item) => String(item?.year) === String(selectedYear)) ||
+    years[0] ||
+    null;
+
+  const selectedRows = Array.isArray(annualDataByYear?.[selectedYear])
+    ? annualDataByYear[selectedYear]
+    : [];
+
+  const annualParameterOptions = [
+    { key: "temperature", label: "Temperatura dell'aria (°C)" },
+    { key: "rain", label: "Precipitazioni (mm)" },
+    { key: "gust", label: "Raffica massima (km/h)" },
+  ];
+
+  const annualChartOption = useMemo(() => {
+    if (!selectedRows.length) return null;
+
+    const dates = selectedRows.map((row) => String(row?.date || ""));
+    const monthLines = dates
+      .filter((date, index) => {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return false;
+        if (index === 0) return false;
+        return date.endsWith("-01");
+      })
+      .map((date) => ({ xAxis: date }));
+
+    const commonMarkLine = monthLines.length
+      ? {
+          silent: true,
+          symbol: "none",
+          label: { show: false },
+          lineStyle: {
+            color: "rgba(148, 163, 184, 0.20)",
+            width: 1,
+            type: "solid",
+          },
+          data: monthLines,
+        }
+      : undefined;
+
+    const axisLabelFormatter = (value, index) => {
+      const date = String(value || "");
+      const match = date.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (!match) return "";
+
+      const day = Number(match[3]);
+      if (index !== 0 && day !== 1) return "";
+
+      const month = MONTHS_IT_FULL[Number(match[2]) - 1] || "";
+      return month.slice(0, 3);
+    };
+
+    const base = {
+      animationDuration: 260,
+      color: ["#ef4444", "#64748b", "#2563eb", "#0ea5e9"],
+      grid: { left: 58, right: 42, top: 24, bottom: 62 },
+      tooltip: {
+        trigger: "axis",
+        confine: true,
+        backgroundColor: "rgba(255,255,255,.98)",
+        borderColor: "#dbe3ec",
+        borderWidth: 1,
+        padding: [9, 11],
+        textStyle: { color: "#0f172a", fontSize: 11, fontWeight: 650 },
+        extraCssText:
+          "border-radius:10px;box-shadow:0 10px 28px rgba(15,23,42,.12);",
+      },
+      toolbox: {
+        right: 4,
+        top: -2,
+        feature: {
+          restore: { title: "Ripristina" },
+          saveAsImage: {
+            title: "Salva grafico",
+            name: `meteo-collinas-${selectedYear}-${annualParameter}`,
+            pixelRatio: 2,
+            backgroundColor: "#ffffff",
+          },
+        },
+      },
+      xAxis: {
+        type: "category",
+        boundaryGap: false,
+        data: dates,
+        axisTick: { show: false },
+        axisLine: { lineStyle: { color: "#aab4c0" } },
+        axisLabel: {
+          color: "#64748b",
+          fontSize: 10,
+          interval: 0,
+          formatter: axisLabelFormatter,
+        },
+        splitLine: { show: false },
+      },
+      dataZoom: [
+        {
+          type: "inside",
+          xAxisIndex: 0,
+          filterMode: "none",
+          zoomOnMouseWheel: true,
+          moveOnMouseWheel: true,
+          moveOnMouseMove: true,
+        },
+      ],
+    };
+
+    if (annualParameter === "rain") {
+      let cumulative = 0;
+      const rainDaily = selectedRows.map((row) => {
+        const value = n(row?.rain);
+        return Number.isFinite(value) ? Math.max(0, value) : null;
+      });
+      const rainCumulative = rainDaily.map((value) => {
+        if (Number.isFinite(n(value))) cumulative += n(value);
+        return round1(cumulative);
+      });
+
+      return {
+        ...base,
+        legend: {
+          bottom: 4,
+          left: "center",
+          itemGap: 22,
+          textStyle: { color: "#475569", fontSize: 10, fontWeight: 700 },
+          data: ["Pioggia giornaliera", "Cumulata"],
+        },
+        xAxis: { ...base.xAxis, boundaryGap: true },
+        yAxis: [
+          {
+            type: "value",
+            name: "mm",
+            nameLocation: "middle",
+            nameGap: 42,
+            min: 0,
+            splitLine: {
+              lineStyle: { color: "rgba(148,163,184,.18)", type: "dashed" },
+            },
+            axisLabel: { color: "#64748b", fontSize: 10 },
+          },
+          {
+            type: "value",
+            name: "mm cum.",
+            nameLocation: "middle",
+            nameGap: 40,
+            min: 0,
+            splitLine: { show: false },
+            axisLabel: { color: "#64748b", fontSize: 10 },
+          },
+        ],
+        series: [
+          {
+            name: "Pioggia giornaliera",
+            type: "bar",
+            data: rainDaily,
+            yAxisIndex: 0,
+            barMaxWidth: 8,
+            itemStyle: {
+              color: "#38bdf8",
+              borderRadius: [3, 3, 0, 0],
+            },
+            markLine: commonMarkLine,
+          },
+          {
+            name: "Cumulata",
+            type: "line",
+            data: rainCumulative,
+            yAxisIndex: 1,
+            showSymbol: false,
+            smooth: false,
+            lineStyle: { width: 2.2, color: "#2563eb" },
+            itemStyle: { color: "#2563eb" },
+          },
+        ],
+      };
+    }
+
+    if (annualParameter === "gust") {
+      return {
+        ...base,
+        legend: {
+          bottom: 4,
+          left: "center",
+          textStyle: { color: "#475569", fontSize: 10, fontWeight: 700 },
+          data: ["Raffica massima"],
+        },
+        yAxis: {
+          type: "value",
+          name: "km/h",
+          nameLocation: "middle",
+          nameGap: 45,
+          min: 0,
+          splitLine: {
+            lineStyle: { color: "rgba(148,163,184,.18)", type: "dashed" },
+          },
+          axisLabel: { color: "#64748b", fontSize: 10 },
+        },
+        series: [
+          {
+            name: "Raffica massima",
+            type: "line",
+            data: selectedRows.map((row) => {
+              const value = n(row?.gust);
+              return Number.isFinite(value) ? value : null;
+            }),
+            showSymbol: false,
+            connectNulls: false,
+            smooth: false,
+            lineStyle: { width: 2.1, color: "#7c3aed" },
+            itemStyle: { color: "#7c3aed" },
+            markLine: commonMarkLine,
+          },
+        ],
+      };
+    }
+
+    return {
+      ...base,
+      legend: {
+        bottom: 4,
+        left: "center",
+        itemGap: 22,
+        textStyle: { color: "#475569", fontSize: 10, fontWeight: 700 },
+        data: ["Temperatura massima", "Temperatura media", "Temperatura minima"],
+      },
+      yAxis: {
+        type: "value",
+        name: "°C",
+        nameLocation: "middle",
+        nameGap: 42,
+        splitLine: {
+          lineStyle: { color: "rgba(148,163,184,.18)", type: "dashed" },
+        },
+        axisLabel: { color: "#64748b", fontSize: 10 },
+      },
+      series: [
+        {
+          name: "Temperatura massima",
+          type: "line",
+          data: selectedRows.map((row) => {
+            const value = n(row?.tmax);
+            return Number.isFinite(value) ? value : null;
+          }),
+          showSymbol: false,
+          connectNulls: false,
+          smooth: false,
+          lineStyle: { width: 1.9, color: "#ef4444" },
+          itemStyle: { color: "#ef4444" },
+          markLine: commonMarkLine,
+        },
+        {
+          name: "Temperatura media",
+          type: "line",
+          data: selectedRows.map((row) => {
+            const value = n(row?.tmean);
+            return Number.isFinite(value) ? value : null;
+          }),
+          showSymbol: false,
+          connectNulls: false,
+          smooth: false,
+          lineStyle: { width: 2.2, color: "#64748b", type: "dashed" },
+          itemStyle: { color: "#64748b" },
+        },
+        {
+          name: "Temperatura minima",
+          type: "line",
+          data: selectedRows.map((row) => {
+            const value = n(row?.tmin);
+            return Number.isFinite(value) ? value : null;
+          }),
+          showSymbol: false,
+          connectNulls: false,
+          smooth: false,
+          lineStyle: { width: 1.9, color: "#2563eb" },
+          itemStyle: { color: "#2563eb" },
+        },
+      ],
+    };
+  }, [annualParameter, selectedRows, selectedYear]);
+
+  const latestYear = years[0]?.year || null;
+  const goArchive = () => {
+    if (latestYear) router.push(`/anni/${latestYear}`);
+  };
+
+  return (
+    <section className="homeLower" aria-label="Archivio meteo e stazione meteorologica">
+      <article className="lowerPanel archiveSection">
+        <div className="lowerPanelHead">
+          <div className="lowerTitle">
+            <span className="lowerIcon" aria-hidden="true">▥</span>
+            <div>
+              <h2>Archivio meteo</h2>
+              <p>Consulta e confronta i dati meteorologici degli anni passati.</p>
+            </div>
+          </div>
+
+          <button type="button" className="archiveLink" onClick={goArchive} disabled={!latestYear}>
+            Vedi l&apos;archivio completo <span aria-hidden="true">→</span>
+          </button>
+        </div>
+
+        <div className="yearCards">
+          {years.map((item) => {
+            const active = String(item?.year) === String(selectedYear);
+            return (
+              <button
+                key={item.year}
+                type="button"
+                className={`yearCard ${active ? "active" : ""}`}
+                onClick={() => setSelectedYear(String(item.year))}
+                aria-pressed={active}
+              >
+                <div className="yearCardTop">
+                  <strong>{item.year}</strong>
+                  <span>{Number.isFinite(n(item.ndays)) ? `${item.ndays} giorni` : "—"}</span>
+                </div>
+                <div className="yearMetric temperatureMetric">
+                  <i aria-hidden="true">↕</i>
+                  <span><b>{fmt(item.tmean, 1)} °C</b><small>Temp. media</small></span>
+                </div>
+                <div className="yearMetric rainMetric">
+                  <i aria-hidden="true">◆</i>
+                  <span><b>{fmt(item.rain, 1)} mm</b><small>Prec. totale</small></span>
+                </div>
+                <span className="yearChevron" aria-hidden="true">›</span>
+              </button>
+            );
+          })}
+        </div>
+      </article>
+
+      <article className="lowerPanel annualSection">
+        <div className="annualHeader">
+          <div className="lowerTitle">
+            <span className="lowerIcon" aria-hidden="true">⌁</span>
+            <div>
+              <h2>Grafico annuale</h2>
+              <p>
+                Andamento dei principali parametri meteorologici per il {selectedYear || "—"}.
+              </p>
+            </div>
+          </div>
+
+          <div className="annualControl">
+            <span>Parametro</span>
+            <CustomSelect
+              value={annualParameter}
+              options={annualParameterOptions}
+              onChange={setAnnualParameter}
+              ariaLabel="Seleziona parametro del grafico annuale"
+            />
+          </div>
+        </div>
+
+        {selectedStats && (
+          <div className="annualHighlights">
+            <div className="annualHighlight maxTemp">
+              <span className="highlightIcon" aria-hidden="true">↑</span>
+              <div><strong>{fmt(selectedStats.tmax, 1)} °C</strong><span>Massima assoluta</span></div>
+            </div>
+            <div className="annualHighlight minTemp">
+              <span className="highlightIcon" aria-hidden="true">↓</span>
+              <div><strong>{fmt(selectedStats.tmin, 1)} °C</strong><span>Minima assoluta</span></div>
+            </div>
+            <div className="annualHighlight meanTemp">
+              <span className="highlightIcon" aria-hidden="true">↕</span>
+              <div><strong>{fmt(selectedStats.tmean, 1)} °C</strong><span>Media annuale</span></div>
+            </div>
+            <div className="annualHighlight rainTotal">
+              <span className="highlightIcon" aria-hidden="true">◆</span>
+              <div><strong>{fmt(selectedStats.rain, 1)} mm</strong><span>Precipitazioni totali</span></div>
+            </div>
+          </div>
+        )}
+
+        <div className="annualChartWrap">
+          {annualChartOption ? (
+            <ReactECharts
+              option={annualChartOption}
+              style={{ height: 330, width: "100%" }}
+              notMerge={true}
+              lazyUpdate={true}
+            />
+          ) : (
+            <div className="annualChartMessage">
+              Dati annuali non disponibili per l&apos;anno selezionato.
+            </div>
+          )}
+        </div>
+      </article>
+
+      <article className="lowerPanel stationSection">
+        <div className="stationIntro">
+          <span className="stationBigIcon" aria-hidden="true">⌖</span>
+          <div>
+            <h2>La stazione meteo</h2>
+            <h3>Collinas (SU) · stazione meteorologica automatica</h3>
+            <p>
+              La stazione meteorologica di Collinas raccoglie dati meteo in modo
+              continuo dal 2021. Le osservazioni vengono utilizzate per il monitoraggio
+              locale, l&apos;archivio meteorologico e l&apos;analisi climatica del territorio.
+            </p>
+            <div className="stationBadges">
+              <span><i className="onlineDot" /> Attiva dal 2021</span>
+              <span>⌖ Collinas (SU)</span>
+              <span>290 m s.l.m.</span>
+              <span>WeatherLink Live</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="stationSensors">
+          <h3>Sensori della stazione</h3>
+          <div className="stationSensorGrid">
+            <div><i>↕</i><span>Temperatura aria</span></div>
+            <div><i>P</i><span>Pressione atmosferica</span></div>
+            <div><i>◆</i><span>Umidità relativa</span></div>
+            <div><i>☼</i><span>Radiazione solare</span></div>
+            <div><i>☂</i><span>Precipitazioni</span></div>
+            <div><i>➤</i><span>Velocità e direzione vento</span></div>
+            <div><i>UV</i><span>Indice UV</span></div>
+          </div>
+        </div>
+      </article>
+
+      <style jsx>{`
+        .homeLower {
+          margin: 26px auto 0;
+          display: grid;
+          gap: 16px;
+        }
+
+        .lowerPanel {
+          min-width: 0;
+          border: 1px solid #e1e8f0;
+          border-radius: 21px;
+          background: rgba(255, 255, 255, 0.98);
+          box-shadow: 0 8px 28px rgba(15, 23, 42, 0.045);
+        }
+
+        .archiveSection {
+          padding: 17px 18px 18px;
+        }
+
+        .lowerPanelHead,
+        .annualHeader {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 16px;
+        }
+
+        .lowerTitle {
+          min-width: 0;
+          display: flex;
+          align-items: center;
+          gap: 12px;
+        }
+
+        .lowerIcon {
+          flex: 0 0 auto;
+          width: 46px;
+          height: 46px;
+          display: grid;
+          place-items: center;
+          border-radius: 15px;
+          background: #eaf3ff;
+          color: #126be8;
+          font-size: 22px;
+          font-weight: 950;
+        }
+
+        .lowerTitle h2,
+        .lowerTitle p,
+        .stationIntro h2,
+        .stationIntro h3,
+        .stationIntro p,
+        .stationSensors h3 {
+          margin: 0;
+        }
+
+        .lowerTitle h2,
+        .stationIntro h2 {
+          font-size: 22px;
+          line-height: 1.05;
+          font-weight: 950;
+          letter-spacing: -0.025em;
+          color: #0f172a;
+        }
+
+        .lowerTitle p {
+          margin-top: 3px;
+          font-size: 10.5px;
+          color: #64748b;
+        }
+
+        .archiveLink {
+          appearance: none;
+          border: 0;
+          background: transparent;
+          color: #1169e8;
+          font: inherit;
+          font-size: 10.5px;
+          font-weight: 900;
+          cursor: pointer;
+          white-space: nowrap;
+        }
+
+        .archiveLink:disabled {
+          opacity: 0.45;
+          cursor: default;
+        }
+
+        .yearCards {
+          margin-top: 14px;
+          display: grid;
+          grid-template-columns: repeat(6, minmax(0, 1fr));
+          gap: 9px;
+        }
+
+        .yearCard {
+          position: relative;
+          min-width: 0;
+          min-height: 112px;
+          padding: 12px 13px;
+          border: 1px solid #e2e8f0;
+          border-radius: 14px;
+          background: #ffffff;
+          color: #0f172a;
+          font-family: inherit;
+          text-align: left;
+          cursor: pointer;
+          transition: transform 120ms ease, border-color 120ms ease, box-shadow 120ms ease, background 120ms ease;
+        }
+
+        .yearCard:hover {
+          transform: translateY(-2px);
+          border-color: #b9cce6;
+          box-shadow: 0 8px 18px rgba(15, 23, 42, 0.06);
+        }
+
+        .yearCard.active {
+          border-color: #6ba9ff;
+          background: linear-gradient(180deg, #ffffff 0%, #f6faff 100%);
+          box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.06);
+        }
+
+        .yearCardTop {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 6px;
+          margin-bottom: 9px;
+        }
+
+        .yearCardTop strong {
+          font-size: 21px;
+          line-height: 1;
+          font-weight: 950;
+          letter-spacing: -0.02em;
+        }
+
+        .yearCardTop span {
+          padding: 4px 7px;
+          border: 1px solid #e5eaf0;
+          border-radius: 999px;
+          background: #f8fafc;
+          color: #64748b;
+          font-size: 8px;
+          font-weight: 850;
+          white-space: nowrap;
+        }
+
+        .yearMetric {
+          display: grid;
+          grid-template-columns: 19px minmax(0, 1fr);
+          align-items: center;
+          gap: 6px;
+          margin-top: 5px;
+        }
+
+        .yearMetric i {
+          font-size: 12px;
+          font-style: normal;
+          font-weight: 950;
+          text-align: center;
+        }
+
+        .temperatureMetric i { color: #2563eb; }
+        .rainMetric i { color: #0b77df; }
+
+        .yearMetric > span {
+          min-width: 0;
+          display: grid;
+          gap: 1px;
+        }
+
+        .yearMetric b {
+          overflow: hidden;
+          font-size: 10px;
+          font-weight: 950;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .yearMetric small {
+          font-size: 8.5px;
+          color: #64748b;
+        }
+
+        .yearChevron {
+          position: absolute;
+          right: 10px;
+          top: 50%;
+          transform: translateY(-50%);
+          color: #64748b;
+          font-size: 19px;
+        }
+
+        .annualSection {
+          overflow: visible;
+          padding: 17px 18px 8px;
+        }
+
+        .annualControl {
+          width: 290px;
+          min-width: 0;
+          display: grid;
+          grid-template-columns: auto minmax(0, 1fr);
+          align-items: center;
+          gap: 10px;
+        }
+
+        .annualControl > span {
+          font-size: 9.5px;
+          font-weight: 850;
+          color: #64748b;
+        }
+
+        .annualControl :global(.customSelect .selectButton) {
+          min-height: 38px;
+          border-radius: 11px;
+          padding: 8px 34px 8px 12px;
+          justify-content: flex-start;
+          font-size: 10.5px;
+          text-align: left;
+        }
+
+        .annualControl :global(.customSelect .selectedValue) {
+          text-align: left;
+        }
+
+        .annualHighlights {
+          margin-top: 14px;
+          display: grid;
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+          border: 1px solid #e8edf3;
+          border-radius: 15px;
+          background: #fbfcfe;
+          overflow: hidden;
+        }
+
+        .annualHighlight {
+          min-width: 0;
+          min-height: 70px;
+          padding: 10px 14px;
+          display: grid;
+          grid-template-columns: 38px minmax(0, 1fr);
+          align-items: center;
+          gap: 9px;
+          border-right: 1px solid #e8edf3;
+        }
+
+        .annualHighlight:last-child {
+          border-right: 0;
+        }
+
+        .highlightIcon {
+          width: 36px;
+          height: 36px;
+          display: grid;
+          place-items: center;
+          border-radius: 50%;
+          background: #edf5ff;
+          color: #2563eb;
+          font-size: 18px;
+          font-weight: 950;
+        }
+
+        .maxTemp .highlightIcon { background: #fff0ef; color: #ef4444; }
+        .minTemp .highlightIcon { background: #eef5ff; color: #2563eb; }
+        .meanTemp .highlightIcon { background: #f1f5f9; color: #64748b; }
+        .rainTotal .highlightIcon { background: #eaf7ff; color: #0284c7; }
+
+        .annualHighlight div {
+          min-width: 0;
+          display: grid;
+          gap: 2px;
+        }
+
+        .annualHighlight strong {
+          overflow: hidden;
+          font-size: 15px;
+          font-weight: 950;
+          color: #0f172a;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .annualHighlight div span {
+          font-size: 9px;
+          color: #64748b;
+        }
+
+        .annualChartWrap {
+          min-height: 330px;
+          margin-top: 6px;
+        }
+
+        .annualChartMessage {
+          min-height: 300px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          color: #64748b;
+          font-size: 11px;
+          font-weight: 800;
+          text-align: center;
+        }
+
+        .stationSection {
+          padding: 18px;
+          display: grid;
+          grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+          gap: 22px;
+        }
+
+        .stationIntro {
+          min-width: 0;
+          display: grid;
+          grid-template-columns: 86px minmax(0, 1fr);
+          align-items: center;
+          gap: 14px;
+          padding-right: 22px;
+          border-right: 1px solid #e8edf3;
+        }
+
+        .stationBigIcon {
+          width: 78px;
+          height: 78px;
+          display: grid;
+          place-items: center;
+          border-radius: 22px;
+          background: #eaf3ff;
+          color: #126be8;
+          font-size: 37px;
+          font-weight: 950;
+        }
+
+        .stationIntro h3 {
+          margin-top: 3px;
+          font-size: 11px;
+          font-weight: 800;
+          color: #64748b;
+        }
+
+        .stationIntro p {
+          margin-top: 7px;
+          max-width: 680px;
+          font-size: 10px;
+          line-height: 1.45;
+          color: #526276;
+        }
+
+        .stationBadges {
+          margin-top: 9px;
+          display: flex;
+          flex-wrap: wrap;
+          gap: 6px;
+        }
+
+        .stationBadges span {
+          min-height: 27px;
+          padding: 0 9px;
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          border: 1px solid #e4eaf1;
+          border-radius: 999px;
+          background: #f8fafc;
+          color: #526276;
+          font-size: 8.5px;
+          font-weight: 800;
+        }
+
+        .onlineDot {
+          width: 8px;
+          height: 8px;
+          border-radius: 50%;
+          background: #16a34a;
+          box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.10);
+        }
+
+        .stationSensors {
+          min-width: 0;
+        }
+
+        .stationSensors h3 {
+          margin-bottom: 9px;
+          font-size: 11px;
+          font-weight: 900;
+          color: #334155;
+        }
+
+        .stationSensorGrid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 7px;
+        }
+
+        .stationSensorGrid div {
+          min-width: 0;
+          min-height: 34px;
+          padding: 0 10px;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          border: 1px solid #e6ebf1;
+          border-radius: 10px;
+          background: #fbfcfe;
+        }
+
+        .stationSensorGrid i {
+          min-width: 20px;
+          color: #126be8;
+          font-size: 10px;
+          font-style: normal;
+          font-weight: 950;
+          text-align: center;
+        }
+
+        .stationSensorGrid span {
+          min-width: 0;
+          overflow: hidden;
+          color: #475569;
+          font-size: 9.5px;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        @media (max-width: 1180px) {
+          .yearCards {
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+          }
+
+          .stationSection {
+            grid-template-columns: 1fr;
+          }
+
+          .stationIntro {
+            padding-right: 0;
+            padding-bottom: 16px;
+            border-right: 0;
+            border-bottom: 1px solid #e8edf3;
+          }
+        }
+
+        @media (max-width: 760px) {
+          .homeLower {
+            margin-top: 18px;
+            gap: 12px;
+          }
+
+          .archiveSection,
+          .annualSection,
+          .stationSection {
+            padding: 14px;
+            border-radius: 17px;
+          }
+
+          .lowerPanelHead,
+          .annualHeader {
+            align-items: flex-start;
+            flex-direction: column;
+          }
+
+          .archiveLink {
+            align-self: flex-end;
+          }
+
+          .annualControl {
+            width: 100%;
+            grid-template-columns: 1fr;
+            gap: 4px;
+          }
+
+          .annualHighlights {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+          }
+
+          .annualHighlight:nth-child(2) {
+            border-right: 0;
+          }
+
+          .annualHighlight:nth-child(-n + 2) {
+            border-bottom: 1px solid #e8edf3;
+          }
+        }
+
+        @media (max-width: 560px) {
+          .lowerTitle h2,
+          .stationIntro h2 {
+            font-size: 18px;
+          }
+
+          .lowerIcon {
+            width: 40px;
+            height: 40px;
+            border-radius: 13px;
+            font-size: 19px;
+          }
+
+          .yearCards {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 7px;
+          }
+
+          .yearCard {
+            min-height: 104px;
+            padding: 10px;
+          }
+
+          .yearCardTop strong {
+            font-size: 18px;
+          }
+
+          .yearCardTop span {
+            font-size: 7px;
+          }
+
+          .annualHighlights {
+            gap: 0;
+          }
+
+          .annualHighlight {
+            min-height: 62px;
+            padding: 8px 9px;
+            grid-template-columns: 31px minmax(0, 1fr);
+          }
+
+          .highlightIcon {
+            width: 30px;
+            height: 30px;
+            font-size: 15px;
+          }
+
+          .annualHighlight strong {
+            font-size: 12px;
+          }
+
+          .annualChartWrap {
+            min-height: 280px;
+          }
+
+          .annualChartWrap :global(.echarts-for-react) {
+            min-height: 280px;
+          }
+
+          .stationIntro {
+            grid-template-columns: 1fr;
+            justify-items: center;
+            text-align: center;
+          }
+
+          .stationIntro p {
+            text-align: left;
+          }
+
+          .stationBadges {
+            justify-content: center;
+          }
+
+          .stationSensorGrid {
+            grid-template-columns: 1fr;
+          }
+        }
+      `}</style>
+    </section>
+  );
+}
+
+
 // -------------------- previsioni brevi --------------------
 const FORECAST_LATITUDE = 39.6413;
 const FORECAST_LONGITUDE = 8.8399;
 const FORECAST_TIMEZONE = "Europe/Rome";
 const FORECAST_REFRESH_MS = 60 * 60 * 1000;
-const FORECAST_CACHE_KEY = "meteo-collinas:forecast-cache-v2";
+const FORECAST_CACHE_KEY = "meteo-collinas:forecast-cache-v20";
 
 const FORECAST_BANDS = [
   { key: "night", label: "Notte", timeLabel: "00–06", start: 0, end: 6, night: true },
@@ -994,13 +2178,21 @@ function percentileFinite(values, percentile) {
 }
 
 function integerForecastRange(values, fallbackValue = null) {
-  const low = percentileFinite(values, 0.2);
-  const high = percentileFinite(values, 0.8);
+  const low = percentileFinite(values, 0.4);
+  const high = percentileFinite(values, 0.6);
+  const reliabilityLow = percentileFinite(values, 0.2);
+  const reliabilityHigh = percentileFinite(values, 0.8);
 
   if (Number.isFinite(low) && Number.isFinite(high)) {
     return {
       low: Math.floor(low),
       high: Math.ceil(high),
+      reliabilityLow: Number.isFinite(reliabilityLow)
+        ? reliabilityLow
+        : low,
+      reliabilityHigh: Number.isFinite(reliabilityHigh)
+        ? reliabilityHigh
+        : high,
       ensemble: true,
     };
   }
@@ -1011,6 +2203,8 @@ function integerForecastRange(values, fallbackValue = null) {
   return {
     low: Math.floor(fallback),
     high: Math.ceil(fallback),
+    reliabilityLow: fallback,
+    reliabilityHigh: fallback,
     ensemble: false,
   };
 }
@@ -1030,28 +2224,36 @@ function consensusForecastRange(
     .map((value) => n(value))
     .filter(Number.isFinite);
 
-  // ICON-2I e AROME vengono trattati come due ulteriori scenari della
-  // distribuzione, senza allargare automaticamente il range fino ai loro
-  // estremi. In questo modo un singolo deterministico molto caldo o freddo
-  // non domina la fascia mostrata in home.
   if (ensemble.length) {
     const combined = [...ensemble, ...deterministic];
-    const low = percentileFinite(combined, 0.2);
-    const high = percentileFinite(combined, 0.8);
+    const low = percentileFinite(combined, 0.4);
+    const high = percentileFinite(combined, 0.6);
+    const reliabilityLow = percentileFinite(combined, 0.2);
+    const reliabilityHigh = percentileFinite(combined, 0.8);
 
     if (Number.isFinite(low) && Number.isFinite(high)) {
       return {
         low: Math.floor(low),
         high: Math.ceil(high),
+        reliabilityLow: Number.isFinite(reliabilityLow)
+          ? reliabilityLow
+          : low,
+        reliabilityHigh: Number.isFinite(reliabilityHigh)
+          ? reliabilityHigh
+          : high,
         ensemble: true,
       };
     }
   }
 
   if (deterministic.length) {
+    const minimum = Math.min(...deterministic);
+    const maximum = Math.max(...deterministic);
     return {
-      low: Math.floor(Math.min(...deterministic)),
-      high: Math.ceil(Math.max(...deterministic)),
+      low: Math.floor(minimum),
+      high: Math.ceil(maximum),
+      reliabilityLow: minimum,
+      reliabilityHigh: maximum,
       ensemble: false,
     };
   }
@@ -1093,35 +2295,37 @@ function consensusPeriodTemperatureRange(
     .map((value) => n(value))
     .filter(Number.isFinite);
 
-  /*
-   * Per ogni fascia oraria il limite inferiore deriva dalle minime
-   * previste dai singoli scenari, mentre il limite superiore deriva
-   * dalle loro massime. Vengono usati gli stessi percentili 20–80
-   * applicati alle temperature giornaliere.
-   */
   if (memberMinimums.length && memberMaximums.length) {
-    const low = percentileFinite(
-      [...memberMinimums, ...modelMinimums],
-      0.2,
-    );
-    const high = percentileFinite(
-      [...memberMaximums, ...modelMaximums],
-      0.8,
-    );
+    const minimumDistribution = [...memberMinimums, ...modelMinimums];
+    const maximumDistribution = [...memberMaximums, ...modelMaximums];
+    const low = percentileFinite(minimumDistribution, 0.4);
+    const high = percentileFinite(maximumDistribution, 0.6);
+    const reliabilityLow = percentileFinite(minimumDistribution, 0.2);
+    const reliabilityHigh = percentileFinite(maximumDistribution, 0.8);
 
     if (Number.isFinite(low) && Number.isFinite(high)) {
       return {
         low: Math.floor(Math.min(low, high)),
         high: Math.ceil(Math.max(low, high)),
+        reliabilityLow: Number.isFinite(reliabilityLow)
+          ? reliabilityLow
+          : low,
+        reliabilityHigh: Number.isFinite(reliabilityHigh)
+          ? reliabilityHigh
+          : high,
         ensemble: true,
       };
     }
   }
 
   if (modelMinimums.length && modelMaximums.length) {
+    const minimum = Math.min(...modelMinimums);
+    const maximum = Math.max(...modelMaximums);
     return {
-      low: Math.floor(Math.min(...modelMinimums)),
-      high: Math.ceil(Math.max(...modelMaximums)),
+      low: Math.floor(minimum),
+      high: Math.ceil(maximum),
+      reliabilityLow: minimum,
+      reliabilityHigh: maximum,
       ensemble: false,
     };
   }
@@ -1133,6 +2337,122 @@ function formatForecastRange(range) {
   if (!range) return "—";
   if (range.low === range.high) return `${range.low} °C`;
   return `${range.low}–${range.high} °C`;
+}
+
+function humidexFromTemperatureAndDewPoint(temperatureC, dewPointC) {
+  const temperature = n(temperatureC);
+  const dewPoint = n(dewPointC);
+  if (!Number.isFinite(temperature) || !Number.isFinite(dewPoint)) return null;
+
+  const vapourPressure =
+    6.11 *
+    Math.exp(
+      5417.753 *
+        (1 / 273.16 - 1 / (273.15 + dewPoint)),
+    );
+  const humidex = temperature + 0.5555 * (vapourPressure - 10);
+
+  return Number.isFinite(humidex) ? humidex : null;
+}
+
+function humidexAttention(value) {
+  const humidex = n(value);
+  if (!Number.isFinite(humidex) || humidex < 35) return null;
+
+  if (humidex >= 46) {
+    return {
+      tone: "danger",
+      label: "⚠",
+      title: "Humidex molto elevato: condizioni di caldo potenzialmente pericolose.",
+    };
+  }
+
+  if (humidex >= 40) {
+    return {
+      tone: "high",
+      label: "⚠",
+      title: "Humidex elevato: forte disagio da caldo.",
+    };
+  }
+
+  return {
+    tone: "attention",
+    label: "⚠",
+    title: "Humidex alto: possibile disagio da caldo.",
+  };
+}
+
+function temperatureTone(value) {
+  const t = n(value);
+  if (!Number.isFinite(t)) return "#0f172a";
+
+  if (t >= 41) return "#ec4899";
+  if (t >= 38) return "#d946ef";
+  if (t >= 35) return "#9f1239";
+  if (t >= 32) return "#dc2626";
+  if (t >= 28) return "#ef4444";
+  if (t >= 24) return "#f97316";
+  if (t >= 20) return "#d97706";
+  if (t >= 16) return "#ca8a04";
+  if (t >= 12) return "#16a34a";
+  if (t >= 8) return "#06b6d4";
+  if (t >= 4) return "#0ea5e9";
+  if (t >= 0) return "#2563eb";
+  if (t >= -5) return "#1e3a8a";
+  if (t >= -10) return "#7c3aed";
+  if (t >= -15) return "#5b21b6";
+  return "#3b0764";
+}
+
+function temperatureRangeTone(range) {
+  if (!range) return "#0f172a";
+
+  const high = n(range?.high);
+  const low = n(range?.low);
+
+  if (Number.isFinite(low) && Number.isFinite(high)) {
+    return temperatureTone((low + high) / 2);
+  }
+
+  if (Number.isFinite(high)) return temperatureTone(high);
+  if (Number.isFinite(low)) return temperatureTone(low);
+  return "#0f172a";
+}
+
+const FORECAST_MIN_TEMP_COLOR = "#4f46e5";
+
+function overviewWeatherForDay(day) {
+  const periods = Array.isArray(day?.periods) ? day.periods : [];
+  const byKey = Object.fromEntries(
+    periods.map((period) => [period.key, period]),
+  );
+
+  const wettestPeriod = periods.reduce((best, period) => {
+    if (!best) return period;
+    return n(period?.rainProbability) > n(best?.rainProbability)
+      ? period
+      : best;
+  }, null);
+
+  const representative =
+    (n(day?.rainProbability) >= 35 ? wettestPeriod : null) ||
+    byKey.afternoon ||
+    byKey.morning ||
+    byKey.evening ||
+    periods[0] ||
+    null;
+
+  return representative
+    ? {
+        kind: representative.weather?.kind || "sun",
+        label: representative.weather?.label || "Sereno",
+        night: Boolean(representative.night),
+      }
+    : {
+        kind: "sun",
+        label: "Sereno",
+        night: false,
+      };
 }
 
 function formatRainRange(values, fallbackValue = null) {
@@ -1209,6 +2529,16 @@ function windCardinal16(value) {
 
   const normalized = ((direction % 360) + 360) % 360;
   return labels[Math.round(normalized / 22.5) % 16];
+}
+
+function windArrowRotation(value) {
+  const direction = n(value);
+  if (!Number.isFinite(direction)) return 0;
+
+  const normalized = ((direction % 360) + 360) % 360;
+  // La direzione meteorologica indica da dove proviene il vento.
+  // La freccia grafica mostra invece verso dove si sposta la massa d'aria.
+  return normalized + 90;
 }
 
 function weatherMetaFromHourly({
@@ -1499,10 +2829,28 @@ function ensembleRainStats(hourlyEnsemble, precipitationKeys, indexes) {
   };
 }
 
+function deterministicHourlySeries(hourly, variable) {
+  if (!hourly || typeof hourly !== "object") return [];
+
+  if (Array.isArray(hourly?.[variable])) {
+    return hourly[variable];
+  }
+
+  const prefixedKey = Object.keys(hourly).find(
+    (key) => key.startsWith(`${variable}_`) && Array.isArray(hourly[key]),
+  );
+
+  return prefixedKey ? hourly[prefixedKey] : [];
+}
+
 function summarizeDeterministicIndexes(hourly, indexes) {
   const temperatureValues = [];
   const codes = [];
   const cloudCover = [];
+  const pressureValues = [];
+  const radiationValues = [];
+  const dewPointValues = [];
+  const humidexValues = [];
   const precipitationValues = [];
   const windSpeedValues = [];
   const gustValues = [];
@@ -1512,18 +2860,28 @@ function summarizeDeterministicIndexes(hourly, indexes) {
   let directionWeight = 0;
   let availableHourCount = 0;
 
+  const temperatureSeries = deterministicHourlySeries(hourly, "temperature_2m");
+  const dewPointSeries = deterministicHourlySeries(hourly, "dew_point_2m");
+
   for (const index of Array.isArray(indexes) ? indexes : []) {
-    const temperature = n(hourly?.temperature_2m?.[index]);
+    const temperature = n(temperatureSeries[index]);
+    const dewPoint = n(dewPointSeries[index]);
     const code = n(hourly?.weather_code?.[index]);
     const cloud = n(hourly?.cloud_cover?.[index]);
+    const pressure = n(hourly?.pressure_msl?.[index]);
+    const radiation = n(hourly?.shortwave_radiation?.[index]);
     const precipitation = n(hourly?.precipitation?.[index]);
     const windSpeed = n(hourly?.wind_speed_10m?.[index]);
     const gust = n(hourly?.wind_gusts_10m?.[index]);
     const direction = n(hourly?.wind_direction_10m?.[index]);
+
     const hourAvailable = [
       temperature,
       code,
       cloud,
+      pressure,
+      radiation,
+      dewPoint,
       precipitation,
       windSpeed,
       gust,
@@ -1534,6 +2892,13 @@ function summarizeDeterministicIndexes(hourly, indexes) {
     if (Number.isFinite(temperature)) temperatureValues.push(temperature);
     if (Number.isFinite(code)) codes.push(code);
     if (Number.isFinite(cloud)) cloudCover.push(cloud);
+    if (Number.isFinite(pressure)) pressureValues.push(pressure);
+    if (Number.isFinite(radiation)) radiationValues.push(Math.max(0, radiation));
+    if (Number.isFinite(dewPoint)) dewPointValues.push(dewPoint);
+
+    const humidex = humidexFromTemperatureAndDewPoint(temperature, dewPoint);
+    if (Number.isFinite(n(humidex))) humidexValues.push(n(humidex));
+
     if (Number.isFinite(precipitation)) {
       precipitationValues.push(Math.max(0, precipitation));
     }
@@ -1555,19 +2920,7 @@ function summarizeDeterministicIndexes(hourly, indexes) {
   const stormCount = countCodes([95, 96, 99]);
   const snowCount = countCodes([71, 73, 75, 77, 85, 86]);
   const rainCount = countCodes([
-    51,
-    53,
-    55,
-    56,
-    57,
-    61,
-    63,
-    65,
-    66,
-    67,
-    80,
-    81,
-    82,
+    51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82,
   ]);
   const fogCount = countCodes([45, 48]);
   const precipitationTotal = precipitationValues.reduce(
@@ -1582,6 +2935,10 @@ function summarizeDeterministicIndexes(hourly, indexes) {
     temperatureValues,
     codes,
     cloudCover,
+    pressureValues,
+    radiationValues,
+    dewPointValues,
+    humidexValues,
     precipitationValues,
     precipitationTotal,
     windSpeedValues,
@@ -1592,9 +2949,13 @@ function summarizeDeterministicIndexes(hourly, indexes) {
     temperatureMax: temperatureValues.length
       ? Math.max(...temperatureValues)
       : null,
+    windSpeedMean: windSpeedValues.length ? avgFinite(windSpeedValues) : null,
     windSpeedMax: windSpeedValues.length ? Math.max(...windSpeedValues) : null,
     gustMax: gustValues.length ? Math.max(...gustValues) : null,
     cloudMean: avgFinite(cloudCover),
+    pressureMean: avgFinite(pressureValues),
+    radiationMean: avgFinite(radiationValues),
+    humidexMax: humidexValues.length ? Math.max(...humidexValues) : null,
     cloudHighFraction: cloudCover.length
       ? cloudCover.filter((value) => value >= 70).length / cloudCover.length
       : null,
@@ -1775,7 +3136,6 @@ function buildShortForecast(iconDeterministic, aromeDeterministic, ensemble) {
 
   const temperatureKeys = ensembleMemberKeys(hourlyEnsemble, "temperature_2m");
   const precipitationKeys = ensembleMemberKeys(hourlyEnsemble, "precipitation");
-
   return daily.time.slice(0, 3).map((iso, dayIndex) => {
     const ensembleDayIndexes = hourlyIndexesForDate(ensembleTimes, iso);
     const iconDay = summarizeDeterministicDay(iconHourly, iconTimes, iso);
@@ -1811,18 +3171,8 @@ function buildShortForecast(iconDeterministic, aromeDeterministic, ensemble) {
 
     const periods = FORECAST_BANDS.map((band) => {
       const ensembleIndexes = bandIndexesFromTimes(ensembleTimes, iso, band);
-      const iconBand = summarizeDeterministicBand(
-        iconHourly,
-        iconTimes,
-        iso,
-        band,
-      );
-      const aromeBand = summarizeDeterministicBand(
-        aromeHourly,
-        aromeTimes,
-        iso,
-        band,
-      );
+      const iconBand = summarizeDeterministicBand(iconHourly, iconTimes, iso, band);
+      const aromeBand = summarizeDeterministicBand(aromeHourly, aromeTimes, iso, band);
       const modelBands = [iconBand, aromeBand].filter(
         (summary) => summary.available,
       );
@@ -1839,11 +3189,14 @@ function buildShortForecast(iconDeterministic, aromeDeterministic, ensemble) {
         precipitationKeys,
         ensembleIndexes,
       );
-      const rainProbability = Number.isFinite(ensembleRain.probability)
+      const reliabilityRainProbability = Number.isFinite(ensembleRain.probability)
         ? ensembleRain.probability
         : Number.isFinite(deterministicProbability)
           ? Math.round(deterministicProbability)
-          : 0;
+          : null;
+      const rainProbability = Number.isFinite(reliabilityRainProbability)
+        ? reliabilityRainProbability
+        : 0;
       const consensusPrecipitation = consensusAverage(
         modelBands.map((summary) => summary.precipitationTotal),
       );
@@ -1869,33 +3222,61 @@ function buildShortForecast(iconDeterministic, aromeDeterministic, ensemble) {
         .map((summary) => summary.temperatureMax)
         .filter(Number.isFinite);
 
-      const expectedHours = Math.max(1, band.end - band.start);
-      const aromeAvailableHours = Number(aromeBand.availableHourCount || 0);
-      const aromeCoverage =
-        aromeAvailableHours >= expectedHours
-          ? "full"
-          : aromeAvailableHours > 0
-            ? "partial"
-            : "none";
+      const temperatureRange = consensusPeriodTemperatureRange(
+        memberBandMinimums,
+        memberBandMaximums,
+        deterministicBandMinimums,
+        deterministicBandMaximums,
+      );
+      const periodWindDirection = consensusDirectionFromSummaries(modelBands);
+      const periodWindSpeed = consensusAverage(
+        modelBands.map((summary) => summary.windSpeedMean),
+      );
+      const periodWindGust = consensusAverage(
+        modelBands.map((summary) => summary.gustMax),
+      );
+      const weather = consensusWeatherMeta(modelBands, rainProbability);
+      const periodCloudCover = consensusAverage(
+        modelBands.map((summary) => summary.cloudMean),
+      );
+      const periodPressure = consensusAverage(
+        modelBands.map((summary) => summary.pressureMean),
+      );
+      const periodRadiation = consensusAverage(
+        modelBands.map((summary) => summary.radiationMean),
+      );
+      const periodHumidex = consensusAverage(
+        modelBands.map((summary) => summary.humidexMax),
+      );
 
       return {
         ...band,
-        weather: consensusWeatherMeta(modelBands, rainProbability),
-        temperatureRange: consensusPeriodTemperatureRange(
-          memberBandMinimums,
-          memberBandMaximums,
-          deterministicBandMinimums,
-          deterministicBandMaximums,
-        ),
+        weather,
+        temperatureRange,
         rainProbability,
         rainRange: formatRainRange(
           ensembleRain.totals,
           consensusPrecipitation,
         ),
+        windDirection: windCardinal16(periodWindDirection),
+        windDirectionDegrees: Number.isFinite(n(periodWindDirection))
+          ? n(periodWindDirection)
+          : null,
+        windSpeed: periodWindSpeed,
+        windGust: periodWindGust,
+        cloudCover: Number.isFinite(n(periodCloudCover))
+          ? Math.round(n(periodCloudCover))
+          : null,
+        pressureMsl: Number.isFinite(n(periodPressure))
+          ? Math.round(n(periodPressure))
+          : null,
+        shortwaveRadiation: Number.isFinite(n(periodRadiation))
+          ? Math.round(n(periodRadiation))
+          : null,
+        humidex: Number.isFinite(n(periodHumidex))
+          ? Math.round(n(periodHumidex))
+          : null,
         past: isForecastBandPast(iso, band),
-        aromeUsed: aromeCoverage !== "none",
-        aromeCoverage,
-        aromeAvailableHours,
       };
     });
 
@@ -1915,10 +3296,6 @@ function buildShortForecast(iconDeterministic, aromeDeterministic, ensemble) {
         ? Math.round(deterministicProbability)
         : Math.max(...periods.map((period) => period.rainProbability), 0);
 
-    const wettestPeriod = periods.reduce((best, period) => {
-      if (!best || period.rainProbability > best.rainProbability) return period;
-      return best;
-    }, null);
 
     const deterministicMaximums = deterministicDays
       .map((summary) => summary.temperatureMax)
@@ -1929,32 +3306,6 @@ function buildShortForecast(iconDeterministic, aromeDeterministic, ensemble) {
     const deterministicRainTotal = consensusAverage(
       deterministicDays.map((summary) => summary.precipitationTotal),
     );
-    const windDirection = consensusDirectionFromSummaries(deterministicDays);
-    const windSpeed = consensusAverage(
-      deterministicDays.map((summary) => summary.windSpeedMax),
-    );
-    const windGust = consensusAverage(
-      deterministicDays.map((summary) => summary.gustMax),
-    );
-    const aromeFullPeriods = periods.filter(
-      (period) => period.aromeCoverage === "full",
-    ).length;
-    const aromeAvailablePeriods = periods.filter(
-      (period) => period.aromeCoverage !== "none",
-    ).length;
-    const aromeCoverage =
-      aromeFullPeriods === FORECAST_BANDS.length
-        ? "full"
-        : aromeAvailablePeriods > 0
-          ? "partial"
-          : "none";
-    const aromeUsed = aromeCoverage !== "none";
-    const modelLabel =
-      aromeCoverage === "full"
-        ? "ICON + AROME"
-        : aromeCoverage === "partial"
-          ? "ICON + AROME parziale"
-          : "ICON-2I";
 
     let maxRange = consensusForecastRange(
       memberMaximums,
@@ -1967,12 +3318,6 @@ function buildShortForecast(iconDeterministic, aromeDeterministic, ensemble) {
       daily?.temperature_2m_min?.[dayIndex],
     );
 
-    /*
-     * La fascia giornaliera deve contenere le fasce orarie:
-     * la massima giornaliera non può essere inferiore al valore più
-     * alto previsto in una delle quattro parti del giorno e la minima
-     * non può essere superiore al valore più basso.
-     */
     const highestPeriodTemperature = maxFinite(
       periods.map((period) => period.temperatureRange?.high),
     );
@@ -2012,27 +3357,132 @@ function buildShortForecast(iconDeterministic, aromeDeterministic, ensemble) {
 
     return {
       iso,
+      dayIndex,
       title: forecastDateLabel(iso, dayIndex),
       dateLabel: forecastCompactDate(iso),
-      modelLabel,
-      aromeUsed,
-      aromeCoverage,
       maxRange,
       minRange,
       rainProbability,
-      rainPeriod:
-        wettestPeriod?.rainProbability >= 20 ? wettestPeriod.label : "",
       rainRange: formatRainRange(memberRainTotals, deterministicRainTotal),
-      windDirection: windCardinal16(windDirection),
-      windSpeed,
-      windGust,
       periods,
-      ensembleMembers: Math.max(
-        temperatureKeys.length,
-        precipitationKeys.length,
-      ),
     };
   });
+}
+
+
+const FORECAST_ICON_MODEL = "italia_meteo_arpae_icon_2i";
+const FORECAST_AROME_MODEL = "meteofrance_arome_france_hd";
+
+const DETERMINISTIC_HOURLY_FIELDS = [
+  "temperature_2m",
+  "precipitation",
+  "weather_code",
+  "cloud_cover",
+  "pressure_msl",
+  "shortwave_radiation",
+  "dew_point_2m",
+  "wind_speed_10m",
+  "wind_direction_10m",
+  "wind_gusts_10m",
+];
+
+const DETERMINISTIC_DAILY_FIELDS = [
+  "temperature_2m_max",
+  "temperature_2m_min",
+  "precipitation_sum",
+  "wind_speed_10m_max",
+  "wind_gusts_10m_max",
+  "wind_direction_10m_dominant",
+];
+
+function modelSpecificSeries(container, variable, modelSlug) {
+  if (!container || typeof container !== "object") return [];
+
+  const modelKey = `${variable}_${modelSlug}`;
+  if (Array.isArray(container[modelKey])) return container[modelKey];
+
+  if (Array.isArray(container[variable])) return container[variable];
+
+  const candidates = Object.keys(container).filter(
+    (key) =>
+      key.startsWith(`${variable}_`) &&
+      Array.isArray(container[key]),
+  );
+
+  const modelCandidate = candidates.find((key) => key.endsWith(modelSlug));
+  if (modelCandidate) return container[modelCandidate];
+
+  return candidates.length === 1 ? container[candidates[0]] : [];
+}
+
+function extractModelForecast(payload, modelSlug) {
+  if (!payload) return null;
+
+  if (Array.isArray(payload)) {
+    const named = payload.find(
+      (entry) => String(entry?.model || "") === modelSlug,
+    );
+    if (named) return named;
+
+    const expectedIndex =
+      modelSlug === FORECAST_ICON_MODEL ? 0 : 1;
+    return payload[expectedIndex] || null;
+  }
+
+  const hourlySource = payload?.hourly || {};
+  const dailySource = payload?.daily || {};
+  const hourly = {
+    time: Array.isArray(hourlySource.time) ? hourlySource.time : [],
+  };
+  const daily = {
+    time: Array.isArray(dailySource.time) ? dailySource.time : [],
+  };
+
+  for (const field of DETERMINISTIC_HOURLY_FIELDS) {
+    const values = modelSpecificSeries(hourlySource, field, modelSlug);
+    if (values.length) hourly[field] = values;
+  }
+
+  for (const field of DETERMINISTIC_DAILY_FIELDS) {
+    const values = modelSpecificSeries(dailySource, field, modelSlug);
+    if (values.length) daily[field] = values;
+  }
+
+  return {
+    ...payload,
+    hourly,
+    daily,
+  };
+}
+
+function attachIconProbabilityForecast(iconForecast, probabilityPayload) {
+  if (!iconForecast || !probabilityPayload) return iconForecast;
+
+  const hourly = { ...(iconForecast.hourly || {}) };
+  const daily = { ...(iconForecast.daily || {}) };
+
+  const hourlyProbability = deterministicHourlySeries(
+    probabilityPayload?.hourly,
+    "precipitation_probability",
+  );
+  const dailyProbability = deterministicHourlySeries(
+    probabilityPayload?.daily,
+    "precipitation_probability_max",
+  );
+
+  if (hourlyProbability.length) {
+    hourly.precipitation_probability = hourlyProbability;
+  }
+
+  if (dailyProbability.length) {
+    daily.precipitation_probability_max = dailyProbability;
+  }
+
+  return {
+    ...iconForecast,
+    hourly,
+    daily,
+  };
 }
 
 function readForecastCache() {
@@ -2047,6 +3497,7 @@ function readForecastCache() {
     const updatedAt = Number(parsed?.updatedAt);
 
     if (!forecast.length || !Number.isFinite(updatedAt)) return null;
+
 
     return {
       forecast,
@@ -2069,7 +3520,6 @@ function writeForecastCache(forecast, updatedAt) {
       }),
     );
   } catch {
-    // Il sito continua a funzionare anche se il browser blocca localStorage.
   }
 }
 
@@ -2078,12 +3528,17 @@ function ForecastSection() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [updatedAt, setUpdatedAt] = useState(null);
+  const [activeDayIndex, setActiveDayIndex] = useState(0);
 
   useEffect(() => {
     let alive = true;
     let timer = null;
     let requestInFlight = false;
     let lastConsultationAt = null;
+
+    setForecast([]);
+    setLoading(true);
+    setError("");
 
     const scheduleNextUpdate = (lastConsultation = lastConsultationAt) => {
       if (!alive) return;
@@ -2102,9 +3557,7 @@ function ForecastSection() {
       timer = window.setTimeout(async () => {
         const nextConsultation = await loadForecast();
         scheduleNextUpdate(
-          Number.isFinite(nextConsultation)
-            ? nextConsultation
-            : Date.now(),
+          Number.isFinite(nextConsultation) ? nextConsultation : Date.now(),
         );
       }, delay);
     };
@@ -2117,28 +3570,32 @@ function ForecastSection() {
       try {
         setError("");
 
-        const iconUrl = new URL("https://api.open-meteo.com/v1/forecast");
-        iconUrl.search = new URLSearchParams({
+        const deterministicUrl = new URL(
+          "https://api.open-meteo.com/v1/forecast",
+        );
+        deterministicUrl.search = new URLSearchParams({
           latitude: String(FORECAST_LATITUDE),
           longitude: String(FORECAST_LONGITUDE),
-          models: "italia_meteo_arpae_icon_2i",
+          models: `${FORECAST_ICON_MODEL},${FORECAST_AROME_MODEL}`,
           timezone: FORECAST_TIMEZONE,
           forecast_days: "3",
-          hourly:
-            "temperature_2m,precipitation_probability,precipitation,weather_code,cloud_cover,wind_speed_10m,wind_direction_10m,wind_gusts_10m",
-          daily:
-            "temperature_2m_max,temperature_2m_min,precipitation_probability_max,precipitation_sum,wind_speed_10m_max,wind_gusts_10m_max,wind_direction_10m_dominant",
+          cell_selection: "land",
+          hourly: DETERMINISTIC_HOURLY_FIELDS.join(","),
+          daily: DETERMINISTIC_DAILY_FIELDS.join(","),
         }).toString();
 
-        const aromeUrl = new URL("https://api.open-meteo.com/v1/forecast");
-        aromeUrl.search = new URLSearchParams({
+        const iconProbabilityUrl = new URL(
+          "https://api.open-meteo.com/v1/forecast",
+        );
+        iconProbabilityUrl.search = new URLSearchParams({
           latitude: String(FORECAST_LATITUDE),
           longitude: String(FORECAST_LONGITUDE),
-          models: "meteofrance_arome_france_hd",
+          models: FORECAST_ICON_MODEL,
           timezone: FORECAST_TIMEZONE,
           forecast_days: "3",
-          hourly:
-            "temperature_2m,precipitation,weather_code,cloud_cover,wind_speed_10m,wind_direction_10m,wind_gusts_10m",
+          cell_selection: "land",
+          hourly: "precipitation_probability",
+          daily: "precipitation_probability_max",
         }).toString();
 
         const ensembleUrl = new URL(
@@ -2153,34 +3610,50 @@ function ForecastSection() {
           hourly: "temperature_2m,precipitation",
         }).toString();
 
-        const [iconResponse, aromeResponse, ensembleResponse] =
-          await Promise.all([
-            fetch(iconUrl.toString(), { cache: "no-store" }),
-            fetch(aromeUrl.toString(), { cache: "no-store" }).catch(
-              () => null,
-            ),
-            fetch(ensembleUrl.toString(), { cache: "no-store" }).catch(
-              () => null,
-            ),
-          ]);
+        const [
+          deterministicResponse,
+          iconProbabilityResponse,
+          ensembleResponse,
+        ] = await Promise.all([
+          fetch(deterministicUrl.toString(), { cache: "no-store" }),
+          fetch(iconProbabilityUrl.toString(), { cache: "no-store" }).catch(
+            () => null,
+          ),
+          fetch(ensembleUrl.toString(), { cache: "no-store" }).catch(
+            () => null,
+          ),
+        ]);
 
-        if (!iconResponse.ok) {
+        if (!deterministicResponse.ok) {
           throw new Error(
-            "La previsione ICON-2I non è momentaneamente disponibile.",
+            "Le previsioni deterministiche non sono momentaneamente disponibili.",
           );
         }
 
-        const iconDeterministic = await iconResponse.json();
-        let aromeDeterministic = null;
+        const deterministicPayload = await deterministicResponse.json();
+        let iconDeterministic = extractModelForecast(
+          deterministicPayload,
+          FORECAST_ICON_MODEL,
+        );
+        let aromeDeterministic = extractModelForecast(
+          deterministicPayload,
+          FORECAST_AROME_MODEL,
+        );
         let ensemble = null;
+        let iconProbabilityPayload = null;
 
-        if (aromeResponse?.ok) {
-          aromeDeterministic = await aromeResponse.json();
+        if (iconProbabilityResponse?.ok) {
+          iconProbabilityPayload = await iconProbabilityResponse.json();
         }
 
         if (ensembleResponse?.ok) {
           ensemble = await ensembleResponse.json();
         }
+
+        iconDeterministic = attachIconProbabilityForecast(
+          iconDeterministic,
+          iconProbabilityPayload,
+        );
 
         const built = buildShortForecast(
           iconDeterministic,
@@ -2223,8 +3696,7 @@ function ForecastSection() {
 
       const last = Number(lastConsultationAt);
       const refreshDue =
-        !Number.isFinite(last) ||
-        Date.now() - last >= FORECAST_REFRESH_MS;
+        !Number.isFinite(last) || Date.now() - last >= FORECAST_REFRESH_MS;
 
       if (!refreshDue) {
         scheduleNextUpdate(last);
@@ -2236,21 +3708,10 @@ function ForecastSection() {
       if (!alive) return;
 
       scheduleNextUpdate(
-        Number.isFinite(consultationTime)
-          ? consultationTime
-          : Date.now(),
+        Number.isFinite(consultationTime) ? consultationTime : Date.now(),
       );
     };
 
-    /*
-     * La cache viene mostrata immediatamente. Se ha meno di 60 minuti,
-     * la nuova richiesta parte allo scadere dell'ora effettiva dall'ultima
-     * consultazione; se è più vecchia, viene aggiornata subito.
-     *
-     * In questo modo chiudere o riaprire la pagina non fa ripartire da zero
-     * il conteggio dei 60 minuti e non può lasciare le previsioni ferme al
-     * giorno precedente.
-     */
     const cached = readForecastCache();
 
     if (cached) {
@@ -2287,53 +3748,31 @@ function ForecastSection() {
     };
   }, []);
 
-  const hasEnsemble = forecast.some((day) => day.ensembleMembers > 1);
-  const hasArome = forecast.some((day) => day.aromeUsed);
-  const hasFullArome = forecast.some((day) => day.aromeCoverage === "full");
-  const hasPartialArome = forecast.some(
-    (day) => day.aromeCoverage === "partial",
+  const updatedLabel = updatedAt
+    ? `Dati aggiornati alle ${updatedAt.toLocaleTimeString("it-IT", {
+        hour: "2-digit",
+        minute: "2-digit",
+      })}`
+    : "Aggiornamento in corso";
+
+  const safeActiveDayIndex = Math.min(
+    Math.max(0, activeDayIndex),
+    Math.max(0, forecast.length - 1),
   );
+  const selectedDay = forecast[safeActiveDayIndex] || null;
+  const selectedWeather = selectedDay
+    ? overviewWeatherForDay(selectedDay)
+    : null;
+
 
   return (
     <section className="forecastSection" aria-label="Previsioni per Collinas">
       <div className="forecastHeader">
-        <div className="forecastHeading">
-          <span className="forecastKicker">PREVISIONI LOCALI</span>
-          <h2>Previsioni per Collinas</h2>
-          <p>
-            Previsione di consenso suddivisa tra notte, mattino, pomeriggio
-            e sera nelle prossime 72 ore.
-          </p>
-        </div>
-
-        <div className="forecastSource">
-          <strong>
-            {[
-              "ICON-2I",
-              hasArome ? "AROME HD" : null,
-              hasEnsemble ? "ICON-EU EPS" : null,
-            ]
-              .filter(Boolean)
-              .join(" + ")}
-          </strong>
-          <span>
-            {updatedAt
-              ? `Consultazione ${updatedAt.toLocaleTimeString("it-IT", {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                })}`
-              : "Orizzonte 3 giorni"}
-          </span>
-          <small>
-            {hasFullArome && hasPartialArome
-              ? "Copertura AROME completa o parziale secondo la scadenza"
-              : hasFullArome
-                ? "ICON e AROME disponibili su tutte le fasce"
-                : hasPartialArome
-                  ? "AROME disponibile soltanto su alcune fasce"
-                  : "AROME temporaneamente non disponibile"}
-          </small>
-        </div>
+        <h2>Previsioni meteo Collinas</h2>
+        <p>
+          Dati basati sui modelli <strong>ICON-2I, AROME HD e ICON-EU EPS.</strong>
+        </p>
+        <div className="forecastUpdate">{updatedLabel}</div>
       </div>
 
       {loading && !forecast.length && (
@@ -2344,717 +3783,1391 @@ function ForecastSection() {
         <div className="forecastMessage">{error}</div>
       )}
 
-      {forecast.length > 0 && (
-        <div className="forecastGrid">
-          {forecast.map((day) => (
-            <article className="forecastCard" key={day.iso}>
-              <div className="forecastDay">
-                <strong>{day.title}</strong>
-                <div className="forecastDayMeta">
-                  <span>{day.dateLabel}</span>
-                  <small>{day.modelLabel}</small>
-                </div>
-              </div>
+      {forecast.length > 0 && selectedDay && selectedWeather && (
+        <div className="forecastContent">
+          <div
+            className="dayTabs"
+            role="tablist"
+            aria-label="Seleziona il giorno della previsione"
+          >
+            {forecast.map((day, index) => {
+              const overview = overviewWeatherForDay(day);
+              const isActive = index === safeActiveDayIndex;
 
-              <div className="dailySummary">
-                <div className="summaryItem maximum">
-                  <span>Massima</span>
-                  <strong>{formatForecastRange(day.maxRange)}</strong>
-                </div>
-                <div className="summaryItem minimum">
-                  <span>Minima</span>
-                  <strong>{formatForecastRange(day.minRange)}</strong>
-                </div>
-                <div className="summaryItem rainSummary">
-                  <span>Pioggia</span>
-                  <strong>{day.rainProbability}%</strong>
-                  <small>
-                    {day.rainPeriod
-                      ? `${day.rainPeriod} · ${day.rainRange}`
-                      : day.rainRange}
-                  </small>
-                </div>
-                <div className="summaryItem windSummary">
-                  <span>Vento</span>
-                  <strong>
-                    {day.windDirection} {fmt(day.windSpeed, 0)} km/h
-                  </strong>
-                  <small>Raffiche {fmt(day.windGust, 0)} km/h</small>
-                </div>
-              </div>
+              return (
+                <button
+                  key={day.iso}
+                  type="button"
+                  role="tab"
+                  aria-selected={isActive}
+                  className={`dayTab ${isActive ? "active" : ""}`}
+                  onClick={() => setActiveDayIndex(index)}
+                >
+                  <div className="dayTabDate">{day.dateLabel}</div>
 
-              <div
-                className="periodGrid"
-                role="list"
-                aria-label={`Dettaglio delle fasce orarie di ${day.title}`}
-              >
-                {day.periods.map((period) => (
-                  <div
-                    className={`periodForecast ${period.past ? "isPast" : ""}`}
+                  <div className="dayTabTemps">
+                    <strong style={{ color: temperatureRangeTone(day.maxRange) }}>
+                      {formatForecastRange(day.maxRange)}
+                    </strong>
+                    <span>/</span>
+                    <strong style={{ color: FORECAST_MIN_TEMP_COLOR }}>
+                      {formatForecastRange(day.minRange)}
+                    </strong>
+                    <span className="dayTabRain">· {day.rainRange}</span>
+                  </div>
+
+                  <div className="dayTabIcon">
+                    <WeatherForecastIcon
+                      kind={overview.kind}
+                      night={overview.night}
+                    />
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+
+          <article className="meteogramCard" role="tabpanel">
+            <div className="meteogramGrid">
+              <aside className="overviewLegend" aria-label="Dettaglio della previsione e legenda dei parametri">
+                <div className="legendTitle">
+                  <span className="legendEyebrow">Dettaglio previsione</span>
+                  <span className="legendClock" aria-hidden="true">
+                    <svg viewBox="0 0 24 24">
+                      <circle cx="12" cy="12" r="8.5" />
+                      <path d="M12 7.5v5l3.2 1.9" />
+                    </svg>
+                  </span>
+                  <strong>4 fasce · 6 ore</strong>
+                  <small>00 → 24</small>
+                </div>
+
+                <div className="legendList" aria-hidden="true">
+                  <div className="legendRow">
+                    <span className="legendGlyph tempGlyph">↕</span>
+                    <strong>Temperatura</strong>
+                  </div>
+                  <div className="legendRow">
+                    <span className="legendGlyph rainGlyph">♦</span>
+                    <strong>Pioggia</strong>
+                  </div>
+                  <div className="legendRow">
+                    <span className="legendGlyph windGlyph">➤</span>
+                    <strong>Vento <small>(medio / raffica)</small></strong>
+                  </div>
+                  <div className="legendRow">
+                    <span className="legendGlyph cloudGlyph">☁</span>
+                    <strong>Nuvolosità</strong>
+                  </div>
+                  <div className="legendRow">
+                    <span className="legendGlyph pressureGlyph">P</span>
+                    <strong>Pressione</strong>
+                  </div>
+                  <div className="legendRow">
+                    <span className="legendGlyph radiationGlyph">☀</span>
+                    <strong>Radiazione <small>(media)</small></strong>
+                  </div>
+                  <div className="legendRow">
+                    <span className="legendGlyph humidexGlyph">H</span>
+                    <strong className="humidexLegendLabel">
+                      Humidex <small>(max)</small>
+                      <span
+                        className="humidexInfo"
+                        tabIndex={0}
+                        aria-label="Informazioni sull'indice Humidex"
+                      >
+                        !
+                        <span className="humidexInfoTooltip">
+                          Indice di disagio da caldo basato su temperatura e umidità.
+                        </span>
+                      </span>
+                    </strong>
+                  </div>
+                </div>
+              </aside>
+
+              <div className="periodColumns">
+                {selectedDay.periods.map((period) => {
+                  return (
+                  <section
+                    className={`periodColumn ${period.past ? "isPast" : ""}`}
                     key={period.key}
-                    role="listitem"
+                    aria-label={`${period.label} ${period.timeLabel}`}
                   >
-                    <div className="periodTop">
-                      <strong>{period.label}</strong>
-                      <span>{period.timeLabel}</span>
+                    <div className="periodTopZone">
+                      <span className="periodTimeCorner">{period.timeLabel}</span>
+
+                      <div className="periodSummaryCenter">
+                        <div className="periodColumnHead">
+                          <strong>{period.label}</strong>
+                        </div>
+
+                        <div className="periodWeather">
+                          <div className="periodWeatherIcon">
+                            <WeatherForecastIcon
+                              kind={period.weather.kind}
+                              night={period.night}
+                            />
+                          </div>
+                          <span>{period.weather.label}</span>
+                          <strong
+                            className="mobilePeriodTemperature"
+                            style={{ color: temperatureRangeTone(period.temperatureRange) }}
+                          >
+                            {formatForecastRange(period.temperatureRange)}
+                          </strong>
+                        </div>
+                      </div>
                     </div>
 
-                    <div className="periodBody">
-                      <div className="periodIcon">
-                        <WeatherForecastIcon
-                          kind={period.weather.kind}
-                          night={period.night}
+                    <div className="periodMetricGrid">
+                      <div className="periodMetricRow temperatureMetricRow">
+                        <span
+                          className="tempLine"
+                          style={{ background: temperatureRangeTone(period.temperatureRange) }}
+                        />
+                        <strong
+                          style={{ color: temperatureRangeTone(period.temperatureRange) }}
+                        >
+                          {formatForecastRange(period.temperatureRange)}
+                        </strong>
+                        <span
+                          className="tempLine"
+                          style={{ background: temperatureRangeTone(period.temperatureRange) }}
                         />
                       </div>
 
-                      <div className="periodDetails">
-                        <div className="periodCondition">
-                          {period.weather.label}
-                        </div>
-                        <strong className="periodTemperature">
-                          {formatForecastRange(period.temperatureRange)}
-                        </strong>
-                        <span className="periodRain">
-                          Pioggia {period.rainProbability}% · {period.rainRange}
+                      <div className="periodMetricRow">
+                        <span className="rowGlyph rainGlyph">♦</span>
+                        <span className="mobileMetricLabel">Pioggia</span>
+                        <strong>{period.rainProbability}% · {period.rainRange}</strong>
+                      </div>
+
+                      <div className="periodMetricRow">
+                        <span
+                          className="rowGlyph windGlyph windDirectionGlyph"
+                          style={{
+                            transform: `rotate(${windArrowRotation(period.windDirectionDegrees)}deg)`,
+                          }}
+                          aria-hidden="true"
+                        >
+                          ➤
                         </span>
+                        <span className="mobileMetricLabel">Vento</span>
+                        <strong className="windMetricValue">
+                          {period.windDirection || "—"} {fmt(period.windSpeed, 0)} / {fmt(period.windGust, 0)} km/h
+                        </strong>
+                      </div>
+
+
+
+
+                      <div className="periodMetricRow">
+                        <span className="rowGlyph cloudGlyph">☁</span>
+                        <span className="mobileMetricLabel">Nuvolosità</span>
+                        <strong>
+                          {Number.isFinite(n(period.cloudCover))
+                            ? `${Math.round(n(period.cloudCover))}%`
+                            : "—"}
+                        </strong>
+                      </div>
+
+                      <div className="periodMetricRow">
+                        <span className="rowGlyph pressureGlyph">P</span>
+                        <span className="mobileMetricLabel">Pressione</span>
+                        <strong>
+                          {Number.isFinite(n(period.pressureMsl))
+                            ? `${Math.round(n(period.pressureMsl))} hPa`
+                            : "—"}
+                        </strong>
+                      </div>
+
+                      <div className="periodMetricRow">
+                        <span className="rowGlyph radiationGlyph">☀</span>
+                        <span className="mobileMetricLabel">Radiazione</span>
+                        <strong>
+                          {Number.isFinite(n(period.shortwaveRadiation))
+                            ? `${Math.round(n(period.shortwaveRadiation))} W/m²`
+                            : "—"}
+                        </strong>
+                      </div>
+
+                      <div className="periodMetricRow humidexMetricRow">
+                        <span className="rowGlyph humidexGlyph">H</span>
+                        <span className="mobileMetricLabel mobileHumidexLabel">
+                          Humidex
+                          <span
+                            className="mobileHumidexInfo"
+                            tabIndex={0}
+                            aria-label="Informazioni sull'indice Humidex"
+                          >
+                            !
+                            <span className="mobileHumidexTooltip">
+                              Indice di disagio da caldo basato su temperatura e umidità.
+                            </span>
+                          </span>
+                        </span>
+                        <strong className={humidexAttention(period.humidex)?.tone || ""}>
+                          {Number.isFinite(n(period.humidex))
+                            ? Math.round(n(period.humidex))
+                            : "—"}
+                          {humidexAttention(period.humidex) ? (
+                            <span
+                              className="humidexAlert"
+                              title={humidexAttention(period.humidex).title}
+                              aria-label={humidexAttention(period.humidex).title}
+                            >
+                              {humidexAttention(period.humidex).label}
+                            </span>
+                          ) : null}
+                        </strong>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  </section>
+                  );
+                })}
               </div>
-            </article>
-          ))}
+            </div>
+
+          </article>
         </div>
       )}
 
-      <div className="forecastFooter">
-        <div>
-          <strong>Oltre le 72 ore</strong>
-          <span>
-            Le previsioni confrontano ICON-2I, AROME HD e gli scenari
-            dell’ensemble ICON-EU. Gli intervalli indicano la fascia più
-            probabile tra le diverse simulazioni; oltre tre giorni
-            l’incertezza aumenta e va letta nei grafici ensemble.
-          </span>
-        </div>
-
-        <a href="/grafici-previsione">
-          Apri i grafici ensemble
-          <span aria-hidden="true">→</span>
-        </a>
-      </div>
+      <a className="forecastFooterLink" href="/grafici-previsione">
+        <span>Previsioni grafiche oltre 3 giorni</span>
+        <span aria-hidden="true">→</span>
+      </a>
 
       <style jsx>{`
         .forecastSection {
           margin: 18px auto 0;
-          border: 1px solid #e4e7eb;
+          border: 1px solid #e5e7eb;
           border-radius: 22px;
           overflow: hidden;
-          background:
-            radial-gradient(
-              800px 260px at 12% 0%,
-              rgba(14, 165, 233, 0.09),
-              transparent 62%
-            ),
-            linear-gradient(180deg, #ffffff, #f8fafc);
-          box-shadow: 0 9px 28px rgba(15, 23, 42, 0.055);
+          background: #ffffff;
+          box-shadow: 0 10px 28px rgba(15, 23, 42, 0.045);
         }
 
         .forecastHeader {
-          min-height: 100px;
-          padding: 18px 20px;
+          padding: 18px 18px 14px;
           display: grid;
-          grid-template-columns: 1fr minmax(0, 720px) 1fr;
-          align-items: center;
-          gap: 20px;
-          border-bottom: 1px solid #e9edf1;
-        }
-
-        .forecastHeading {
-          grid-column: 2;
-          min-width: 0;
+          justify-items: center;
+          gap: 4px;
+          border-bottom: 1px solid #eef2f6;
+          background: linear-gradient(180deg, #ffffff, #fbfdff);
           text-align: center;
         }
 
-        .forecastKicker {
-          display: block;
-          margin-bottom: 5px;
-          font-size: 9px;
-          font-weight: 950;
-          color: #0284c7;
-          letter-spacing: 0.1em;
-        }
-
-        .forecastHeading h2 {
+        .forecastHeader h2 {
           margin: 0;
-          font-size: 24px;
+          font-size: 27px;
           font-weight: 950;
-          letter-spacing: -0.025em;
           color: #0f172a;
-          text-align: center;
+          letter-spacing: -0.035em;
         }
 
-        .forecastHeading p {
-          margin: 5px auto 0;
+        .forecastHeader p {
+          margin: 0;
           font-size: 11px;
           font-weight: 700;
-          line-height: 1.45;
-          color: rgba(15, 23, 42, 0.56);
-          text-align: center;
+          color: rgba(15, 23, 42, 0.58);
         }
 
-        .forecastSource {
-          grid-column: 3;
-          justify-self: end;
-          min-width: 190px;
-          padding: 10px 13px;
-          display: grid;
-          gap: 3px;
-          border: 1px solid #dfe7ee;
-          border-radius: 13px;
-          background: rgba(255, 255, 255, 0.86);
-          text-align: center;
-        }
-
-        .forecastSource strong {
-          font-size: 10px;
-          font-weight: 950;
+        .forecastHeader p strong {
           color: #0f172a;
+          font-weight: 900;
         }
 
-        .forecastSource span {
+        .forecastUpdate {
+          margin-top: 3px;
           font-size: 9px;
-          font-weight: 800;
-          color: rgba(15, 23, 42, 0.5);
+          font-weight: 850;
+          color: rgba(15, 23, 42, 0.48);
           text-transform: uppercase;
-          letter-spacing: 0.035em;
-        }
-
-        .forecastSource small {
-          font-size: 8px;
-          font-weight: 750;
-          color: rgba(15, 23, 42, 0.46);
-          line-height: 1.25;
+          letter-spacing: 0.045em;
         }
 
         .forecastMessage {
-          min-height: 220px;
+          min-height: 160px;
           display: flex;
           align-items: center;
           justify-content: center;
-          padding: 24px;
+          padding: 20px;
           font-size: 12px;
           font-weight: 800;
           color: rgba(15, 23, 42, 0.62);
           text-align: center;
         }
 
-        .forecastGrid {
-          padding: 16px 18px 18px;
+        .forecastContent {
+          padding: 8px 8px 10px;
+        }
+
+        .dayTabs {
           display: grid;
           grid-template-columns: repeat(3, minmax(0, 1fr));
-          gap: 13px;
-        }
-
-        .forecastCard {
-          min-width: 0;
-          padding: 15px;
-          border: 1px solid #e2e8ee;
-          border-radius: 18px;
-          background: rgba(255, 255, 255, 0.94);
-          box-shadow: 0 5px 16px rgba(15, 23, 42, 0.035);
-        }
-
-        .forecastDay {
-          display: flex;
-          align-items: baseline;
-          justify-content: space-between;
-          gap: 10px;
-        }
-
-        .forecastDay strong {
-          font-size: 18px;
-          font-weight: 950;
-          color: #0f172a;
-        }
-
-        .forecastDayMeta {
-          min-width: 0;
-          display: grid;
-          justify-items: end;
-          gap: 2px;
-          text-align: right;
-        }
-
-        .forecastDayMeta span {
-          font-size: 10px;
-          font-weight: 850;
-          color: rgba(15, 23, 42, 0.5);
-          text-transform: capitalize;
-        }
-
-        .forecastDayMeta small {
-          padding: 3px 6px;
-          border: 1px solid #e2e8f0;
-          border-radius: 999px;
-          background: #f8fafc;
-          font-size: 7.5px;
-          font-weight: 900;
-          color: rgba(15, 23, 42, 0.55);
-          text-transform: uppercase;
-          letter-spacing: 0.025em;
-          white-space: nowrap;
-        }
-
-        .dailySummary {
-          margin-top: 9px;
-          display: grid;
-          grid-template-columns: repeat(2, minmax(0, 1fr));
-          gap: 6px;
-        }
-
-        .summaryItem {
-          min-width: 0;
-          min-height: 50px;
-          padding: 5px 8px;
-          display: grid;
-          align-content: center;
-          gap: 1px;
-          border: 1px solid #e7ebef;
-          border-radius: 11px;
-          background: #fbfcfd;
-          text-align: center;
-        }
-
-        .summaryItem > span {
-          font-size: 7.5px;
-          font-weight: 950;
-          color: rgba(15, 23, 42, 0.5);
-          text-transform: uppercase;
-          letter-spacing: 0.04em;
-        }
-
-        .summaryItem strong {
-          overflow: hidden;
-          font-size: 13.5px;
-          font-weight: 950;
-          color: #0f172a;
-          text-overflow: ellipsis;
-          white-space: nowrap;
-        }
-
-        .summaryItem small {
-          overflow: hidden;
-          font-size: 8px;
-          font-weight: 750;
-          color: rgba(15, 23, 42, 0.48);
-          text-overflow: ellipsis;
-          white-space: nowrap;
-        }
-
-        .summaryItem.maximum strong {
-          color: #dc2626;
-        }
-
-        .summaryItem.minimum strong {
-          color: #2563eb;
-        }
-
-        .rainSummary strong {
-          color: #0284c7;
-        }
-
-        .rainSummary small {
-          font-size: 10px;
-          font-weight: 900;
-          color: #0369a1;
-        }
-
-        .periodGrid {
-          margin-top: 10px;
-          display: grid;
-          grid-template-columns: repeat(2, minmax(0, 1fr));
-          gap: 7px;
-        }
-
-        .periodForecast {
-          min-width: 0;
-          min-height: 84px;
-          padding: 8px 10px;
-          display: grid;
-          grid-template-rows: auto 1fr;
-          gap: 5px;
-          align-content: start;
-          border: 1px solid #e5eaf0;
-          border-radius: 12px;
-          background:
-            linear-gradient(180deg, rgba(248, 250, 252, 0.82), #ffffff);
-          transition:
-            transform 130ms ease,
-            border-color 130ms ease,
-            box-shadow 130ms ease,
-            opacity 130ms ease;
-        }
-
-        .periodForecast:hover {
-          transform: translateY(-1px);
-          border-color: #cfd8e2;
-          box-shadow: 0 6px 14px rgba(15, 23, 42, 0.045);
-        }
-
-        .periodForecast.isPast {
-          opacity: 0.68;
-        }
-
-        .periodTop {
-          display: flex;
-          align-items: baseline;
-          justify-content: space-between;
           gap: 8px;
-          padding-bottom: 4px;
-          border-bottom: 1px solid rgba(226, 232, 240, 0.78);
         }
 
-        .periodTop strong {
+        .dayTab {
           min-width: 0;
-          font-size: 10.5px;
-          font-weight: 950;
-          color: #0f172a;
-          white-space: nowrap;
-        }
-
-        .periodTop span {
-          flex: 0 0 auto;
-          font-size: 7.8px;
-          font-weight: 850;
-          color: rgba(15, 23, 42, 0.46);
-        }
-
-        .periodBody {
-          min-width: 0;
+          min-height: 46px;
+          padding: 6px 14px;
           display: grid;
-          grid-template-columns: 34px minmax(0, 1fr);
+          grid-template-columns: minmax(90px, 1fr) auto 34px;
           align-items: center;
-          gap: 8px;
+          gap: 14px;
+          border: 1px solid #e2e7ed;
+          border-radius: 10px;
+          background: #ffffff;
+          color: #0f172a;
+          font-family: inherit;
+          text-align: left;
+          cursor: pointer;
+          transition:
+            border-color 120ms ease,
+            box-shadow 120ms ease,
+            background 120ms ease;
         }
 
-        .periodIcon {
-          width: 32px;
-          height: 30px;
-          margin: 0;
+        .dayTab:hover {
+          border-color: #c8d3df;
+          background: #fbfdff;
         }
 
-        .periodIcon :global(svg) {
+        .dayTab.active {
+          border-color: #60a5fa;
+          background: linear-gradient(180deg, #f8fbff, #ffffff);
+          box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.08);
+        }
+
+        .dayTab:focus-visible {
+          outline: none;
+          box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.18);
+        }
+
+        .dayTabDate {
+          min-width: 0;
+          overflow: hidden;
+          font-size: 14px;
+          font-weight: 950;
+          color: #0f172a;
+          text-transform: capitalize;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .dayTabTemps {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          white-space: nowrap;
+        }
+
+        .dayTabRain {
+          margin-left: 2px;
+          font-size: 9.5px !important;
+          font-weight: 900 !important;
+          color: #0284c7 !important;
+        }
+
+        .dayTabTemps strong {
+          font-size: 11px;
+          font-weight: 950;
+        }
+
+        .dayTabTemps > span {
+          font-size: 10px;
+          font-weight: 800;
+          color: rgba(15, 23, 42, 0.42);
+        }
+
+        .dayTabIcon {
+          width: 28px;
+          height: 26px;
+          justify-self: end;
+          margin-left: 4px;
+        }
+
+        .dayTabIcon :global(svg) {
           width: 100%;
           height: 100%;
           display: block;
           overflow: visible;
         }
 
-        .periodDetails {
-          min-width: 0;
+        .meteogramCard {
+          margin-top: 6px;
+          border: 1px solid #e2e8f0;
+          border-radius: 13px;
+          overflow: visible;
+          background: #ffffff;
+          box-shadow: 0 4px 14px rgba(15, 23, 42, 0.025);
+        }
+
+        .meteogramGrid {
           display: grid;
-          grid-template-columns: 1fr;
-          grid-template-areas:
-            "temperature"
-            "condition"
-            "rain";
-          align-items: center;
-          gap: 1px;
-          text-align: left;
-        }
-
-        .periodCondition {
-          grid-area: condition;
+          grid-template-columns: 205px minmax(0, 1fr);
           min-width: 0;
-          font-size: 8.7px;
-          font-weight: 900;
-          line-height: 1.15;
-          color: #334155;
-          white-space: normal;
-          overflow-wrap: anywhere;
+          overflow: visible;
+          border-radius: 13px 13px 0 0;
         }
 
-        .periodTemperature {
-          grid-area: temperature;
-          font-size: 11.5px;
-          font-weight: 950;
-          color: #0f172a;
-          white-space: nowrap;
-        }
-
-        .periodRain {
-          grid-area: rain;
+        .overviewLegend {
+          position: relative;
+          z-index: 4;
           min-width: 0;
-          font-size: 8px;
-          font-weight: 800;
-          line-height: 1.15;
-          color: rgba(15, 23, 42, 0.56);
-          white-space: normal;
-          overflow-wrap: anywhere;
-        }
-
-        .forecastFooter {
-          min-height: 76px;
-          padding: 13px 18px;
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 20px;
-          border-top: 1px solid #e7ebef;
-          background: rgba(255, 255, 255, 0.78);
-        }
-
-        .forecastFooter > div {
-          min-width: 0;
+          padding: 8px 10px 0;
           display: grid;
+          grid-template-rows: 108px auto;
+          gap: 0;
+          border-right: 1px solid #e5ebf1;
+          background: linear-gradient(180deg, #ffffff, #fbfdff);
+        }
+
+        .legendTitle {
+          min-width: 0;
+          height: 108px;
+          display: grid;
+          align-content: center;
+          justify-items: center;
           gap: 3px;
+          padding: 7px 6px 9px;
+          box-sizing: border-box;
+          text-align: center;
         }
 
-        .forecastFooter > div strong {
-          font-size: 11px;
+        .legendEyebrow {
+          font-size: 8px;
           font-weight: 950;
-          color: #0f172a;
+          color: rgba(15, 23, 42, 0.48);
+          text-transform: uppercase;
+          letter-spacing: 0.075em;
         }
 
-        .forecastFooter > div span {
-          max-width: 740px;
-          font-size: 9.5px;
-          font-weight: 700;
-          line-height: 1.4;
-          color: rgba(15, 23, 42, 0.52);
-        }
-
-        .forecastFooter a {
-          flex: 0 0 auto;
-          min-height: 42px;
-          padding: 0 15px;
+        .legendClock {
+          width: 25px;
+          height: 25px;
           display: inline-flex;
           align-items: center;
           justify-content: center;
-          gap: 10px;
-          border: 1px solid #cbd5df;
-          border-radius: 13px;
-          background: #0f172a;
-          color: #fff;
+          color: #0284c7;
+        }
+
+        .legendClock :global(svg) {
+          width: 100%;
+          height: 100%;
+          fill: none;
+          stroke: currentColor;
+          stroke-width: 1.7;
+          stroke-linecap: round;
+          stroke-linejoin: round;
+        }
+
+        .legendTitle > strong {
+          font-size: 10.5px;
+          font-weight: 950;
+          line-height: 1.1;
+          color: #0f172a;
+          letter-spacing: -0.01em;
+        }
+
+        .legendTitle > small {
+          font-size: 8.5px;
+          font-weight: 850;
+          color: rgba(15, 23, 42, 0.48);
+          letter-spacing: 0.035em;
+        }
+
+        .legendList {
+          display: grid;
+          grid-template-rows: repeat(7, 30px);
+          align-content: start;
+          gap: 0;
+          padding: 0 18px;
+        }
+
+        .legendRow {
+          min-width: 0;
+          min-height: 0;
+          display: grid;
+          grid-template-columns: 18px minmax(0, 1fr);
+          align-items: center;
+          justify-content: stretch;
+          gap: 8px;
+          border-top: 1px solid #edf1f5;
+          text-align: left;
+        }
+
+        .legendRow:last-child {
+          border-bottom: 1px solid #edf1f5;
+        }
+
+        .legendRow:last-child {
+          border-bottom: 0;
+        }
+
+        .legendRow:has(.humidexInfo) {
+          position: relative;
+          z-index: 220;
+          overflow: visible;
+        }
+
+        .legendGlyph,
+        .rowGlyph {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 10px;
+          font-weight: 950;
+          color: #0284c7;
+        }
+
+        .legendRow > strong {
+          min-width: 0;
+          overflow: visible;
+          font-size: 8.5px;
+          font-weight: 900;
+          color: rgba(15, 23, 42, 0.62);
+          text-transform: uppercase;
+          letter-spacing: 0.025em;
+          text-align: left;
+          white-space: nowrap;
+        }
+
+        .legendRow small {
+          font-size: 7.5px;
+          font-weight: 700;
+          color: rgba(15, 23, 42, 0.42);
+          text-transform: none;
+          letter-spacing: 0;
+        }
+
+        .windGlyph {
+          color: #2563eb;
+        }
+
+        .windDirectionGlyph {
+          transform-origin: center;
+          transition: transform 140ms ease;
+        }
+
+        .cloudGlyph {
+          color: #0284c7;
           font-size: 11px;
+        }
+
+        .pressureGlyph {
+          color: #64748b;
+          font-size: 9px;
+          font-weight: 950;
+        }
+
+        .radiationGlyph {
+          color: #d97706;
+          font-size: 11px;
+        }
+
+        .humidexGlyph {
+          color: #db2777;
+          font-size: 11px;
+          font-weight: 950;
+        }
+
+        .humidexLegendLabel {
+          position: relative;
+          z-index: 210;
+          display: inline-flex;
+          align-items: center;
+          gap: 5px;
+          overflow: visible !important;
+          white-space: nowrap;
+        }
+
+        .humidexInfo {
+          position: relative;
+          width: 15px;
+          height: 15px;
+          flex: 0 0 15px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          border: 1px solid #cbd5e1;
+          border-radius: 999px;
+          background: #ffffff;
+          color: #64748b;
+          font-size: 9px;
+          font-weight: 950;
+          line-height: 1;
+          cursor: help;
+          outline: none;
+        }
+
+        .humidexInfoTooltip {
+          position: absolute;
+          z-index: 200;
+          left: 50%;
+          bottom: calc(100% + 9px);
+          width: 235px;
+          max-width: min(235px, calc(100vw - 36px));
+          padding: 8px 10px;
+          border-radius: 9px;
+          background: #0f172a;
+          color: #ffffff;
+          font-size: 9.5px;
+          font-weight: 700;
+          line-height: 1.35;
+          text-align: left;
+          text-transform: none;
+          letter-spacing: 0;
+          white-space: normal;
+          overflow-wrap: anywhere;
+          word-break: normal;
+          box-shadow: 0 9px 22px rgba(15, 23, 42, 0.22);
+          opacity: 0;
+          visibility: hidden;
+          transform: translateX(-50%) translateY(4px);
+          transition: opacity 120ms ease, transform 120ms ease, visibility 120ms ease;
+          pointer-events: none;
+        }
+
+        .humidexInfoTooltip::after {
+          content: "";
+          position: absolute;
+          left: 50%;
+          top: 100%;
+          width: 7px;
+          height: 7px;
+          background: #0f172a;
+          transform: translateX(-50%) rotate(45deg);
+        }
+
+        .humidexInfo:hover .humidexInfoTooltip,
+        .humidexInfo:focus .humidexInfoTooltip {
+          opacity: 1;
+          visibility: visible;
+          transform: translateX(-50%) translateY(0);
+        }
+
+        .periodColumns {
+          position: relative;
+          z-index: 1;
+          min-width: 0;
+          display: grid;
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+        }
+
+        .periodColumn {
+          min-width: 0;
+          padding: 8px 8px 0;
+          display: grid;
+          align-content: start;
+          gap: 0;
+          border-right: 1px solid #e7ecf1;
+          background: #ffffff;
+          transition: background 120ms ease;
+        }
+
+        .periodColumn:hover {
+          background: #fbfdff;
+        }
+
+        .periodColumn.isPast {
+          opacity: 0.68;
+        }
+
+        .periodTopZone {
+          position: relative;
+          height: 108px;
+          box-sizing: border-box;
+          display: grid;
+          grid-template-rows: auto 1fr;
+          align-content: start;
+          padding-top: 7px;
+        }
+
+        .periodSummaryCenter {
+          display: contents;
+        }
+
+        .periodMetricGrid {
+          display: grid;
+          grid-template-rows: repeat(7, 30px);
+          align-content: start;
+        }
+
+        .periodMetricRow {
+          min-width: 0;
+          display: grid;
+          grid-template-columns: 16px minmax(0, 1fr) 16px;
+          align-items: center;
+          gap: 6px;
+          border-top: 1px solid #edf1f5;
+          text-align: center;
+        }
+
+        .periodMetricRow::after {
+          content: "";
+          width: 16px;
+          height: 1px;
+        }
+
+        .periodMetricRow:last-child {
+          border-bottom: 1px solid #edf1f5;
+        }
+
+        .periodMetricRow strong {
+          min-width: 0;
+          overflow: hidden;
+          font-size: 12.5px;
+          font-weight: 900;
+          color: #0f172a;
+          text-align: center;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .temperatureMetricRow {
+          grid-template-columns: minmax(18px, 1fr) auto minmax(18px, 1fr);
+          gap: 8px;
+          text-align: center;
+        }
+
+        .temperatureMetricRow::after {
+          display: none;
+        }
+
+        .temperatureMetricRow strong {
+          font-size: 13.5px;
+          font-weight: 950;
+          text-align: center;
+        }
+
+        .humidexMetricRow strong.attention {
+          color: #d97706;
+        }
+
+        .humidexMetricRow strong.high {
+          color: #ea580c;
+        }
+
+        .humidexMetricRow strong.danger {
+          color: #dc2626;
+        }
+
+        .humidexAlert {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          margin-left: 5px;
+          font-size: 13px;
+          line-height: 1;
+          vertical-align: -1px;
+          cursor: help;
+        }
+
+        .periodColumnHead {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          min-height: 18px;
+          text-align: center;
+        }
+
+        .periodColumnHead strong {
+          font-size: 10.5px;
+          font-weight: 950;
+          color: #0f172a;
+          text-transform: uppercase;
+          letter-spacing: 0.025em;
+        }
+
+        .periodTimeCorner {
+          position: absolute;
+          top: 6px;
+          left: 4px;
+          font-size: 7.5px;
+          font-weight: 850;
+          color: rgba(15, 23, 42, 0.42);
+          letter-spacing: 0.02em;
+          white-space: nowrap;
+        }
+
+        .periodWeather {
+          min-width: 0;
+          margin-top: 16px;
+          display: grid;
+          justify-items: center;
+          gap: 3px;
+          text-align: center;
+        }
+
+        .periodWeatherIcon {
+          width: 27px;
+          height: 24px;
+        }
+
+        .periodWeatherIcon :global(svg) {
+          width: 100%;
+          height: 100%;
+          display: block;
+          overflow: visible;
+        }
+
+        .periodWeather > span {
+          min-height: 13px;
+          overflow: hidden;
+          font-size: 8.5px;
+          font-weight: 800;
+          line-height: 1.1;
+          color: #334155;
+          text-align: center;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+
+        .mobilePeriodTemperature,
+        .mobileMetricLabel,
+        .mobileHumidexInfo {
+          display: none;
+        }
+
+        .periodTempLine {
+          display: grid;
+          grid-template-columns: minmax(8px, 1fr) auto minmax(8px, 1fr);
+          align-items: center;
+          gap: 7px;
+          min-width: 0;
+        }
+
+        .periodTempLine strong {
+          font-size: 11px;
+          font-weight: 950;
+          white-space: nowrap;
+        }
+
+        .tempLine {
+          height: 1.5px;
+          border-radius: 999px;
+          opacity: 0.92;
+        }
+
+        .periodCompactData {
+          display: grid;
+          gap: 0;
+        }
+
+        .periodCompactRow {
+          min-width: 0;
+          min-height: 23px;
+          display: grid;
+          grid-template-columns: 14px minmax(0, 1fr);
+          align-items: center;
+          gap: 5px;
+          border-bottom: 1px solid #eff3f6;
+        }
+
+        .periodCompactRow:last-child {
+          border-bottom: 0;
+        }
+
+        .periodCompactRow strong {
+          min-width: 0;
+          overflow: hidden;
+          font-size: 9.5px;
+          font-weight: 900;
+          color: #0f172a;
+          text-align: center;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+
+        .forecastFooterLink {
+          min-height: 42px;
+          padding: 0 18px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 10px;
+          border-top: 1px solid #edf1f5;
+          background: #fbfcfd;
+          color: #0f172a;
+          font-size: 12px;
           font-weight: 900;
           text-decoration: none;
-          transition:
-            transform 120ms ease,
-            background 120ms ease;
+          transition: background 120ms ease;
         }
 
-        .forecastFooter a:hover {
-          transform: translateY(-1px);
-          background: #1e293b;
+        .forecastFooterLink:hover {
+          background: #f5f8fb;
         }
 
-        .forecastFooter a span {
-          font-size: 17px;
+        .forecastFooterLink span:last-child {
+          font-size: 16px;
           line-height: 1;
         }
 
-        @media (max-width: 1180px) {
-          .forecastHeader {
-            grid-template-columns: 1fr minmax(0, 640px) 1fr;
+        @media (max-width: 1260px) {
+          .meteogramGrid {
+            grid-template-columns: 180px minmax(0, 1fr);
           }
 
-          .forecastSource {
-            min-width: 165px;
-          }
-
-          .forecastGrid {
-            grid-template-columns: 1fr;
-          }
-
-          .forecastCard {
-            display: grid;
-            grid-template-columns: 230px minmax(0, 1fr);
-            grid-template-areas:
-              "day day"
-              "summary periods";
-            column-gap: 12px;
-          }
-
-          .forecastDay {
-            grid-area: day;
-          }
-
-          .dailySummary {
-            grid-area: summary;
-          }
-
-          .periodGrid {
-            grid-area: periods;
-            margin-top: 11px;
-            grid-template-columns: repeat(4, minmax(0, 1fr));
-          }
-        }
-
-        @media (max-width: 820px) {
-          .forecastHeader {
-            padding: 16px 13px;
-            grid-template-columns: 1fr;
-            gap: 12px;
-          }
-
-          .forecastHeading,
-          .forecastSource {
-            grid-column: 1;
-          }
-
-          .forecastHeading h2 {
-            font-size: 21px;
-          }
-
-          .forecastHeading p {
-            font-size: 10px;
-          }
-
-          .forecastSource {
-            justify-self: center;
-            width: min(100%, 300px);
-            min-width: 0;
-            box-sizing: border-box;
-          }
-
-          .forecastCard {
-            display: block;
-          }
-
-          .dailySummary {
-            grid-template-columns: repeat(4, minmax(0, 1fr));
-          }
-
-          .periodGrid {
-            grid-template-columns: repeat(4, minmax(0, 1fr));
-          }
-        }
-
-        @media (max-width: 720px) {
-          .forecastSection {
-            border-radius: 18px;
-          }
-
-          .forecastGrid {
-            padding: 12px 10px 14px;
-            gap: 10px;
-          }
-
-          .forecastCard {
-            padding: 13px;
-          }
-
-          .forecastDay strong {
-            font-size: 16px;
-          }
-
-          .dailySummary,
-          .periodGrid {
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-          }
-
-          .summaryItem {
-            min-height: 48px;
-            padding-top: 5px;
-            padding-bottom: 5px;
-          }
-
-          .periodForecast {
-            min-height: 82px;
-            padding: 8px;
-          }
-
-          .periodBody {
-            grid-template-columns: 30px minmax(0, 1fr);
-            gap: 6px;
-          }
-
-          .periodIcon {
-            width: 28px;
-            height: 26px;
-          }
-
-          .periodDetails {
-            gap: 1px;
-          }
-
-          .periodTemperature {
-            font-size: 11px;
-          }
-
-          .periodRain {
-            font-size: 7.7px;
-          }
-
-          .forecastFooter {
-            padding: 14px 11px;
-            display: grid;
-            text-align: center;
-          }
-
-          .forecastFooter a {
-            width: 100%;
-            box-sizing: border-box;
-          }
-        }
-
-        @media (max-width: 430px) {
-          .forecastHeader {
-            padding-left: 10px;
-            padding-right: 10px;
-          }
-
-          .forecastHeading h2 {
-            font-size: 20px;
-          }
-
-          .forecastCard {
-            padding: 11px;
-          }
-
-          .summaryItem strong {
-            font-size: 12.5px;
-          }
-
-          .rainSummary small {
-            font-size: 9.5px;
-          }
-
-          .periodForecast {
-            min-height: 78px;
-            padding: 7px;
-          }
-
-          .periodBody {
-            grid-template-columns: 26px minmax(0, 1fr);
-            gap: 5px;
-          }
-
-          .periodIcon {
-            width: 24px;
-            height: 23px;
-          }
-
-          .periodTop strong {
-            font-size: 9.5px;
-          }
-
-          .periodTop span {
-            font-size: 7px;
-          }
-
-          .periodTemperature {
-            font-size: 10px;
-          }
-
-          .periodCondition {
+          .legendRow > strong {
             font-size: 8px;
           }
 
-          .periodRain {
-            font-size: 6.8px;
+          .periodColumn {
+            padding-left: 6px;
+            padding-right: 6px;
+          }
+
+          .periodCompactRow strong {
+            font-size: 9px;
+          }
+        }
+
+        @media (max-width: 980px) {
+          .meteogramGrid {
+            grid-template-columns: 165px minmax(0, 1fr);
+          }
+
+        }
+
+        @media (max-width: 760px) {
+          .forecastHeader {
+            padding-left: 12px;
+            padding-right: 12px;
+          }
+
+          .forecastHeader h2 {
+            font-size: 22px;
+          }
+
+          .forecastHeader p {
+            font-size: 10px;
+          }
+
+          .forecastContent {
+            padding: 7px;
+          }
+
+          .dayTabs {
+            grid-template-columns: 1fr;
+            gap: 5px;
+          }
+
+          .dayTab {
+            min-height: 42px;
+            grid-template-columns: minmax(90px, 1fr) auto 30px;
+            gap: 12px;
+          }
+
+          .meteogramGrid {
+            grid-template-columns: 1fr;
+          }
+
+          .overviewLegend {
+            grid-template-columns: 145px minmax(0, 1fr);
+            grid-template-rows: auto;
+            align-items: center;
+            padding-top: 0;
+            border-right: 0;
+            border-bottom: 1px solid #e5ebf1;
+          }
+
+          .legendTitle {
+            height: 58px;
+            align-content: center;
+            gap: 1px;
+            padding: 5px 8px;
+            border-right: 1px solid #e8edf2;
+          }
+
+          .legendEyebrow,
+          .legendTitle > small {
+            display: none;
+          }
+
+          .legendClock {
+            width: 19px;
+            height: 19px;
+          }
+
+          .legendTitle > strong {
+            font-size: 9px;
+          }
+
+          .legendList {
+            grid-template-columns: repeat(7, minmax(0, 1fr));
+            grid-template-rows: none;
+            padding: 0;
+          }
+
+          .legendRow {
+            min-height: 34px;
+            justify-items: center;
+            grid-template-columns: 1fr;
+            gap: 2px;
+            border-top: 0;
+            border-bottom: 0;
+            border-right: 1px solid #eef2f5;
+            text-align: center;
+          }
+
+          .legendRow:last-child {
+            border-right: 0;
+          }
+
+          .legendRow > strong {
+            font-size: 7.5px;
+          }
+
+          .legendRow small {
+            display: none;
+          }
+
+          .periodColumns {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+          }
+
+          .periodColumn:nth-child(2) {
+            border-right: 0;
+          }
+
+          .periodColumn:nth-child(-n + 2) {
+            border-bottom: 1px solid #e7ecf1;
+          }
+
+        }
+
+        @media (max-width: 480px) {
+          .forecastContent {
+            padding: 6px;
+          }
+
+          .dayTabs {
+            gap: 5px;
+          }
+
+          .dayTab {
+            min-height: 44px;
+            padding: 6px 10px;
+            grid-template-columns: minmax(82px, 1fr) auto 28px;
+            gap: 8px;
+          }
+
+          .dayTabDate {
+            font-size: 13px;
+          }
+
+          .dayTabTemps {
+            gap: 4px;
+          }
+
+          .dayTabTemps strong {
+            font-size: 10.5px;
+          }
+
+          .dayTabRain {
+            display: none;
+          }
+
+          .dayTabIcon {
+            width: 25px;
+            height: 23px;
+            margin-left: 0;
+          }
+
+          .meteogramCard {
+            margin-top: 7px;
+            border: 0;
+            background: transparent;
+            box-shadow: none;
+          }
+
+          .meteogramGrid {
+            display: block;
+            overflow: visible;
+            border-radius: 0;
+          }
+
+          /* Su telefono la legenda "Dettaglio previsione" viene eliminata:
+             ogni card riporta direttamente il nome del parametro. */
+          .overviewLegend {
+            display: none;
+          }
+
+          .periodColumns {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 7px;
+          }
+
+          .periodColumn,
+          .periodColumn:nth-child(2),
+          .periodColumn:nth-child(-n + 2) {
+            min-width: 0;
+            padding: 8px 10px;
+            display: grid;
+            grid-template-columns: 112px minmax(0, 1fr);
+            align-items: stretch;
+            gap: 10px;
+            border: 1px solid #e2e8f0;
+            border-radius: 15px;
+            background: #ffffff;
+            box-shadow: 0 3px 10px rgba(15, 23, 42, 0.025);
+          }
+
+          .periodColumn:last-child {
+            border-bottom: 1px solid #e2e8f0;
+          }
+
+          .periodTopZone {
+            position: relative;
+            height: 164px;
+            min-height: 164px;
+            padding: 0;
+            display: block;
+            border-right: 1px solid #e8edf3;
+            box-sizing: border-box;
+          }
+
+          /* L'orario è un'etichetta indipendente nell'angolo: non partecipa
+             al layout e non sposta il blocco meteo dal centro. */
+          .periodTimeCorner {
+            position: absolute;
+            top: 7px;
+            left: 50%;
+            z-index: 3;
+            transform: translateX(-50%);
+            padding: 0;
+            border: 0;
+            border-radius: 0;
+            background: transparent;
+            font-size: 9px;
+            font-weight: 850;
+            line-height: 1;
+            color: #94a3b8;
+            text-align: center;
+            white-space: nowrap;
+          }
+
+          /* Nome fascia + icona + condizione + temperatura sono centrati
+             geometricamente nel pannello sinistro. */
+          .periodSummaryCenter {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            padding: 24px 4px 4px;
+            box-sizing: border-box;
+            text-align: center;
+          }
+
+          .periodColumnHead {
+            width: 100%;
+            min-height: 0;
+            margin: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+          }
+
+          .periodColumnHead strong {
+            display: block;
+            width: 100%;
+            font-size: 13px;
+            text-align: center;
+          }
+
+          .periodWeather {
+            margin: 0;
+            gap: 5px;
+          }
+
+          .periodWeatherIcon {
+            width: 39px;
+            height: 35px;
+          }
+
+          .periodWeather > span {
+            min-height: 0;
+            max-width: 96px;
+            font-size: 10px;
+            line-height: 1.15;
+            white-space: normal;
+          }
+
+          .mobilePeriodTemperature {
+            display: block;
+            margin-top: 8px;
+            font-size: 17px;
+            font-weight: 950;
+            line-height: 1;
+            white-space: nowrap;
+          }
+
+          /* La temperatura è già mostrata sotto il simbolo: la riga duplicata
+             non deve comparire né occupare spazio nel pannello dati. */
+          .periodMetricGrid > .temperatureMetricRow,
+          .temperatureMetricRow {
+            display: none !important;
+            height: 0 !important;
+            min-height: 0 !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            border: 0 !important;
+          }
+
+          .periodMetricGrid {
+            min-width: 0;
+            display: grid;
+            grid-template-rows: repeat(6, 29px);
+            grid-auto-rows: 29px;
+            align-content: center;
+          }
+
+          .periodMetricRow {
+            min-width: 0;
+            height: 29px;
+            min-height: 29px;
+            box-sizing: border-box;
+            padding: 0;
+            margin: 0;
+            display: grid;
+            grid-template-columns: 15px minmax(0, 1fr) minmax(102px, auto);
+            align-items: center;
+            gap: 6px;
+            border-top: 1px solid #edf1f5;
+            text-align: left;
+          }
+
+          .periodMetricRow:first-child:not(.temperatureMetricRow) {
+            border-top: 0;
+          }
+
+          .periodMetricRow::after {
+            display: none;
+          }
+
+          .periodMetricRow:last-child {
+            border-bottom: 0;
+          }
+
+          .mobileMetricLabel {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            min-width: 0;
+            height: 100%;
+            font-size: 9.5px;
+            font-weight: 800;
+            line-height: 1;
+            color: #64748b;
+            white-space: nowrap;
+          }
+
+          .periodMetricRow strong {
+            min-width: 102px;
+            overflow: visible;
+            font-size: 10.5px;
+            font-weight: 900;
+            line-height: 1;
+            color: #0f172a;
+            text-align: right;
+            text-overflow: clip;
+            white-space: nowrap;
+          }
+
+          .windMetricValue {
+            min-width: 112px !important;
+            font-size: 9.8px !important;
+            letter-spacing: -0.02em;
+          }
+
+          .rowGlyph {
+            font-size: 10px;
+          }
+
+          .humidexAlert {
+            margin-left: 3px;
+            font-size: 11px;
+          }
+
+          .mobileHumidexLabel {
+            overflow: visible;
+          }
+
+          .humidexMetricRow,
+          .periodMetricRow:has(.radiationGlyph) {
+            height: 29px;
+            min-height: 29px;
+            padding-top: 0;
+            padding-bottom: 0;
+            margin-top: 0;
+            margin-bottom: 0;
+          }
+
+          .mobileHumidexInfo {
+            position: relative;
+            width: 14px;
+            height: 14px;
+            flex: 0 0 14px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border: 1px solid #cbd5e1;
+            border-radius: 50%;
+            background: #fff;
+            color: #64748b;
+            font-size: 8px;
+            font-weight: 950;
+            cursor: help;
+          }
+
+          .mobileHumidexTooltip {
+            position: absolute;
+            z-index: 80;
+            left: 50%;
+            right: auto;
+            bottom: calc(100% + 7px);
+            width: 185px;
+            max-width: min(185px, calc(100vw - 32px));
+            padding: 7px 8px;
+            border-radius: 9px;
+            background: #0f172a;
+            color: #fff;
+            font-size: 9px;
+            font-weight: 700;
+            line-height: 1.3;
+            white-space: normal;
+            box-shadow: 0 8px 20px rgba(15, 23, 42, 0.2);
+            opacity: 0;
+            visibility: hidden;
+            transform: translateX(-50%) translateY(3px);
+            transition: opacity 120ms ease, transform 120ms ease, visibility 120ms ease;
+            pointer-events: none;
+          }
+
+          .mobileHumidexInfo:hover .mobileHumidexTooltip,
+          .mobileHumidexInfo:focus .mobileHumidexTooltip {
+            opacity: 1;
+            visibility: visible;
+            transform: translateX(-50%) translateY(0);
+          }
+
+          .forecastFooterLink {
+            margin-top: 7px;
+            min-height: 38px;
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            font-size: 10.5px;
           }
         }
       `}</style>
@@ -3063,297 +5176,8 @@ function ForecastSection() {
 }
 
 
-// -------------------- scheda anno compatta --------------------
-function YearCard({ y, norm }) {
-  const router = useRouter();
-  const href = `/anni/${y.year}`;
-
-  const onCardClick = (e) => {
-    if (e?.target && typeof e.target.closest === "function") {
-      const a = e.target.closest("a");
-      if (a) return;
-    }
-    router.push(href);
-  };
-
-  const onCardKeyDown = (e) => {
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      router.push(href);
-    }
-  };
-
-  const rainBar = (() => {
-    const v = n(y.rain);
-    const min = n(norm.rainMin);
-    const max = n(norm.rainMax);
-    const denom = max - min;
-    const t = denom > 0 ? (v - min) / denom : 0;
-    return clamp01(t);
-  })();
-
-  const tBar = (() => {
-    const v = n(y.tmean);
-    const min = n(norm.tmeanMin);
-    const max = n(norm.tmeanMax);
-    const denom = max - min;
-    const t = denom > 0 ? (v - min) / denom : 0;
-    return clamp01(t);
-  })();
-
-  return (
-    <article
-      className="card"
-      aria-label={`Anno ${y.year}`}
-      role="link"
-      tabIndex={0}
-      onClick={onCardClick}
-      onKeyDown={onCardKeyDown}
-    >
-      <div className="top">
-        <div className="yr">{y.year}</div>
-        <span className="chip">
-          <b>{Number.isFinite(n(y.ndays)) ? y.ndays : "—"}</b> giorni
-        </span>
-      </div>
-
-      <div className="mainStats">
-        <div className="metric">
-          <div className="mTop">
-            <span className="mLabel">Temperatura media</span>
-            <span className="mValue">{fmt(y.tmean, 1)} °C</span>
-          </div>
-          <div className="track" aria-hidden="true">
-            <div
-              className="fill"
-              style={{ width: `${Math.round(tBar * 100)}%` }}
-            />
-          </div>
-        </div>
-
-        <div className="metric">
-          <div className="mTop">
-            <span className="mLabel">Precipitazione totale</span>
-            <span
-              className={`mValue ${y.rainHasOverride ? "rainOverrideValue" : ""}`}
-              title={
-                y.rainHasOverride
-                  ? `Totale annuale con priorità ARPAS nei mesi: ${y.rainOverrideMonthsText}`
-                  : ""
-              }
-            >
-              {fmt(y.rain, 1)} mm
-            </span>
-          </div>
-          <div className="track" aria-hidden="true">
-            <div
-              className="fill"
-              style={{ width: `${Math.round(rainBar * 100)}%` }}
-            />
-          </div>
-        </div>
-      </div>
-
-      <div className="details">
-        <div className="detail">
-          <span>Minima</span>
-          <b>{fmt(y.tmin, 1)} °C</b>
-        </div>
-
-        <div className="detail">
-          <span>Massima</span>
-          <b>{fmt(y.tmax, 1)} °C</b>
-        </div>
-
-        <div className="detail">
-          <span>Giorni piovosi</span>
-          <b>{Number.isFinite(n(y.rainyDays)) ? y.rainyDays : "—"}</b>
-        </div>
-
-        <div className="detail">
-          <span>Raffica massima</span>
-          <b>{fmt(y.gustMax, 1)} km/h</b>
-        </div>
-      </div>
-
-      <style jsx>{`
-        .card {
-          min-width: 0;
-          border: 1px solid #e6e8ec;
-          border-radius: 18px;
-          padding: 13px;
-          background: rgba(255, 255, 255, 0.97);
-          box-shadow: 0 5px 18px rgba(15, 23, 42, 0.045);
-          cursor: pointer;
-          transition:
-            transform 140ms ease,
-            border-color 140ms ease,
-            box-shadow 140ms ease;
-          outline: none;
-        }
-
-        .card:hover {
-          transform: translateY(-2px);
-          border-color: #cfd5dd;
-          box-shadow: 0 9px 22px rgba(15, 23, 42, 0.07);
-        }
-
-        .card:focus-visible {
-          box-shadow:
-            0 0 0 3px rgba(2, 132, 199, 0.2),
-            0 9px 22px rgba(15, 23, 42, 0.07);
-        }
-
-        .top {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 10px;
-        }
-
-        .yr {
-          font-size: 29px;
-          font-weight: 950;
-          letter-spacing: -0.035em;
-          color: #0f172a;
-          line-height: 1;
-        }
-
-        .chip {
-          flex: 0 0 auto;
-          border: 1px solid #e7e9ed;
-          background: #f8fafc;
-          padding: 5px 8px;
-          border-radius: 999px;
-          font-size: 10px;
-          font-weight: 850;
-          color: rgba(15, 23, 42, 0.7);
-          white-space: nowrap;
-        }
-
-        .mainStats {
-          margin-top: 11px;
-          padding-top: 10px;
-          border-top: 1px solid #eef0f3;
-          display: grid;
-          gap: 10px;
-        }
-
-        .metric {
-          display: grid;
-          gap: 6px;
-        }
-
-        .mTop {
-          min-width: 0;
-          display: flex;
-          justify-content: space-between;
-          align-items: baseline;
-          gap: 8px;
-        }
-
-        .mLabel {
-          min-width: 0;
-          font-size: 11px;
-          font-weight: 850;
-          color: rgba(15, 23, 42, 0.65);
-          overflow: hidden;
-          text-overflow: ellipsis;
-          white-space: nowrap;
-        }
-
-        .mValue {
-          flex: 0 0 auto;
-          font-size: 12px;
-          font-weight: 950;
-          color: #0f172a;
-          white-space: nowrap;
-        }
-
-        .rainOverrideValue {
-          position: relative;
-          text-decoration: underline;
-          text-decoration-color: #dc2626;
-          text-decoration-thickness: 2px;
-          text-underline-offset: 3px;
-          padding-left: 11px;
-          cursor: help;
-        }
-
-        .rainOverrideValue::before {
-          content: "";
-          position: absolute;
-          left: 0;
-          top: 50%;
-          transform: translateY(-50%);
-          width: 6px;
-          height: 6px;
-          border-radius: 50%;
-          background: #dc2626;
-          box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.14);
-        }
-
-        .track {
-          height: 6px;
-          border-radius: 999px;
-          background: #eef2f6;
-          overflow: hidden;
-        }
-
-        .fill {
-          height: 100%;
-          min-width: 3px;
-          border-radius: inherit;
-          background: rgba(15, 23, 42, 0.82);
-        }
-
-        .details {
-          margin-top: 11px;
-          padding-top: 10px;
-          border-top: 1px solid #eef0f3;
-          display: grid;
-          grid-template-columns: repeat(2, minmax(0, 1fr));
-          gap: 7px;
-        }
-
-        .detail {
-          min-width: 0;
-          padding: 7px 8px;
-          border: 1px solid #edf0f3;
-          border-radius: 11px;
-          background: #fafbfc;
-          display: grid;
-          gap: 2px;
-        }
-
-        .detail span {
-          min-width: 0;
-          font-size: 9px;
-          font-weight: 850;
-          color: rgba(15, 23, 42, 0.56);
-          text-transform: uppercase;
-          letter-spacing: 0.025em;
-          overflow: hidden;
-          text-overflow: ellipsis;
-          white-space: nowrap;
-        }
-
-        .detail b {
-          min-width: 0;
-          font-size: 11px;
-          font-weight: 950;
-          color: #0f172a;
-          overflow: hidden;
-          text-overflow: ellipsis;
-          white-space: nowrap;
-        }
-      `}</style>
-    </article>
-  );
-}
-
 // -------------------- menu a tendina personalizzato --------------------
-function CustomSelect({ value, options = [], onChange, ariaLabel }) {
+function CustomSelect({ value, options = [], onChange, ariaLabel, variant = "light" }) {
   const [open, setOpen] = useState(false);
   const wrapperRef = useRef(null);
 
@@ -3394,7 +5218,7 @@ function CustomSelect({ value, options = [], onChange, ariaLabel }) {
   return (
     <div
       ref={wrapperRef}
-      className={`customSelect ${open ? "isOpen" : ""}`}
+      className={`customSelect ${variant === "dark" ? "dark" : ""} ${open ? "isOpen" : ""}`}
     >
       <button
         type="button"
@@ -3459,6 +5283,34 @@ function CustomSelect({ value, options = [], onChange, ariaLabel }) {
 
         .selectButton:hover {
           border-color: #c4ccd6;
+        }
+
+        .dark .selectButton {
+          min-height: 36px;
+          border-color: rgba(255, 255, 255, 0.22);
+          border-radius: 10px;
+          padding: 7px 12px;
+          background: rgba(255, 255, 255, 0.11);
+          color: #ffffff;
+          font-size: 11px;
+          box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+          backdrop-filter: blur(8px);
+        }
+
+        .dark .selectButton:hover {
+          border-color: rgba(255, 255, 255, 0.34);
+          background: rgba(255, 255, 255, 0.16);
+        }
+
+        .dark .selectButton:focus-visible,
+        .dark.isOpen .selectButton {
+          border-color: rgba(255, 255, 255, 0.48);
+          background: rgba(255, 255, 255, 0.18);
+          box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.08);
+        }
+
+        .dark .chevron {
+          display: none;
         }
 
         .selectButton:focus-visible,
@@ -3573,7 +5425,7 @@ function CustomSelect({ value, options = [], onChange, ariaLabel }) {
   );
 }
 
-// -------------------- grafico giorno / settimana / mese --------------------
+// -------------------- grafico oggi / 7 giorni / 30 giorni --------------------
 function addYearsISO(iso, amount) {
   const d = isoToLocalDate(iso);
   if (!d) return iso;
@@ -3588,125 +5440,6 @@ function addYearsISO(iso, amount) {
   d.setDate(Math.min(day, lastDay));
 
   return dateToISO(d);
-}
-
-function comparisonOptionsForMode(mode) {
-  if (mode === "week") {
-    return [
-      { key: "prev_week", label: "Settimana precedente" },
-      { key: "year_week", label: "Stessa settimana un anno fa" },
-    ];
-  }
-
-  if (mode === "month") {
-    return [
-      { key: "prev_month", label: "Mese precedente" },
-      { key: "year_month", label: "Stesso mese un anno fa" },
-    ];
-  }
-
-  return [
-    { key: "yesterday", label: "Ieri" },
-    { key: "thirty_days", label: "30 giorni fa" },
-    { key: "year_day", label: "Un anno fa" },
-  ];
-}
-
-function comparisonDescriptor(mode, compareKey, selectedDate) {
-  if (!selectedDate) return null;
-
-  const current = getPeriodBounds(mode, selectedDate);
-
-  if (mode === "day") {
-    if (compareKey === "thirty_days") {
-      const date = addDaysISO(selectedDate, -30);
-      return {
-        key: compareKey,
-        label: "30 giorni fa",
-        anchorDate: date,
-        bounds: getPeriodBounds("day", date),
-      };
-    }
-
-    if (compareKey === "year_day") {
-      const date = addYearsISO(selectedDate, -1);
-      return {
-        key: compareKey,
-        label: "un anno fa",
-        anchorDate: date,
-        bounds: getPeriodBounds("day", date),
-      };
-    }
-
-    const date = addDaysISO(selectedDate, -1);
-    return {
-      key: "yesterday",
-      label: "ieri",
-      anchorDate: date,
-      bounds: getPeriodBounds("day", date),
-    };
-  }
-
-  if (mode === "week") {
-    if (compareKey === "year_week") {
-      const endISO = addYearsISO(current.endISO, -1);
-      const startISO = addDaysISO(endISO, -6);
-      return {
-        key: compareKey,
-        label: "la stessa settimana di un anno fa",
-        anchorDate: endISO,
-        bounds: { startISO, endISO },
-      };
-    }
-
-    return {
-      key: "prev_week",
-      label: "la settimana precedente",
-      anchorDate: addDaysISO(selectedDate, -7),
-      bounds: {
-        startISO: addDaysISO(current.startISO, -7),
-        endISO: addDaysISO(current.endISO, -7),
-      },
-    };
-  }
-
-  if (compareKey === "year_month") {
-    const date = addYearsISO(selectedDate, -1);
-    return {
-      key: compareKey,
-      label: "lo stesso mese di un anno fa",
-      anchorDate: date,
-      bounds: getPeriodBounds("month", date),
-    };
-  }
-
-  const date = addMonthsISO(selectedDate, -1);
-  return {
-    key: "prev_month",
-    label: "il mese precedente",
-    anchorDate: date,
-    bounds: getPeriodBounds("month", date),
-  };
-}
-
-function comparisonTitleForDescriptor(descriptor) {
-  const key = String(descriptor?.key || "");
-
-  if (key === "yesterday") return "Differenza rispetto a ieri";
-  if (key === "thirty_days") return "Differenza rispetto a 30 giorni fa";
-  if (key === "year_day") return "Differenza rispetto a un anno fa";
-  if (key === "prev_week") {
-    return "Differenza rispetto alla settimana precedente";
-  }
-  if (key === "year_week") {
-    return "Differenza rispetto alla stessa settimana di un anno fa";
-  }
-  if (key === "prev_month") return "Differenza rispetto al mese precedente";
-  if (key === "year_month") {
-    return "Differenza rispetto allo stesso mese di un anno fa";
-  }
-
-  return "Differenza rispetto al periodo di confronto";
 }
 
 function localDayIndex(timestamp, startISO) {
@@ -3738,6 +5471,7 @@ function relativeTimeKey(timestamp, startISO, mode) {
 
   return `${pad2(d.getDate())}|${hh}:${mm}`;
 }
+
 
 function seriesValues(pairs) {
   return (Array.isArray(pairs) ? pairs : [])
@@ -3792,6 +5526,7 @@ function formatSummaryTimestamp(timestamp, mode) {
   if (mode === "day") return `${hh}:${mm}`;
   return `${pad2(d.getDate())}/${pad2(d.getMonth() + 1)} ${hh}:${mm}`;
 }
+
 
 function deltaMetaForGroup(groupKey) {
   if (groupKey === "rain") {
@@ -4103,6 +5838,15 @@ function latestIntradayTimestamp(rows) {
   return Number.isFinite(latest) ? latest : null;
 }
 
+function rollingWindowDurationMs(mode) {
+  // "Oggi" usa l'intero giorno di calendario, quindi non va ritagliato
+  // sulle 24 ore precedenti all'ultima osservazione.
+  if (mode === "week") return 7 * 24 * 60 * 60 * 1000;
+  if (mode === "month") return 30 * 24 * 60 * 60 * 1000;
+  return null;
+}
+
+
 async function loadIntradayPeriod({
   startISO,
   endISO,
@@ -4115,7 +5859,7 @@ async function loadIntradayPeriod({
   const datesSet = new Set(availableDates);
   const allPeriodDates = dateRangeISO(startISO, endISO);
   const datesToFetch = allPeriodDates.filter((iso) => datesSet.has(iso));
-  const stepMinutes = mode === "day" ? 15 : 60;
+  const stepMinutes = mode === "month" ? 60 : 15;
   const timeline = makePeriodTimeline(startISO, endISO, stepMinutes);
 
   if (!timeline.length || !datesToFetch.length) {
@@ -4195,8 +5939,14 @@ async function loadIntradayPeriod({
           }
 
           const bucketDate = new Date(recordDate);
-          if (mode === "day") {
+          if (mode === "day" || mode === "week") {
             bucketDate.setMinutes(Math.floor(mi / 15) * 15, 0, 0);
+          } else if (stepMinutes > 60) {
+            const minutesFromMidnight = hh * 60 + mi;
+            const roundedMinutes =
+              Math.floor(minutesFromMidnight / stepMinutes) * stepMinutes;
+            bucketDate.setHours(0, 0, 0, 0);
+            bucketDate.setMinutes(roundedMinutes, 0, 0);
           } else {
             bucketDate.setMinutes(0, 0, 0);
           }
@@ -4208,19 +5958,13 @@ async function loadIntradayPeriod({
           bucket.observed = true;
 
           if (
-            dISO === latestAvailableDate &&
-            (!Number.isFinite(latestObservedTimestamp) ||
-              bucketTimestamp > latestObservedTimestamp)
+            !Number.isFinite(latestObservedTimestamp) ||
+            bucketTimestamp > latestObservedTimestamp
           ) {
             latestObservedTimestamp = bucketTimestamp;
           }
 
           const addMean = (keyBase, value) => {
-            /*
-             * n() distingue i dati mancanti da un vero valore pari a zero:
-             * null, undefined e stringa vuota vengono esclusi dalla media,
-             * mentre 0 rimane un'osservazione valida.
-             */
             const vv = n(value);
             if (!Number.isFinite(vv)) return;
             bucket[`${keyBase}_sum`] += vv;
@@ -4259,7 +6003,6 @@ async function loadIntradayPeriod({
 
         dailyRainMap.set(dISO, bucketTotals);
       } catch {
-        // Gli altri giorni disponibili restano comunque utilizzabili.
       }
     }),
   );
@@ -4352,27 +6095,63 @@ async function loadIntradayPeriod({
     solar.push([timestamp, solarValue === null ? null : round1(solarValue)]);
   }
 
+  const durationMs = rollingWindowDurationMs(mode);
+  const exactEndTimestamp = Number.isFinite(latestObservedTimestamp)
+    ? latestObservedTimestamp
+    : null;
+  const exactStartTimestamp =
+    Number.isFinite(durationMs) && Number.isFinite(exactEndTimestamp)
+      ? exactEndTimestamp - durationMs
+      : null;
+
+  const trimPairs = (pairs) => {
+    if (!Number.isFinite(exactStartTimestamp) || !Number.isFinite(exactEndTimestamp)) {
+      return pairs;
+    }
+
+    return pairs.filter((point) => {
+      const timestamp = Number(point?.[0]);
+      return (
+        Number.isFinite(timestamp) &&
+        timestamp >= exactStartTimestamp &&
+        timestamp <= exactEndTimestamp
+      );
+    });
+  };
+
+  const trimmedRainH = trimPairs(rainH);
+  let rollingRainTotal = 0;
+  const trimmedRainCum = trimmedRainH.map((point) => {
+    const timestamp = Number(point?.[0]);
+    const value = n(point?.[1]);
+
+    if (Number.isFinite(value)) rollingRainTotal += value;
+
+    return [
+      timestamp,
+      Number.isFinite(value) ? round1(rollingRainTotal) : null,
+    ];
+  });
+
   return {
-    temp,
-    dew,
-    rh,
-    press,
-    wind,
-    gust,
-    dirMean,
-    rainH,
-    rainCum,
-    rainTotal: round1(cumulativeRain),
-    uv,
-    solar,
+    temp: trimPairs(temp),
+    dew: trimPairs(dew),
+    rh: trimPairs(rh),
+    press: trimPairs(press),
+    wind: trimPairs(wind),
+    gust: trimPairs(gust),
+    dirMean: trimPairs(dirMean),
+    rainH: trimmedRainH,
+    rainCum: trimmedRainCum,
+    rainTotal: round1(rollingRainTotal),
+    uv: trimPairs(uv),
+    solar: trimPairs(solar),
     loadedDays,
     requestedDays: datesToFetch.length,
-    latestTimestamp: Number.isFinite(latestObservedTimestamp)
-      ? latestObservedTimestamp
-      : null,
+    latestTimestamp: exactEndTimestamp,
+    windowStartTimestamp: exactStartTimestamp,
   };
 }
-
 
 const CLIMATOLOGY_FIELDS = [
   "temp",
@@ -4395,12 +6174,9 @@ function climatologyTimeKey(timestamp, mode) {
   const mm = pad2(d.getMinutes());
 
   if (mode === "day") return `${hh}:${mm}`;
-  if (mode === "week") {
-    return `${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}|${hh}:${mm}`;
-  }
-
-  return `${pad2(d.getDate())}|${hh}:${mm}`;
+  return `${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}|${hh}:${mm}`;
 }
+
 
 function climatologyCandidateBounds(mode, selectedDate, yearShift) {
   if (!selectedDate || !Number.isFinite(Number(yearShift))) return null;
@@ -4423,8 +6199,9 @@ function climatologyCandidateBounds(mode, selectedDate, yearShift) {
     };
   }
 
-  return getPeriodBounds(mode, shiftedAnchor);
+  return getPeriodBounds("day", shiftedAnchor);
 }
+
 
 async function loadHistoricalAverage({
   selectedDate,
@@ -4453,7 +6230,7 @@ async function loadHistoricalAverage({
     );
   }
 
-  const stepMinutes = mode === "day" ? 15 : 60;
+  const stepMinutes = 15;
   const currentTimeline = makePeriodTimeline(
     currentBounds.startISO,
     currentBounds.endISO,
@@ -4517,7 +6294,6 @@ async function loadHistoricalAverage({
         }
       }
     } catch {
-      // Un anno privo del periodo richiesto viene semplicemente escluso.
     }
   }
 
@@ -4560,169 +6336,6 @@ async function loadHistoricalAverage({
       ? round1(historicalRainTotal)
       : null,
   };
-}
-
-function ArchivePeriodTable({ selectedDate }) {
-  const links = useMemo(() => {
-    const match = String(selectedDate || "").match(
-      /^(\d{4})-(\d{2})-(\d{2})$/,
-    );
-
-    if (!match) return [];
-
-    const [, year, month, day] = match;
-    const monthIndex = Number(month) - 1;
-    const monthName = MONTHS_IT_FULL[monthIndex] || month;
-
-    return [
-      {
-        key: "day",
-        label: "Giorno",
-        value: `${Number(day)} ${monthName.toLowerCase()} ${year}`,
-        href: `/giorni/${selectedDate}`,
-      },
-      {
-        key: "month",
-        label: "Mese",
-        value: `${monthName} ${year}`,
-        href: `/mesi/${year}/${month}`,
-      },
-      {
-        key: "year",
-        label: "Anno",
-        value: year,
-        href: `/anni/${year}`,
-      },
-    ];
-  }, [selectedDate]);
-
-  if (!links.length) return null;
-
-  return (
-    <nav
-      className="archiveTableWrap"
-      aria-label="Collegamenti ai dati completi del giorno, del mese e dell’anno"
-    >
-      <div className="archiveEyebrow">Collegamenti diretti</div>
-
-      <div className="archiveTable">
-        {links.map((link) => (
-          <a key={link.key} href={link.href}>
-            <span>{link.label}</span>
-            <strong>{link.value}</strong>
-          </a>
-        ))}
-      </div>
-
-      <style jsx>{`
-        .archiveTableWrap {
-          padding: 9px 18px 10px;
-          border-bottom: 1px solid #eef0f2;
-          background: #fbfcfd;
-        }
-
-        .archiveEyebrow {
-          margin-bottom: 6px;
-          font-size: 8px;
-          font-weight: 950;
-          color: rgba(15, 23, 42, 0.5);
-          text-align: center;
-          text-transform: uppercase;
-          letter-spacing: 0.07em;
-        }
-
-        .archiveTable {
-          display: grid;
-          grid-template-columns: repeat(3, minmax(0, 1fr));
-          overflow: hidden;
-          border: 1px solid #e2e7ed;
-          border-radius: 12px;
-          background: #fff;
-        }
-
-        a {
-          min-width: 0;
-          min-height: 43px;
-          padding: 6px 8px;
-          display: grid;
-          place-content: center;
-          justify-items: center;
-          gap: 2px;
-          border-right: 1px solid #e8ecf0;
-          color: #0f172a;
-          text-align: center;
-          text-decoration: none;
-          transition:
-            background 120ms ease,
-            color 120ms ease;
-        }
-
-        a:last-child {
-          border-right: 0;
-        }
-
-        a:hover,
-        a:focus-visible {
-          background: #f1f5f9;
-          outline: none;
-        }
-
-        span {
-          font-size: 8px;
-          font-weight: 950;
-          color: rgba(15, 23, 42, 0.5);
-          text-transform: uppercase;
-          letter-spacing: 0.045em;
-          white-space: nowrap;
-        }
-
-        strong {
-          min-width: 0;
-          overflow: hidden;
-          font-size: 10.5px;
-          font-weight: 900;
-          color: #0f172a;
-          text-align: center;
-          text-overflow: ellipsis;
-          white-space: nowrap;
-        }
-
-        @media (max-width: 720px) {
-          .archiveTableWrap {
-            padding: 7px 10px 8px;
-          }
-
-          .archiveEyebrow {
-            margin-bottom: 5px;
-            font-size: 7.5px;
-          }
-
-          .archiveTable {
-            border-radius: 10px;
-          }
-
-          a {
-            min-height: 42px;
-            padding: 5px 4px;
-          }
-
-          span {
-            font-size: 7px;
-          }
-
-          strong {
-            font-size: 8.8px;
-          }
-        }
-
-        @media (max-width: 390px) {
-          strong {
-            font-size: 8px;
-          }
-        }
-      `}</style>
-    </nav>
-  );
 }
 
 function SummaryParameterIcon({ type }) {
@@ -4811,17 +6424,17 @@ function PeriodSummary({ data, mode }) {
     return [
       {
         key: "temperature",
-        label: "Temperature",
+        label: "Temperatura",
         mainLabel: "Media",
         value: `${fmt(tempStats.mean, 1)} °C`,
         metrics: [
           metric(
-            "Minima",
+            "Min",
             `${fmt(tempStats.min, 1)} °C`,
             formatSummaryTimestamp(tempStats.minTimestamp, mode),
           ),
           metric(
-            "Massima",
+            "Max",
             `${fmt(tempStats.max, 1)} °C`,
             formatSummaryTimestamp(tempStats.maxTimestamp, mode),
           ),
@@ -4833,8 +6446,8 @@ function PeriodSummary({ data, mode }) {
         mainLabel: "Media",
         value: `${fmt(rhStats.mean, 1)} %`,
         metrics: [
-          metric("Minima", `${fmt(rhStats.min, 1)} %`),
-          metric("Massima", `${fmt(rhStats.max, 1)} %`),
+          metric("Min", `${fmt(rhStats.min, 1)} %`),
+          metric("Max", `${fmt(rhStats.max, 1)} %`),
         ],
       },
       {
@@ -4852,12 +6465,12 @@ function PeriodSummary({ data, mode }) {
         value: `${fmt(windStats.mean, 1)} km/h`,
         metrics: [
           metric(
-            "Massimo",
+            "Max",
             `${fmt(windStats.max, 1)} km/h`,
             formatSummaryTimestamp(windStats.maxTimestamp, mode),
           ),
           metric(
-            "Raffica massima",
+            "Raffica",
             `${fmt(gustStats.max, 1)} km/h`,
             formatSummaryTimestamp(gustStats.maxTimestamp, mode),
           ),
@@ -4869,18 +6482,18 @@ function PeriodSummary({ data, mode }) {
         mainLabel: "Media",
         value: `${fmt(pressStats.mean, 1)} hPa`,
         metrics: [
-          metric("Minima", `${fmt(pressStats.min, 1)} hPa`),
-          metric("Massima", `${fmt(pressStats.max, 1)} hPa`),
+          metric("Min", `${fmt(pressStats.min, 1)} hPa`),
+          metric("Max", `${fmt(pressStats.max, 1)} hPa`),
         ],
       },
       {
         key: "solar",
-        label: "Radiazione solare",
+        label: "Rad. solare",
         mainLabel: "Media",
         value: `${fmt(solarStats.mean, 0)} W/m²`,
         metrics: [
           metric(
-            "Massima",
+            "Max",
             `${fmt(solarStats.max, 0)} W/m²`,
             formatSummaryTimestamp(solarStats.maxTimestamp, mode),
           ),
@@ -4893,7 +6506,7 @@ function PeriodSummary({ data, mode }) {
         value: fmt(uvStats.mean, 1),
         metrics: [
           metric(
-            "Massimo",
+            "Max",
             fmt(uvStats.max, 1),
             formatSummaryTimestamp(uvStats.maxTimestamp, mode),
           ),
@@ -4906,25 +6519,25 @@ function PeriodSummary({ data, mode }) {
 
   return (
     <section className="summarySection" aria-label="Riepilogo del periodo">
-      <div className="summaryHead">
-        <h3>Riepilogo del periodo</h3>
-      </div>
-
       <div className="summaryGrid">
         {items.map((item) => (
           <div className={`summaryCell ${item.key}`} key={item.key}>
-            <div className="summaryIdentity">
+            <span className="summaryLabel">{item.label}</span>
+
+            <div className="summaryCore">
               <span className="summaryIcon">
                 <SummaryParameterIcon type={item.key} />
               </span>
-              <span className="summaryLabel">{item.label}</span>
+
+              <div className="summaryMain">
+                <strong>{item.value}</strong>
+                <small>{item.mainLabel}</small>
+              </div>
             </div>
 
-            <div className="summaryMain">
-              <small>{item.mainLabel}</small>
-              <strong>{item.value}</strong>
-              {item.description ? <p>{item.description}</p> : null}
-            </div>
+            {item.description ? (
+              <div className="summaryDescription">{item.description}</div>
+            ) : null}
 
             {item.metrics.length > 0 && (
               <div
@@ -4947,858 +6560,249 @@ function PeriodSummary({ data, mode }) {
 
       <style jsx>{`
         .summarySection {
-          padding: 14px 18px 16px;
-          border-bottom: 1px solid #eef0f2;
+          padding: 18px 20px 16px;
           background: #fff;
-        }
-
-        .summaryHead {
-          margin-bottom: 10px;
-          text-align: center;
-        }
-
-        h3 {
-          margin: 0;
-          font-size: 16px;
-          font-weight: 950;
-          color: #0f172a;
-          text-align: center;
         }
 
         .summaryGrid {
           display: grid;
-          grid-template-columns: repeat(12, minmax(0, 1fr));
-          gap: 8px;
+          grid-template-columns: repeat(7, minmax(0, 1fr));
+          gap: 10px;
         }
 
         .summaryCell {
-          --accent: #475569;
-          --soft: rgba(71, 85, 105, 0.09);
-          grid-column: span 3;
+          --card-top: #2563eb;
+          --card-bottom: #0f4fa7;
+          position: relative;
           min-width: 0;
-          min-height: 118px;
-          padding: 10px 11px;
-          display: grid;
-          align-content: start;
-          justify-items: center;
-          gap: 5px;
-          border: 1px solid color-mix(in srgb, var(--accent) 24%, #e5e7eb);
-          border-top: 3px solid var(--accent);
-          border-radius: 14px;
+          min-height: 188px;
+          padding: 14px 12px 12px;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          border: 1px solid rgba(255, 255, 255, 0.22);
+          border-radius: 16px;
           background:
-            linear-gradient(180deg, var(--soft), rgba(255, 255, 255, 0.96) 58%);
+            radial-gradient(140px 90px at 76% 5%, rgba(255, 255, 255, 0.16), transparent 66%),
+            linear-gradient(160deg, var(--card-top), var(--card-bottom));
+          color: #fff;
           text-align: center;
-          box-shadow: 0 3px 10px rgba(15, 23, 42, 0.025);
-        }
-
-        .summaryCell:nth-child(n + 5) {
-          grid-column: span 4;
+          box-shadow:
+            0 9px 18px rgba(15, 23, 42, 0.11),
+            inset 0 1px 0 rgba(255, 255, 255, 0.19);
+          overflow: hidden;
         }
 
         .summaryCell.temperature {
-          --accent: #ea580c;
-          --soft: rgba(249, 115, 22, 0.1);
+          --card-top: #ff6a00;
+          --card-bottom: #c93600;
         }
 
         .summaryCell.humidity {
-          --accent: #0891b2;
-          --soft: rgba(6, 182, 212, 0.1);
+          --card-top: #2cb9c7;
+          --card-bottom: #078493;
         }
 
         .summaryCell.rain {
-          --accent: #0284c7;
-          --soft: rgba(14, 165, 233, 0.11);
+          --card-top: #2196ef;
+          --card-bottom: #0861b8;
         }
 
         .summaryCell.wind {
-          --accent: #7c3aed;
-          --soft: rgba(124, 58, 237, 0.09);
+          --card-top: #9a56e8;
+          --card-bottom: #6331b8;
         }
 
         .summaryCell.pressure {
-          --accent: #475569;
-          --soft: rgba(100, 116, 139, 0.09);
+          --card-top: #2b7bc4;
+          --card-bottom: #074480;
         }
 
         .summaryCell.solar {
-          --accent: #d97706;
-          --soft: rgba(245, 158, 11, 0.11);
+          --card-top: #ffad0b;
+          --card-bottom: #d77700;
         }
 
         .summaryCell.uv {
-          --accent: #9333ea;
-          --soft: rgba(147, 51, 234, 0.09);
-        }
-
-        .summaryIdentity {
-          min-width: 0;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          gap: 6px;
-        }
-
-        .summaryIcon {
-          width: 25px;
-          height: 25px;
-          flex: 0 0 25px;
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          border-radius: 8px;
-          background: var(--soft);
-          color: var(--accent);
-        }
-
-        .summaryIcon :global(svg) {
-          width: 16px;
-          height: 16px;
-          fill: none;
-          stroke: currentColor;
-          stroke-width: 1.8;
-          stroke-linecap: round;
-          stroke-linejoin: round;
+          --card-top: #9a4ce2;
+          --card-bottom: #5d2da8;
         }
 
         .summaryLabel {
-          min-width: 0;
+          width: 100%;
+          min-height: 28px;
+          display: flex;
+          align-items: flex-start;
+          justify-content: center;
           overflow: hidden;
-          font-size: 9px;
+          font-size: 10px;
           font-weight: 950;
-          color: var(--accent);
-          text-align: center;
+          line-height: 1.15;
           text-transform: uppercase;
-          letter-spacing: 0.045em;
+          letter-spacing: 0.025em;
           text-overflow: ellipsis;
-          white-space: nowrap;
+        }
+
+        .summaryCore {
+          width: 100%;
+          margin-top: 4px;
+          display: grid;
+          justify-items: center;
+          gap: 7px;
+        }
+
+        .summaryIcon {
+          width: 43px;
+          height: 43px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          border: 1px solid rgba(255, 255, 255, 0.16);
+          border-radius: 50%;
+          background: rgba(255, 255, 255, 0.11);
+          color: #fff;
+        }
+
+        .summaryIcon :global(svg) {
+          width: 28px;
+          height: 28px;
+          fill: none;
+          stroke: currentColor;
+          stroke-width: 1.75;
+          stroke-linecap: round;
+          stroke-linejoin: round;
         }
 
         .summaryMain {
           min-width: 0;
           display: grid;
           justify-items: center;
-          gap: 0;
-          text-align: center;
-        }
-
-        .summaryMain small {
-          font-size: 7px;
-          font-weight: 850;
-          color: rgba(15, 23, 42, 0.44);
-          text-transform: uppercase;
-          letter-spacing: 0.04em;
+          gap: 1px;
         }
 
         .summaryMain strong {
           max-width: 100%;
           overflow: hidden;
-          font-size: 17px;
+          font-size: clamp(16px, 1.35vw, 22px);
           font-weight: 950;
-          color: var(--accent);
-          text-align: center;
+          line-height: 1.02;
+          letter-spacing: -0.025em;
           text-overflow: ellipsis;
           white-space: nowrap;
         }
 
-        .summaryMain p {
-          margin: 2px 0 0;
-          font-size: 8px;
+        .summaryMain small {
+          font-size: 9px;
+          font-weight: 800;
+          color: rgba(255, 255, 255, 0.88);
+        }
+
+        .summaryDescription {
+          min-height: 38px;
+          margin-top: auto;
+          padding: 10px 4px 2px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          border-top: 1px solid rgba(255, 255, 255, 0.26);
+          font-size: 8.5px;
           font-weight: 750;
-          color: rgba(15, 23, 42, 0.46);
+          line-height: 1.3;
+          color: rgba(255, 255, 255, 0.9);
         }
 
         .summaryMetrics {
           width: 100%;
           margin-top: auto;
-          padding-top: 5px;
+          padding-top: 9px;
           display: grid;
           grid-template-columns: repeat(2, minmax(0, 1fr));
-          gap: 5px;
-          border-top: 1px solid color-mix(in srgb, var(--accent) 15%, #e2e8f0);
+          gap: 4px;
+          border-top: 1px solid rgba(255, 255, 255, 0.28);
         }
 
         .summaryMetrics.oneMetric {
-          grid-template-columns: minmax(0, 1fr);
+          grid-template-columns: 1fr;
         }
 
         .summaryMetric {
           min-width: 0;
-          padding: 3px 4px;
           display: grid;
           justify-items: center;
-          gap: 0;
-          border-radius: 7px;
-          background: rgba(255, 255, 255, 0.62);
-          text-align: center;
+          gap: 1px;
+        }
+
+        .summaryMetric + .summaryMetric {
+          border-left: 1px solid rgba(255, 255, 255, 0.2);
         }
 
         .summaryMetric span {
-          max-width: 100%;
-          overflow: hidden;
-          font-size: 6.8px;
-          font-weight: 850;
-          color: rgba(15, 23, 42, 0.47);
-          text-align: center;
-          text-overflow: ellipsis;
-          white-space: nowrap;
+          font-size: 7.5px;
+          font-weight: 750;
+          color: rgba(255, 255, 255, 0.78);
         }
 
         .summaryMetric b {
           max-width: 100%;
           overflow: hidden;
-          font-size: 9px;
+          font-size: 9.5px;
           font-weight: 950;
-          color: #0f172a;
-          text-align: center;
           text-overflow: ellipsis;
           white-space: nowrap;
         }
 
         .summaryMetric small {
-          max-width: 100%;
-          overflow: hidden;
-          font-size: 6.7px;
+          font-size: 7px;
           font-weight: 750;
-          color: rgba(15, 23, 42, 0.42);
-          text-align: center;
-          text-overflow: ellipsis;
-          white-space: nowrap;
+          color: rgba(255, 255, 255, 0.72);
         }
 
-        @media (max-width: 900px) {
+        @media (max-width: 1180px) {
           .summaryGrid {
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-          }
-
-          .summaryCell,
-          .summaryCell:nth-child(n + 5) {
-            grid-column: span 1;
-          }
-
-          .summaryCell:last-child {
-            grid-column: 1 / -1;
-          }
-        }
-
-        @media (max-width: 560px) {
-          .summarySection {
-            padding: 12px 10px 13px;
-          }
-
-          h3 {
-            font-size: 15px;
-          }
-
-          .summaryGrid {
-            gap: 7px;
+            overflow-x: auto;
+            grid-template-columns: repeat(7, minmax(175px, 1fr));
+            scrollbar-width: thin;
+            padding-bottom: 5px;
           }
 
           .summaryCell {
-            min-height: 112px;
-            padding: 8px 7px;
-            border-radius: 12px;
+            min-height: 180px;
           }
-
-          .summaryIdentity {
-            gap: 4px;
-          }
-
-          .summaryIcon {
-            width: 23px;
-            height: 23px;
-            flex-basis: 23px;
-          }
-
-          .summaryIcon :global(svg) {
-            width: 15px;
-            height: 15px;
-          }
-
-          .summaryLabel {
-            font-size: 7.5px;
-          }
-
-          .summaryMain strong {
-            font-size: 14px;
-          }
-
-          .summaryMetric {
-            padding-left: 2px;
-            padding-right: 2px;
-          }
-
-          .summaryMetric b {
-            font-size: 8px;
-          }
-
-          .summaryMetric span,
-          .summaryMetric small {
-            font-size: 6.2px;
-          }
-        }
-
-        @media (max-width: 390px) {
-          .summaryCell {
-            min-height: 108px;
-            padding-left: 5px;
-            padding-right: 5px;
-          }
-
-          .summaryIcon {
-            width: 21px;
-            height: 21px;
-            flex-basis: 21px;
-          }
-
-          .summaryLabel {
-            font-size: 7px;
-          }
-
-          .summaryMain strong {
-            font-size: 13px;
-          }
-
-          .summaryMetric b {
-            font-size: 7.3px;
-          }
-        }
-      `}</style>
-    </section>
-  );
-}
-
-
-function ComparisonChart({
-  mode,
-  groupKey,
-  currentData,
-  comparisonData,
-  currentBounds,
-  comparisonBounds,
-  descriptor,
-  options,
-  compareKey,
-  onCompareChange,
-  loading,
-  error,
-  isMobile,
-}) {
-  const meta = useMemo(() => deltaMetaForGroup(groupKey), [groupKey]);
-
-  const deltaSeries = useMemo(() => {
-    if (!currentData || !comparisonData || !comparisonBounds) return [];
-
-    return makeDeltaSeries({
-      currentPairs: currentData?.[meta.field],
-      comparisonPairs: comparisonData?.[meta.field],
-      currentStartISO: currentBounds.startISO,
-      comparisonStartISO: comparisonBounds.startISO,
-      mode,
-    });
-  }, [
-    currentData,
-    comparisonData,
-    comparisonBounds,
-    currentBounds.startISO,
-    meta.field,
-    mode,
-  ]);
-
-  const displayDeltaSeries = useMemo(
-    () => trimTrailingNullPoints(deltaSeries),
-    [deltaSeries],
-  );
-
-  const validDeltaCount = useMemo(
-    () => seriesValues(displayDeltaSeries).length,
-    [displayDeltaSeries],
-  );
-
-  const splitSeries = useMemo(
-    () => splitDeltaSeriesBySign(displayDeltaSeries),
-    [displayDeltaSeries],
-  );
-
-  const deltaStats = useMemo(
-    () => deltaStatsFromSeries(displayDeltaSeries),
-    [displayDeltaSeries],
-  );
-
-  const option = useMemo(() => {
-    if (!validDeltaCount) return null;
-
-    const axis = symmetricAxisFromPairs(displayDeltaSeries);
-
-    const xAxis = {
-      type: "time",
-      min: isoToLocalDate(currentBounds.startISO, 0)?.getTime(),
-      max: isoToLocalDate(addDaysISO(currentBounds.endISO, 1), 0)?.getTime(),
-      axisLabel: {
-        hideOverlap: true,
-        fontSize: isMobile ? 10 : 11,
-        formatter: (value) => {
-          const d = new Date(value);
-          const dd = pad2(d.getDate());
-          const mm = pad2(d.getMonth() + 1);
-          const hh = pad2(d.getHours());
-          const mi = pad2(d.getMinutes());
-
-          if (mode === "day") return `${hh}:${mi}`;
-          if (mode === "month") return `${dd}/${mm}`;
-          return `${dd}/${mm} ${hh}`;
-        },
-      },
-    };
-
-    return {
-      animation: true,
-      animationDuration: 220,
-      grid: isMobile
-        ? { left: 48, right: 14, top: 28, bottom: 42 }
-        : { left: 70, right: 34, top: 35, bottom: 58 },
-      tooltip: {
-        trigger: "axis",
-        triggerOn: "mousemove|click",
-        confine: true,
-        axisPointer: {
-          type: "line",
-          snap: true,
-          label: { show: false },
-          lineStyle: {
-            type: "dashed",
-            width: 1.2,
-            color: "rgba(100, 116, 139, 0.55)",
-          },
-        },
-        formatter: (params) => {
-          const axisTimestamp = Number(
-            params?.[0]?.axisValue ?? params?.[0]?.data?.[0],
-          );
-
-          const validPoints = seriesValues(displayDeltaSeries);
-          if (!validPoints.length) return "";
-
-          let selectedPoint = validPoints[0];
-
-          if (Number.isFinite(axisTimestamp)) {
-            let bestDistance = Infinity;
-
-            for (const point of validPoints) {
-              const distance = Math.abs(point.timestamp - axisTimestamp);
-
-              if (distance < bestDistance) {
-                bestDistance = distance;
-                selectedPoint = point;
-              }
-            }
-          }
-
-          const value = selectedPoint.value;
-          const time = formatSummaryTimestamp(selectedPoint.timestamp, mode);
-
-          const markerColor =
-            value > 0
-              ? meta.positiveColor
-              : value < 0
-                ? meta.negativeColor
-                : "rgba(15, 23, 42, 0.55)";
-
-          const marker =
-            `<span style="display:inline-block;margin-right:6px;` +
-            `border-radius:50%;width:9px;height:9px;` +
-            `background:${markerColor};"></span>`;
-
-          return (
-            `${time}<br/>` +
-            `${marker}${meta.shortLabel}: ` +
-            `${formatSignedDelta(value, meta.unit)}`
-          );
-        },
-      },
-      xAxis,
-      yAxis: {
-        type: "value",
-        name: `Δ ${meta.unit}`,
-        nameLocation: "middle",
-        nameRotate: 90,
-        nameGap: isMobile ? 34 : 46,
-        min: axis.min,
-        max: axis.max,
-        interval: axis.interval,
-        axisLabel: {
-          fontSize: isMobile ? 10 : 11,
-          formatter: (value) => {
-            const vv = Number(value);
-            return `${vv > 0 ? "+" : ""}${vv.toFixed(1)}`;
-          },
-        },
-        splitLine: { show: true },
-      },
-      series: [
-        {
-          name: meta.positiveText,
-          type: "line",
-          data: splitSeries.positive,
-          showSymbol: false,
-          connectNulls: false,
-          smooth: false,
-          sampling: "lttb",
-          lineStyle: {
-            width: 2.4,
-            color: meta.positiveColor,
-          },
-          itemStyle: {
-            color: meta.positiveColor,
-          },
-          markLine: {
-            silent: true,
-            symbol: "none",
-            label: { show: false },
-            lineStyle: {
-              width: 1.2,
-              type: "dashed",
-              color: "rgba(15, 23, 42, 0.42)",
-            },
-            data: [{ yAxis: 0 }],
-          },
-        },
-        {
-          name: meta.negativeText,
-          type: "line",
-          data: splitSeries.negative,
-          showSymbol: false,
-          connectNulls: false,
-          smooth: false,
-          sampling: "lttb",
-          lineStyle: {
-            width: 2.4,
-            color: meta.negativeColor,
-          },
-          itemStyle: {
-            color: meta.negativeColor,
-          },
-        },
-      ],
-    };
-  }, [
-    currentBounds.endISO,
-    currentBounds.startISO,
-    displayDeltaSeries,
-    isMobile,
-    meta.negativeColor,
-    meta.negativeText,
-    meta.positiveColor,
-    meta.positiveText,
-    meta.shortLabel,
-    meta.unit,
-    mode,
-    splitSeries.negative,
-    splitSeries.positive,
-    validDeltaCount,
-  ]);
-
-  const comparisonPeriodText = descriptor
-    ? formatPeriodLabel(mode, descriptor.anchorDate)
-    : "—";
-
-  const summaryItems = [
-    {
-      label: "Differenza media",
-      value: formatSignedDelta(deltaStats.mean, meta.unit),
-      detail: deltaStats.count
-        ? `media su ${deltaStats.count} intervalli`
-        : "nessun intervallo",
-      tone: deltaTone(deltaStats.mean),
-    },
-    {
-      label: "Differenza massima",
-      value: formatSignedDelta(deltaStats.max, meta.unit),
-      detail: Number.isFinite(Number(deltaStats.maxTimestamp))
-        ? formatSummaryTimestamp(deltaStats.maxTimestamp, mode)
-        : "—",
-      tone: deltaTone(deltaStats.max),
-    },
-    {
-      label: "Differenza minima",
-      value: formatSignedDelta(deltaStats.min, meta.unit),
-      detail: Number.isFinite(Number(deltaStats.minTimestamp))
-        ? formatSummaryTimestamp(deltaStats.minTimestamp, mode)
-        : "—",
-      tone: deltaTone(deltaStats.min),
-    },
-    {
-      label: "Ultima differenza",
-      value: formatSignedDelta(deltaStats.last, meta.unit),
-      detail: Number.isFinite(Number(deltaStats.lastTimestamp))
-        ? formatSummaryTimestamp(deltaStats.lastTimestamp, mode)
-        : "ultimo intervallo disponibile",
-      tone: deltaTone(deltaStats.last),
-    },
-  ];
-
-  return (
-    <section className="comparisonSection" aria-label="Grafico di confronto">
-      <div className="comparisonHead">
-        <div className="comparisonText">
-          <h3>{comparisonTitleForDescriptor(descriptor)}</h3>
-          <p>
-            {meta.shortLabel} · periodo corrente meno {descriptor?.label || "periodo di confronto"}
-            {descriptor ? ` · ${comparisonPeriodText}` : ""}
-          </p>
-        </div>
-
-        <div className="comparisonMenu">
-          <span>Confronta con</span>
-          <CustomSelect
-            value={compareKey}
-            options={options}
-            onChange={onCompareChange}
-            ariaLabel="Seleziona il periodo di confronto"
-          />
-        </div>
-      </div>
-
-      <div className="comparisonChart">
-        {loading && <div className="compareMsg">Caricamento confronto…</div>}
-        {!loading && error && <div className="compareMsg">{error}</div>}
-        {!loading && !error && !validDeltaCount && (
-          <div className="compareMsg">
-            Nessun intervallo confrontabile: la linea apparirà solo dove sono
-            presenti entrambi i dati.
-          </div>
-        )}
-        {!loading && !error && option && (
-          <ReactECharts
-            option={option}
-            style={{ height: isMobile ? 210 : 260, width: "100%" }}
-            notMerge={true}
-            lazyUpdate={true}
-          />
-        )}
-      </div>
-
-      {!loading && !error && validDeltaCount > 0 && (
-        <div
-          className="deltaSummary"
-          style={{
-            "--positive-color": meta.positiveColor,
-            "--negative-color": meta.negativeColor,
-          }}
-        >
-          {summaryItems.map((item) => (
-            <div className={`deltaCell tone-${item.tone}`} key={item.label}>
-              <span className="deltaLabel">{item.label}</span>
-              <strong className={item.tone}>{item.value}</strong>
-              <small>{item.detail}</small>
-            </div>
-          ))}
-        </div>
-      )}
-
-      <style jsx>{`
-        .comparisonSection {
-          position: relative;
-          z-index: 4;
-          border-top: 1px solid #e8ebef;
-          background: #fbfcfd;
-        }
-
-        .comparisonHead {
-          position: relative;
-          z-index: 20;
-          min-height: 78px;
-          padding: 14px 18px 10px;
-          display: grid;
-          grid-template-columns: 1fr auto 1fr;
-          align-items: center;
-          gap: 18px;
-        }
-
-        .comparisonText {
-          grid-column: 2;
-          text-align: center;
-        }
-
-        .comparisonText h3 {
-          margin: 0;
-          font-size: 17px;
-          font-weight: 950;
-          color: #0f172a;
-        }
-
-        .comparisonText p {
-          margin: 4px 0 0;
-          font-size: 10px;
-          font-weight: 750;
-          color: rgba(15, 23, 42, 0.55);
-        }
-
-        .comparisonMenu {
-          grid-column: 3;
-          justify-self: end;
-          width: 260px;
-          display: grid;
-          gap: 5px;
-        }
-
-        .comparisonMenu > span {
-          font-size: 9px;
-          font-weight: 950;
-          color: rgba(15, 23, 42, 0.58);
-          text-align: center;
-          text-transform: uppercase;
-          letter-spacing: 0.04em;
-        }
-
-        .comparisonChart {
-          min-height: 260px;
-          padding: 0 8px 2px;
-        }
-
-        .compareMsg {
-          min-height: 240px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          padding: 18px;
-          color: rgba(15, 23, 42, 0.62);
-          font-size: 11px;
-          font-weight: 800;
-          text-align: center;
-        }
-
-        .deltaSummary {
-          width: min(calc(100% - 36px), 920px);
-          margin: 0 auto 12px;
-          display: grid;
-          grid-template-columns: repeat(4, minmax(0, 1fr));
-          gap: 6px;
-        }
-
-        .deltaCell {
-          min-width: 0;
-          min-height: 42px;
-          padding: 5px 8px;
-          display: grid;
-          align-content: center;
-          justify-items: center;
-          gap: 0;
-          text-align: center;
-          border: 1px solid #e3e7ec;
-          border-radius: 9px;
-          background: linear-gradient(180deg, #ffffff, #fafbfc);
-        }
-
-        .deltaCell.tone-positive {
-          border-color: color-mix(
-            in srgb,
-            var(--positive-color) 24%,
-            #e3e7ec
-          );
-          background: color-mix(
-            in srgb,
-            var(--positive-color) 6%,
-            #ffffff
-          );
-        }
-
-        .deltaCell.tone-negative {
-          border-color: color-mix(
-            in srgb,
-            var(--negative-color) 24%,
-            #e3e7ec
-          );
-          background: color-mix(
-            in srgb,
-            var(--negative-color) 6%,
-            #ffffff
-          );
-        }
-
-        .deltaLabel {
-          overflow: hidden;
-          font-size: 7.5px;
-          font-weight: 900;
-          color: rgba(15, 23, 42, 0.53);
-          text-transform: uppercase;
-          letter-spacing: 0.035em;
-          text-overflow: ellipsis;
-          white-space: nowrap;
-        }
-
-        .deltaCell strong {
-          overflow: hidden;
-          font-size: 13px;
-          font-weight: 950;
-          color: #0f172a;
-          text-overflow: ellipsis;
-          white-space: nowrap;
-        }
-
-        .deltaCell strong.positive {
-          color: var(--positive-color);
-        }
-
-        .deltaCell strong.negative {
-          color: var(--negative-color);
-        }
-
-        .deltaCell small {
-          overflow: hidden;
-          font-size: 7.5px;
-          font-weight: 750;
-          color: rgba(15, 23, 42, 0.47);
-          text-overflow: ellipsis;
-          white-space: nowrap;
         }
 
         @media (max-width: 720px) {
-          .comparisonHead {
-            min-height: 0;
-            padding: 14px 10px 10px;
-            grid-template-columns: 1fr;
-            gap: 12px;
+          .summarySection {
+            padding: 12px 10px;
           }
 
-          .comparisonText {
-            grid-column: 1;
-            text-align: center;
+          .summaryGrid {
+            grid-template-columns: repeat(7, 166px);
+            gap: 8px;
           }
 
-          .comparisonText h3 {
-            font-size: 16px;
+          .summaryCell {
+            min-height: 166px;
+            padding: 11px 9px 10px;
+            border-radius: 14px;
           }
 
-          .comparisonMenu {
-            grid-column: 1;
-            justify-self: stretch;
-            width: 100%;
+          .summaryLabel {
+            min-height: 24px;
+            font-size: 9px;
           }
 
-          .comparisonChart {
-            min-height: 210px;
-            padding-left: 0;
-            padding-right: 0;
+          .summaryIcon {
+            width: 38px;
+            height: 38px;
           }
 
-          .compareMsg {
-            min-height: 188px;
+          .summaryIcon :global(svg) {
+            width: 24px;
+            height: 24px;
           }
 
-          .deltaSummary {
-            width: calc(100% - 20px);
-            margin: 0 auto 10px;
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 5px;
-          }
-
-          .deltaCell {
-            min-height: 42px;
-            padding: 5px 7px;
-          }
-
-          .deltaCell strong {
-            font-size: 12.5px;
+          .summaryMain strong {
+            font-size: 17px;
           }
         }
       `}</style>
@@ -5872,6 +6876,13 @@ function ClimatologyChart({
         trigger: "axis",
         triggerOn: "mousemove|click",
         confine: true,
+          backgroundColor: "rgba(255, 255, 255, 0.98)",
+          borderColor: "#dbe3ec",
+          borderWidth: 1,
+          padding: [9, 11],
+          extraCssText:
+            "border-radius:10px;box-shadow:0 10px 28px rgba(15,23,42,.12);",
+          textStyle: { color: "#0f172a", fontSize: 11, fontWeight: 650 },
         axisPointer: {
           type: "line",
           snap: true,
@@ -5928,17 +6939,19 @@ function ClimatologyChart({
         axisLabel: {
           hideOverlap: true,
           fontSize: isMobile ? 10 : 11,
-          formatter: (value) => {
-            const d = new Date(value);
-            const dd = pad2(d.getDate());
-            const mm = pad2(d.getMonth() + 1);
-            const hh = pad2(d.getHours());
-            const mi = pad2(d.getMinutes());
-
-            if (mode === "day") return `${hh}:${mi}`;
-            if (mode === "month") return `${dd}/${mm}`;
-            return `${dd}/${mm} ${hh}`;
-          },
+          formatter:
+            mode === "day"
+              ? "{HH}:{mm}"
+              : {
+                  year: "{dd}/{MM}",
+                  month: "{dd}/{MM}",
+                  day: "{dd}/{MM}",
+                  hour: "{HH}:{mm}",
+                  minute: "{HH}:{mm}",
+                  second: "{HH}:{mm}",
+                  millisecond: "{HH}:{mm}",
+                  none: "{dd}/{MM}",
+                },
         },
       },
       yAxis: {
@@ -6371,6 +7384,7 @@ function ClimatologyChart({
   );
 }
 
+
 function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
   const GROUPS = useMemo(
     () => [
@@ -6387,9 +7401,9 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
 
   const PERIODS = useMemo(
     () => [
-      { key: "day", label: "Giornaliero" },
-      { key: "week", label: "Settimanale" },
-      { key: "month", label: "Mensile" },
+      { key: "day", label: "Oggi" },
+      { key: "week", label: "Ultimi 7 giorni" },
+      { key: "month", label: "Ultimi 30 giorni" },
     ],
     [],
   );
@@ -6411,16 +7425,12 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
   const [selectedDate, setSelectedDate] = useState(
     availableDates.length ? availableDates[availableDates.length - 1] : null,
   );
-  const [compareKey, setCompareKey] = useState("yesterday");
   const [refreshTick, setRefreshTick] = useState(0);
   const [loading, setLoading] = useState(false);
-  const [comparisonLoading, setComparisonLoading] = useState(false);
   const [climatologyLoading, setClimatologyLoading] = useState(false);
   const [err, setErr] = useState("");
-  const [comparisonError, setComparisonError] = useState("");
   const [climatologyError, setClimatologyError] = useState("");
   const [data, setData] = useState(null);
-  const [comparisonData, setComparisonData] = useState(null);
   const [climatologyData, setClimatologyData] = useState(null);
   const [viewportWidth, setViewportWidth] = useState(1280);
   const currentPeriodKeyRef = useRef("");
@@ -6447,31 +7457,27 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
     });
   }, [availableDates]);
 
-  const comparisonOptions = useMemo(
-    () => comparisonOptionsForMode(mode),
-    [mode],
-  );
-
-  useEffect(() => {
-    if (!comparisonOptions.some((option) => option.key === compareKey)) {
-      setCompareKey(comparisonOptions[0]?.key || "");
-    }
-  }, [compareKey, comparisonOptions]);
-
   const bounds = useMemo(
     () => getPeriodBounds(mode, selectedDate),
     [mode, selectedDate],
   );
 
-  const compareDescriptor = useMemo(
-    () => comparisonDescriptor(mode, compareKey, selectedDate),
-    [compareKey, mode, selectedDate],
-  );
-
   const periodTitle = useMemo(() => {
-    if (mode === "week") return "Grafico settimanale";
-    if (mode === "month") return "Grafico mensile";
+    if (mode === "week") return "Grafico ultimi 7 giorni";
+    if (mode === "month") return "Grafico ultimi 30 giorni";
     return "Grafico giornaliero";
+  }, [mode]);
+
+  const dataTitle = useMemo(() => {
+    if (mode === "week") return "Dati ultimi 7 giorni";
+    if (mode === "month") return "Dati ultimi 30 giorni";
+    return "Dati giornalieri";
+  }, [mode]);
+
+  const periodDurationLabel = useMemo(() => {
+    if (mode === "week") return "7 giorni · intervalli di 15 minuti";
+    if (mode === "month") return "30 giorni · intervalli di 1 ora";
+    return "Intervalli di 15 minuti";
   }, [mode]);
 
   const periodLabel = useMemo(
@@ -6485,11 +7491,6 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
     ? availableDates[availableDates.length - 1]
     : null;
 
-  /*
-   * Il JSON di oggi viene controllato in modo leggero una volta al minuto.
-   * Il grafico viene ricaricato soltanto quando compare davvero un orario
-   * più recente; in assenza di nuovi dati la pagina resta immobile.
-   */
   useEffect(() => {
     if (
       mode !== "day" ||
@@ -6565,7 +7566,13 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
   const showRealtimePulse =
     mode === "day" && selectedDate === latestAvailableDate;
 
-  const canGoBack = !navigationDisabled(availableDates, selectedDate, mode, -1);
+  const canGoBack = !navigationDisabled(
+    availableDates,
+    selectedDate,
+    mode,
+    -1,
+  );
+
   const canGoForward = !navigationDisabled(
     availableDates,
     selectedDate,
@@ -6573,16 +7580,16 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
     1,
   );
 
-  const isTodayView =
-    mode === "day" &&
-    Boolean(latestAvailableDate) &&
-    selectedDate === latestAvailableDate;
+  const supportsClimatology = mode === "day" || mode === "week";
 
-  const goToToday = () => {
-    if (!latestAvailableDate) return;
-    setMode("day");
-    setSelectedDate(latestAvailableDate);
-    setRefreshTick((value) => value + 1);
+  const changeMode = (nextMode) => {
+    setMode(nextMode);
+
+    // Se si sceglie "Oggi", si torna sempre all'ultima data disponibile.
+    if (nextMode === "day" && latestAvailableDate) {
+      setSelectedDate(latestAvailableDate);
+      setRefreshTick((value) => value + 1);
+    }
   };
 
   const changePeriod = (direction) => {
@@ -6663,59 +7670,18 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
     selectedDate,
   ]);
 
+
   useEffect(() => {
     let alive = true;
 
-    async function runComparison() {
-      setComparisonError("");
-      setComparisonData(null);
-
-      const compareBounds = compareDescriptor?.bounds;
-      if (!compareBounds?.startISO || !compareBounds?.endISO) {
-        setComparisonLoading(false);
-        return;
-      }
-
-      setComparisonLoading(true);
-
-      try {
-        const result = await loadIntradayPeriod({
-          startISO: compareBounds.startISO,
-          endISO: compareBounds.endISO,
-          mode,
-          availableDates,
-          dailyRainByDate,
-          refreshToken: `comparison-${Date.now()}`,
-          forceRefreshEndDate: true,
-        });
-
-        if (alive) setComparisonData(result);
-      } catch (error) {
-        if (alive) {
-          setComparisonError(
-            error?.message || "Il periodo di confronto non è disponibile.",
-          );
-        }
-      } finally {
-        if (alive) setComparisonLoading(false);
-      }
+    if (!supportsClimatology) {
+      setClimatologyError("");
+      setClimatologyData(null);
+      setClimatologyLoading(false);
+      return () => {
+        alive = false;
+      };
     }
-
-    runComparison();
-
-    return () => {
-      alive = false;
-    };
-  }, [
-    availableDates,
-    compareDescriptor,
-    dailyRainByDate,
-    mode,
-  ]);
-
-
-  useEffect(() => {
-    let alive = true;
 
     async function runClimatology() {
       setClimatologyError("");
@@ -6762,87 +7728,170 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
     dailyRainByDate,
     mode,
     selectedDate,
+    supportsClimatology,
   ]);
 
-  const latestDataTimeLabel = useMemo(() => {
-    if (
-      !showRealtimePulse ||
-      !Number.isFinite(Number(data?.latestTimestamp))
-    ) {
-      return "";
-    }
-
-    const latestDate = new Date(Number(data.latestTimestamp));
-    return `${pad2(latestDate.getHours())}:${pad2(latestDate.getMinutes())}`;
-  }, [data?.latestTimestamp, showRealtimePulse]);
+  const parameterOptions = GROUPS;
 
   const option = useMemo(() => {
     if (!data) return null;
 
-    const baseLegend = {
-      bottom: isMobileChart ? 27 : 36,
-      left: "center",
-      orient: isMobileChart ? "vertical" : "horizontal",
-      itemGap: isMobileChart ? 5 : 18,
-      textStyle: {
-        fontSize: isMobileChart ? 11 : 12,
-        fontWeight: 700,
-        color: "rgba(15, 23, 42, 0.7)",
-      },
+    const baseLegend = isMobileChart
+      ? {
+          bottom: 4,
+          left: "center",
+          orient: "vertical",
+          itemGap: 4,
+          textStyle: {
+            fontSize: 10.5,
+            fontWeight: 750,
+            color: "#475569",
+          },
+        }
+      : {
+          bottom: 10,
+          left: "center",
+          orient: "horizontal",
+          itemGap: 18,
+          itemWidth: 18,
+          itemHeight: 9,
+          textStyle: {
+            fontSize: 11.5,
+            fontWeight: 750,
+            color: "#475569",
+          },
+        };
+
+    const desktopGridBase = {
+      left: 68,
+      right: 30,
+      top: 80,
+      bottom: 82,
+      show: true,
+      borderWidth: 0,
+      backgroundColor: "rgba(248, 250, 252, 0.52)",
     };
 
     const gridNoLegend = isMobileChart
-      ? { left: 50, right: 22, top: 72, bottom: 62, containLabel: false }
-      : { left: 70, right: 34, top: 78, bottom: 92 };
+      ? { left: 50, right: 22, top: 78, bottom: 38, containLabel: false }
+      : {
+          ...desktopGridBase,
+          bottom: 42,
+        };
 
     const gridWithLegend = isMobileChart
-      ? { left: 50, right: 22, top: 78, bottom: 112, containLabel: false }
-      : { left: 70, right: 34, top: 92, bottom: 100 };
+      ? { left: 50, right: 22, top: 78, bottom: 98, containLabel: false }
+      : desktopGridBase;
 
     const toolboxZoom = {
       feature: {
-        dataZoom: { yAxisIndex: "none" },
-        restore: {},
+        restore: { title: "Ripristina" },
+        saveAsImage: {
+          type: "png",
+          name: `meteo-collinas-${mode}-${groupKey}`,
+          backgroundColor: "#ffffff",
+          pixelRatio: 2,
+          title: "Salva grafico",
+        },
       },
-      right: isMobileChart ? 6 : 12,
-      top: isMobileChart ? 38 : 38,
-      itemSize: isMobileChart ? 16 : 18,
-      itemGap: isMobileChart ? 8 : 10,
+      right: isMobileChart ? 6 : 14,
+      top: isMobileChart ? 38 : 13,
+      itemSize: isMobileChart ? 16 : 17,
+      itemGap: isMobileChart ? 8 : 9,
+      iconStyle: {
+        borderColor: "#64748b",
+        borderWidth: 1.3,
+      },
+      emphasis: {
+        iconStyle: {
+          borderColor: "#2563eb",
+        },
+      },
     };
+
+    const rollingEnd = n(data?.latestTimestamp);
+    const rollingStart = n(data?.windowStartTimestamp);
+    const chartReferenceStart = Number.isFinite(rollingStart)
+      ? rollingStart
+      : isoToLocalDate(bounds.startISO, 0)?.getTime();
+    const chartReferenceEnd = mode === "day"
+      ? (isoToLocalDate(addDaysISO(bounds.endISO, 1), 0)?.getTime() ?? 0) - 1
+      : Number.isFinite(rollingEnd)
+        ? rollingEnd
+        : isoToLocalDate(addDaysISO(bounds.endISO, 1), 0)?.getTime();
+    const chartDateReference = formatChartDateReference(
+      mode,
+      chartReferenceStart,
+      chartReferenceEnd,
+      selectedDate,
+    );
 
     const chartTitle = (text) => ({
       text,
+      subtext: chartDateReference,
       left: "center",
-      top: isMobileChart ? 5 : 8,
+      top: isMobileChart ? 5 : 10,
+      itemGap: isMobileChart ? 3 : 4,
       textStyle: {
         fontSize: isVeryNarrowChart ? 16 : isMobileChart ? 17 : 18,
-        fontWeight: 700,
+        fontWeight: 800,
         lineHeight: isMobileChart ? 20 : 22,
-        color: "#3f3f46",
+        color: "#0f172a",
+      },
+      subtextStyle: {
+        fontSize: isMobileChart ? 9 : 10,
+        fontWeight: 650,
+        color: "#64748b",
       },
     });
 
     const xAxis = {
       type: "time",
-      min: isoToLocalDate(bounds.startISO, 0)?.getTime(),
-      max: isoToLocalDate(addDaysISO(bounds.endISO, 1), 0)?.getTime(),
+      min:
+        Number.isFinite(rollingStart)
+          ? rollingStart
+          : isoToLocalDate(bounds.startISO, 0)?.getTime(),
+      max:
+        mode === "day"
+          ? (isoToLocalDate(addDaysISO(bounds.endISO, 1), 0)?.getTime() ?? 0) - 1
+          : Number.isFinite(rollingEnd)
+            ? rollingEnd
+            : isoToLocalDate(addDaysISO(bounds.endISO, 1), 0)?.getTime(),
+      splitNumber:
+        mode === "day" ? 8 : mode === "week" ? 7 : mode === "month" ? 10 : undefined,
+      axisLine: {
+        show: true,
+        lineStyle: { color: "#cbd5e1", width: 1 },
+      },
+      axisTick: { show: false },
+      splitLine: { show: false },
       axisLabel: {
         hideOverlap: true,
-        fontSize: isMobileChart ? 10 : 12,
+        fontSize: isMobileChart ? 10 : 11,
+        fontWeight: 650,
+        color: "#64748b",
         margin: isMobileChart ? 8 : 10,
-        formatter: (value) => {
-          const d = new Date(value);
-          const dd = pad2(d.getDate());
-          const mm = pad2(d.getMonth() + 1);
-          const hh = pad2(d.getHours());
-          const mi = pad2(d.getMinutes());
-
-          if (mode === "day") return `${hh}:${mi}`;
-          if (mode === "month") return `${dd}/${mm}`;
-          return `${dd}/${mm} ${hh}`;
-        },
+        formatter:
+          mode === "day"
+            ? "{HH}:{mm}"
+            : {
+                year: "{dd}/{MM}",
+                month: "{dd}/{MM}",
+                day: "{dd}/{MM}",
+                hour: "{HH}:{mm}",
+                minute: "{HH}:{mm}",
+                second: "{HH}:{mm}",
+                millisecond: "{HH}:{mm}",
+                none: "{dd}/{MM}",
+              },
       },
     };
+
+    const dayBoundaryMarkLine = makeDailyBoundaryMarkLine(
+      mode,
+      xAxis.min,
+      xAxis.max,
+    );
 
     const hoverAxisPointer = {
       type: "line",
@@ -6861,6 +7910,17 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
       trigger: "axis",
       triggerOn: "mousemove|click",
       confine: true,
+      backgroundColor: "rgba(255, 255, 255, 0.98)",
+      borderColor: "#dbe3ec",
+      borderWidth: 1,
+      padding: [9, 11],
+      extraCssText:
+        "border-radius:10px;box-shadow:0 10px 28px rgba(15,23,42,.12);",
+      textStyle: {
+        color: "#0f172a",
+        fontSize: 11,
+        fontWeight: 650,
+      },
       axisPointer: hoverAxisPointer,
       valueFormatter: (value) => {
         if (value === null || value === undefined) return "—";
@@ -6874,13 +7934,28 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
       name,
       nameLocation: "middle",
       nameRotate: 90,
-      nameGap: isMobileChart ? 34 : 43,
-      nameTextStyle: { fontSize: isMobileChart ? 10 : 12 },
+      nameGap: isMobileChart ? 34 : 42,
+      nameTextStyle: {
+        fontSize: isMobileChart ? 10 : 11,
+        fontWeight: 700,
+        color: "#64748b",
+      },
+      axisLine: { show: false },
+      axisTick: { show: false },
       axisLabel: {
-        fontSize: isMobileChart ? 10 : 12,
+        fontSize: isMobileChart ? 10 : 11,
+        fontWeight: 650,
+        color: "#64748b",
         formatter: (value) => Number(value).toFixed(1),
       },
-      splitLine: { show: true },
+      splitLine: {
+        show: true,
+        lineStyle: {
+          color: "rgba(148, 163, 184, 0.24)",
+          type: "dashed",
+          width: 1,
+        },
+      },
       splitNumber: 6,
       ...extra,
     });
@@ -6891,10 +7966,18 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
       position: "right",
       nameLocation: "middle",
       nameRotate: -90,
-      nameGap: isMobileChart ? 34 : 43,
-      nameTextStyle: { fontSize: isMobileChart ? 10 : 12 },
+      nameGap: isMobileChart ? 34 : 42,
+      nameTextStyle: {
+        fontSize: isMobileChart ? 10 : 11,
+        fontWeight: 700,
+        color: "#64748b",
+      },
+      axisLine: { show: false },
+      axisTick: { show: false },
       axisLabel: {
-        fontSize: isMobileChart ? 10 : 12,
+        fontSize: isMobileChart ? 10 : 11,
+        fontWeight: 650,
+        color: "#64748b",
         formatter: (value) => Number(value).toFixed(1),
       },
       splitLine: { show: false },
@@ -6913,11 +7996,12 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
       animationDuration: 250,
       animationDurationUpdate: 250,
       toolbox: toolboxZoom,
-      dataZoom: makePeriodDataZoom(mode, isMobileChart),
+      dataZoom: makePeriodDataZoom(),
       xAxis,
     };
 
     if (groupKey === "temp") {
+
       const mm = minMaxFrom([...data.temp, ...data.dew]) || { min: 0, max: 1 };
       const axis = axisNice(mm.min - 1, mm.max + 1, 6);
 
@@ -6951,7 +8035,10 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
             connectNulls: false,
             smooth: false,
             sampling: "lttb",
-            lineStyle: { width: 2 },
+            lineStyle: { width: 2.3, color: "#f97316" },
+            itemStyle: { color: "#f97316" },
+            emphasis: { focus: "series" },
+            ...(dayBoundaryMarkLine ? { markLine: dayBoundaryMarkLine } : {}),
           },
           {
             name: "Punto di rugiada (°C)",
@@ -6961,7 +8048,9 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
             connectNulls: false,
             smooth: false,
             sampling: "lttb",
-            lineStyle: { width: 2 },
+            lineStyle: { width: 2.3, color: "#06b6d4" },
+            itemStyle: { color: "#06b6d4" },
+            emphasis: { focus: "series" },
           },
           ...(pulseTemp ? [pulseTemp] : []),
           ...(pulseDew ? [pulseDew] : []),
@@ -6970,6 +8059,7 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
     }
 
     if (groupKey === "rain") {
+
       const pulseRain = showRealtimePulse
         ? makeRealtimePulseSeries(data.rainH, data.latestTimestamp, 0)
         : null;
@@ -6977,16 +8067,15 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
         ? makeRealtimePulseSeries(data.rainCum, data.latestTimestamp, 1)
         : null;
       const rainStepLabel =
-        mode === "day" ? "Pioggia 15 min (mm)" : "Pioggia oraria (mm)";
-      const rainAxisLabel = mode === "day" ? "mm/15m" : "mm/h";
+        mode === "day" || mode === "week"
+          ? "Pioggia 15 min (mm)"
+          : "Pioggia oraria (mm)";
+      const rainAxisLabel =
+        mode === "day" || mode === "week" ? "mm/15m" : "mm/h";
 
       return {
         ...common,
-        title: chartTitle(
-          isMobileChart
-            ? `Precipitazioni • ${fmt1(data.rainTotal)} mm`
-            : `Precipitazioni • Totale periodo: ${fmt1(data.rainTotal)} mm`,
-        ),
+        title: chartTitle("Precipitazioni"),
         grid: gridWithLegend,
         tooltip: tooltipCommon,
         legend: {
@@ -7001,6 +8090,11 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
             data: chartPairs(data.rainH),
             yAxisIndex: 0,
             barMaxWidth: mode === "day" ? 12 : 10,
+            itemStyle: {
+              color: "#38bdf8",
+              borderRadius: [3, 3, 0, 0],
+            },
+            ...(dayBoundaryMarkLine ? { markLine: dayBoundaryMarkLine } : {}),
           },
           {
             name: "Cumulata (mm)",
@@ -7011,7 +8105,9 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
             connectNulls: false,
             smooth: false,
             sampling: "lttb",
-            lineStyle: { width: 2 },
+            lineStyle: { width: 2.3, color: "#2563eb" },
+            itemStyle: { color: "#2563eb" },
+            emphasis: { focus: "series" },
           },
           ...(pulseRain ? [pulseRain] : []),
           ...(pulseCum ? [pulseCum] : []),
@@ -7020,6 +8116,7 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
     }
 
     if (groupKey === "rh") {
+
       const pulse = showRealtimePulse
         ? makeRealtimePulseSeries(data.rh, data.latestTimestamp, 0)
         : null;
@@ -7039,7 +8136,10 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
             connectNulls: false,
             smooth: false,
             sampling: "lttb",
-            lineStyle: { width: 2 },
+            lineStyle: { width: 2.3, color: "#06b6d4" },
+            itemStyle: { color: "#06b6d4" },
+            emphasis: { focus: "series" },
+            ...(dayBoundaryMarkLine ? { markLine: dayBoundaryMarkLine } : {}),
           },
           ...(pulse ? [pulse] : []),
         ],
@@ -7047,6 +8147,7 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
     }
 
     if (groupKey === "wind") {
+
       const pulseWind = showRealtimePulse
         ? makeRealtimePulseSeries(data.wind, data.latestTimestamp, 0)
         : null;
@@ -7126,7 +8227,10 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
             smooth: false,
             sampling: "lttb",
             yAxisIndex: 0,
-            lineStyle: { width: 2 },
+            lineStyle: { width: 2.3, color: "#8b5cf6" },
+            itemStyle: { color: "#8b5cf6" },
+            emphasis: { focus: "series" },
+            ...(dayBoundaryMarkLine ? { markLine: dayBoundaryMarkLine } : {}),
           },
           {
             name: "Raffiche (km/h)",
@@ -7137,14 +8241,17 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
             smooth: false,
             sampling: "lttb",
             yAxisIndex: 0,
-            lineStyle: { width: 2 },
+            lineStyle: { width: 2.1, color: "#f59e0b" },
+            itemStyle: { color: "#f59e0b" },
+            emphasis: { focus: "series" },
           },
           {
             name: "Direzione",
             type: "scatter",
             data: chartPairs(data.dirMean),
             yAxisIndex: 1,
-            symbolSize: mode === "month" ? 3 : 5,
+            symbolSize: 5,
+            itemStyle: { color: "#334155" },
           },
           ...(pulseWind ? [pulseWind] : []),
           ...(pulseGust ? [pulseGust] : []),
@@ -7154,6 +8261,7 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
     }
 
     if (groupKey === "press") {
+
       const mm = minMaxFrom(data.press) || { min: 1010, max: 1020 };
       const axis = axisNice(mm.min - 1.5, mm.max + 1.5, 6);
       const pulse = showRealtimePulse
@@ -7179,7 +8287,10 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
             connectNulls: false,
             smooth: false,
             sampling: "lttb",
-            lineStyle: { width: 2 },
+            lineStyle: { width: 2.3, color: "#2563eb" },
+            itemStyle: { color: "#2563eb" },
+            emphasis: { focus: "series" },
+            ...(dayBoundaryMarkLine ? { markLine: dayBoundaryMarkLine } : {}),
           },
           ...(pulse ? [pulse] : []),
         ],
@@ -7187,6 +8298,7 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
     }
 
     if (groupKey === "uv") {
+
       const pulse = showRealtimePulse
         ? makeRealtimePulseSeries(data.uv, data.latestTimestamp, 0)
         : null;
@@ -7206,12 +8318,16 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
             connectNulls: false,
             smooth: false,
             sampling: "lttb",
-            lineStyle: { width: 2 },
+            lineStyle: { width: 2.3, color: "#7c3aed" },
+            itemStyle: { color: "#7c3aed" },
+            emphasis: { focus: "series" },
+            ...(dayBoundaryMarkLine ? { markLine: dayBoundaryMarkLine } : {}),
           },
           ...(pulse ? [pulse] : []),
         ],
       };
     }
+
 
     const pulse = showRealtimePulse
       ? makeRealtimePulseSeries(data.solar, data.latestTimestamp, 0)
@@ -7232,7 +8348,10 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
           connectNulls: false,
           smooth: false,
           sampling: "lttb",
-          lineStyle: { width: 2 },
+          lineStyle: { width: 2.3, color: "#f59e0b" },
+            itemStyle: { color: "#f59e0b" },
+            emphasis: { focus: "series" },
+          ...(dayBoundaryMarkLine ? { markLine: dayBoundaryMarkLine } : {}),
         },
         ...(pulse ? [pulse] : []),
       ],
@@ -7252,357 +8371,287 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
     ? groupKey === "wind"
       ? 370
       : 340
-    : 420;
+    : 390;
+
 
   return (
     <div className="periodCard" aria-label={periodTitle}>
-      <ArchivePeriodTable selectedDate={selectedDate} />
+      <div className="dataHeader">
+        <h2>{dataTitle}</h2>
+      </div>
 
-      <div className="periodHead">
-        <div className="leftControls desktopControls">
-          <div className="menu leftMenu">
-            <span className="menuLabel">Tipo di grafico</span>
-            <CustomSelect
-              value={mode}
-              options={PERIODS}
-              onChange={setMode}
-              ariaLabel="Tipo di grafico"
-            />
+      <div className="dateNavigator">
+        <div className="navControl navControlLeft">
+          <span className="navControlLabel">Intervallo</span>
+          <CustomSelect
+            value={mode}
+            options={PERIODS}
+            onChange={changeMode}
+            ariaLabel="Seleziona il periodo dei dati"
+            variant="dark"
+          />
+        </div>
+
+        <div className="dateNavigatorCenter">
+          <button
+            type="button"
+            className="arrow"
+            aria-label="Periodo precedente"
+            title="Periodo precedente"
+            disabled={!canGoBack}
+            onClick={() => changePeriod(-1)}
+          >
+            ←
+          </button>
+
+          <div className="dateText">
+            <strong>{periodLabel}</strong>
+            <span>{periodDurationLabel}</span>
           </div>
 
           <button
             type="button"
-            className="todayButton"
-            onClick={goToToday}
-            disabled={!latestAvailableDate || isTodayView}
-            aria-label="Torna al grafico di oggi"
-            title="Torna al grafico di oggi"
+            className="arrow"
+            aria-label="Periodo successivo"
+            title="Periodo successivo"
+            disabled={!canGoForward}
+            onClick={() => changePeriod(1)}
           >
-            Oggi
+            →
           </button>
         </div>
 
-        <div className="periodText">
-          <div className="periodTitle">{periodTitle}</div>
-          <div className="periodSub">
-            Live data{latestDataTimeLabel ? ` · ${latestDataTimeLabel}` : ""}
-          </div>
-        </div>
-
-        <div className="menu parameterMenu rightMenu desktopControls">
-          <span className="menuLabel">Seleziona parametro</span>
+        <div className="navControl navControlRight">
+          <span className="navControlLabel">Parametro</span>
           <CustomSelect
             value={groupKey}
-            options={GROUPS}
+            options={parameterOptions}
             onChange={setGroupKey}
             ariaLabel="Seleziona parametro"
+            variant="dark"
           />
         </div>
-      </div>
-
-      <div className="dateNavigator">
-        <button
-          type="button"
-          className="arrow"
-          aria-label="Periodo precedente"
-          title="Periodo precedente"
-          disabled={!canGoBack}
-          onClick={() => changePeriod(-1)}
-        >
-          ←
-        </button>
-
-        <div className="dateText">
-          <strong>{periodLabel}</strong>
-          <span>
-            {mode === "day"
-              ? "24 ore"
-              : mode === "week"
-                ? "7 giorni"
-                : "mese di calendario"}
-          </span>
-        </div>
-
-        <button
-          type="button"
-          className="arrow"
-          aria-label="Periodo successivo"
-          title="Periodo successivo"
-          disabled={!canGoForward}
-          onClick={() => changePeriod(1)}
-        >
-          →
-        </button>
       </div>
 
       {!loading && !err && data && (
         <PeriodSummary data={data} mode={mode} />
       )}
 
-      <div className="mobileChartControls" aria-label="Selezione del grafico">
-        <div className="leftControls">
-          <div className="menu leftMenu">
-            <span className="menuLabel">Tipo di grafico</span>
-            <CustomSelect
-              value={mode}
-              options={PERIODS}
-              onChange={setMode}
-              ariaLabel="Tipo di grafico"
+      <section className="chartPanel" aria-label="Andamento del periodo">
+        <div className="chartPanelHead">
+          <span className="chartPanelKicker">Andamento del periodo</span>
+          <h3>{periodTitle}</h3>
+        </div>
+
+        <div className="chartArea">
+          {loading && <div className="msg">Caricamento del grafico…</div>}
+          {!loading && err && <div className="msg">{err}</div>}
+          {!loading && !err && option && (
+            <ReactECharts
+              option={option}
+              style={{ height: chartHeight, width: "100%" }}
+              notMerge={true}
+              lazyUpdate={true}
             />
-          </div>
-
-          <button
-            type="button"
-            className="todayButton"
-            onClick={goToToday}
-            disabled={!latestAvailableDate || isTodayView}
-            aria-label="Torna al grafico di oggi"
-            title="Torna al grafico di oggi"
-          >
-            Oggi
-          </button>
+          )}
         </div>
+      </section>
 
-        <div className="menu parameterMenu rightMenu">
-          <span className="menuLabel">Seleziona parametro</span>
-          <CustomSelect
-            value={groupKey}
-            options={GROUPS}
-            onChange={setGroupKey}
-            ariaLabel="Seleziona parametro"
-          />
-        </div>
-      </div>
 
-      <div className="chartArea">
-        {loading && <div className="msg">Caricamento del grafico…</div>}
-        {!loading && err && <div className="msg">{err}</div>}
-        {!loading && !err && option && (
-          <ReactECharts
-            option={option}
-            style={{ height: chartHeight, width: "100%" }}
-            notMerge={true}
-            lazyUpdate={true}
-          />
-        )}
-      </div>
-
-      <ComparisonChart
-        mode={mode}
-        groupKey={groupKey}
-        currentData={data}
-        comparisonData={comparisonData}
-        currentBounds={bounds}
-        comparisonBounds={compareDescriptor?.bounds || null}
-        descriptor={compareDescriptor}
-        options={comparisonOptions}
-        compareKey={compareKey}
-        onCompareChange={setCompareKey}
-        loading={loading || comparisonLoading}
-        error={comparisonError}
-        isMobile={isMobileChart}
-      />
-
-      <ClimatologyChart
-        mode={mode}
-        groupKey={groupKey}
-        currentData={data}
-        climatologyData={climatologyData}
-        currentBounds={bounds}
-        loading={loading || climatologyLoading}
-        error={climatologyError}
-        isMobile={isMobileChart}
-      />
+      {supportsClimatology && (
+        <ClimatologyChart
+          mode={mode}
+          groupKey={groupKey}
+          currentData={data}
+          climatologyData={climatologyData}
+          currentBounds={bounds}
+          loading={loading || climatologyLoading}
+          error={climatologyError}
+          isMobile={isMobileChart}
+        />
+      )}
 
       <style jsx>{`
         .periodCard {
-          border: 1px solid #e4e7eb;
-          border-radius: 22px;
-          background: rgba(255, 255, 255, 0.97);
-          box-shadow: 0 9px 28px rgba(15, 23, 42, 0.06);
+          border: 1px solid #dbe5ef;
+          border-radius: 24px;
+          background: #fff;
+          box-shadow: 0 12px 34px rgba(15, 23, 42, 0.075);
           overflow: hidden;
         }
 
-        .periodHead {
-          position: relative;
-          z-index: 30;
-          min-height: 104px;
-          padding: 17px 18px;
+        .dataHeader {
+          padding: 16px 24px 14px;
           display: grid;
-          grid-template-columns: 1fr auto 1fr;
-          align-items: center;
-          gap: 18px;
-          border-bottom: 1px solid #eef0f2;
-        }
-
-        .periodText {
-          grid-column: 2;
+          justify-items: center;
+          gap: 0;
+          border-bottom: 1px solid #e7edf4;
+          background:
+            radial-gradient(480px 110px at 50% -55%, rgba(37, 99, 235, 0.09), transparent 72%),
+            linear-gradient(180deg, #ffffff, #fbfdff);
           text-align: center;
         }
 
-        .periodTitle {
-          font-size: 25px;
+
+        .dataHeader h2 {
+          margin: 0;
+          font-size: 24px;
           font-weight: 950;
+          line-height: 1.08;
           letter-spacing: -0.025em;
-          line-height: 1.05;
-          color: #0f172a;
+          color: #0b1f45;
         }
 
-        .periodSub {
-          margin-top: 6px;
-          font-size: 11px;
-          font-weight: 850;
-          color: #dc2626;
-          letter-spacing: 0.025em;
-        }
 
-        .menu {
-          display: grid;
-          gap: 5px;
-        }
 
-        .mobileChartControls {
-          display: none;
-        }
 
-        .leftControls {
-          grid-column: 1;
-          justify-self: start;
-          display: flex;
-          align-items: end;
-          gap: 9px;
-        }
-
-        .leftMenu {
-          width: 210px;
-        }
-
-        .todayButton {
-          width: 70px;
-          height: 42px;
-          flex: 0 0 70px;
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          border: 1px solid #dde2e8;
-          border-radius: 13px;
-          background: #fff;
-          color: #0f172a;
-          font-family: inherit;
-          font-size: 12px;
-          font-weight: 900;
-          line-height: 1;
-          cursor: pointer;
-          transition:
-            transform 120ms ease,
-            border-color 120ms ease,
-            background 120ms ease,
-            color 120ms ease;
-        }
-
-        .todayButton:hover:not(:disabled) {
-          transform: translateY(-1px);
-          border-color: #bfc8d3;
-          background: #f8fafc;
-        }
-
-        .todayButton:focus-visible {
-          outline: none;
-          border-color: #aab5c3;
-          box-shadow: 0 0 0 3px rgba(15, 23, 42, 0.06);
-        }
-
-        .todayButton:disabled {
-          background: #f8fafc;
-          color: rgba(15, 23, 42, 0.38);
-          cursor: default;
-        }
-
-        .rightMenu {
-          grid-column: 3;
-          width: 290px;
-          justify-self: end;
-        }
-
-        .parameterMenu {
-          max-width: 290px;
-        }
-
-        .menuLabel {
-          width: 100%;
-          display: block;
-          font-size: 10px;
-          font-weight: 950;
-          color: rgba(15, 23, 42, 0.62);
-          text-transform: uppercase;
-          letter-spacing: 0.04em;
-          text-align: center;
-        }
 
         .dateNavigator {
           position: relative;
+          min-height: 84px;
+          padding: 11px 20px;
+          display: grid;
+          grid-template-columns: 220px minmax(0, 1fr) 220px;
+          align-items: center;
+          gap: 14px;
+          background:
+            radial-gradient(520px 120px at 50% -35%, rgba(55, 145, 255, 0.45), transparent 70%),
+            linear-gradient(100deg, #0758c9, #06439a 58%, #06377c);
+          color: #fff;
+        }
+
+        .navControl {
+          min-width: 0;
+          display: grid;
+          gap: 5px;
+          position: relative;
           z-index: 2;
-          min-height: 66px;
-          padding: 9px 18px;
-          display: flex;
+        }
+
+        .navControlLeft {
+          grid-column: 1;
+          justify-self: start;
+          width: 190px;
+        }
+
+        .navControlRight {
+          grid-column: 3;
+          justify-self: end;
+          width: 220px;
+        }
+
+        .navControlLabel {
+          font-size: 7.5px;
+          font-weight: 950;
+          color: rgba(255, 255, 255, 0.72);
+          text-transform: uppercase;
+          letter-spacing: 0.075em;
+          text-align: center;
+        }
+
+        .dateNavigatorCenter {
+          position: absolute;
+          left: 50%;
+          top: 50%;
+          transform: translate(-50%, -50%);
+          min-width: 0;
+          display: grid;
+          grid-template-columns: 42px auto 42px;
           align-items: center;
           justify-content: center;
-          gap: 14px;
-          border-bottom: 1px solid #f0f1f3;
-          background: #fbfcfd;
+          gap: 8px;
+          z-index: 1;
         }
 
         .arrow {
-          width: 40px;
-          height: 40px;
-          flex: 0 0 auto;
+          width: 42px;
+          height: 42px;
+          flex: 0 0 42px;
           display: inline-flex;
           align-items: center;
           justify-content: center;
-          border: 1px solid #dfe4ea;
-          border-radius: 12px;
-          background: #fff;
-          color: #0f172a;
-          font-size: 20px;
-          font-weight: 900;
+          border: 1px solid rgba(255, 255, 255, 0.14);
+          border-radius: 50%;
+          background: rgba(255, 255, 255, 0.12);
+          color: #fff;
+          font-size: 22px;
+          font-weight: 800;
           cursor: pointer;
           transition:
             transform 120ms ease,
-            border-color 120ms ease,
             background 120ms ease;
         }
 
         .arrow:hover:not(:disabled) {
           transform: translateY(-1px);
-          border-color: #bfc8d3;
-          background: #f8fafc;
+          background: rgba(255, 255, 255, 0.19);
         }
 
         .arrow:disabled {
-          opacity: 0.34;
+          opacity: 0.28;
           cursor: not-allowed;
         }
 
         .dateText {
-          min-width: 280px;
-          text-align: center;
+          min-width: 270px;
           display: grid;
-          gap: 2px;
+          justify-items: center;
+          gap: 3px;
+          text-align: center;
         }
 
         .dateText strong {
           font-size: 14px;
           font-weight: 950;
-          color: #0f172a;
           text-transform: capitalize;
         }
 
         .dateText span {
-          font-size: 10px;
+          font-size: 9px;
           font-weight: 800;
-          color: rgba(15, 23, 42, 0.52);
+          color: rgba(255, 255, 255, 0.78);
           text-transform: uppercase;
-          letter-spacing: 0.045em;
+          letter-spacing: 0.06em;
+        }
+
+        .chartPanel {
+          margin: 0 20px 18px;
+          overflow: hidden;
+          border: 1px solid #dce5ef;
+          border-radius: 18px;
+          background: #fff;
+          box-shadow: 0 8px 24px rgba(15, 23, 42, 0.045);
+        }
+
+        .chartPanelHead {
+          min-height: 68px;
+          padding: 11px 18px 10px;
+          display: grid;
+          justify-items: center;
+          align-content: center;
+          gap: 2px;
+          border-bottom: 1px solid #edf1f5;
+          background:
+            radial-gradient(420px 90px at 50% -45%, rgba(37, 99, 235, 0.08), transparent 72%),
+            linear-gradient(180deg, #ffffff, #fbfdff);
+          text-align: center;
+        }
+
+        .chartPanelKicker {
+          font-size: 8px;
+          font-weight: 950;
+          color: #64748b;
+          text-transform: uppercase;
+          letter-spacing: 0.07em;
+        }
+
+        .chartPanelHead h3 {
+          margin: 0;
+          font-size: 20px;
+          font-weight: 950;
+          line-height: 1.08;
+          letter-spacing: -0.025em;
+          color: #0b1f45;
         }
 
         .chartArea {
@@ -7610,9 +8659,10 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
           z-index: 1;
           width: 100%;
           min-width: 0;
-          min-height: 430px;
-          padding: 0 8px 2px;
+          min-height: 400px;
+          padding: 4px 10px 8px;
           box-sizing: border-box;
+          background: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
         }
 
         .msg {
@@ -7627,41 +8677,32 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
           font-weight: 850;
         }
 
-        @media (max-width: 1260px) {
-          .periodHead {
-            grid-template-columns: minmax(0, 1fr);
-            grid-template-areas:
-              "title"
-              "left"
-              "right";
-            gap: 16px;
+
+        @media (max-width: 1050px) and (min-width: 721px) {
+          .dateNavigator {
+            grid-template-columns: 180px minmax(0, 1fr) 210px;
+            gap: 10px;
+            padding-left: 14px;
+            padding-right: 14px;
           }
 
-          .periodText {
-            grid-area: title;
-            grid-column: 1;
-            justify-self: center;
-            width: min(100%, 620px);
-          }
+          .navControlLeft { width: 170px; }
+          .navControlRight { width: 205px; }
 
-          .leftControls {
-            grid-area: left;
-            grid-column: 1;
-            justify-self: center;
+          .dateNavigatorCenter {
+            grid-template-columns: 40px auto 40px;
             justify-content: center;
-            width: min(100%, 420px);
+            gap: 7px;
           }
 
-          .rightMenu {
-            grid-area: right;
-            grid-column: 1;
-            justify-self: center;
-            width: min(100%, 420px);
-            max-width: 420px;
+          .arrow {
+            width: 40px;
+            height: 40px;
+            flex-basis: 40px;
           }
 
-          .leftMenu {
-            width: min(100%, 320px);
+          .dateText {
+            min-width: 0;
           }
         }
 
@@ -7670,110 +8711,85 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
             border-radius: 18px;
           }
 
-          .periodHead {
-            min-height: 0;
-            padding: 14px 12px;
-            grid-template-areas: "title";
-            gap: 0;
+          .dataHeader {
+            padding: 15px 12px 13px;
           }
 
-          .periodHead .desktopControls {
-            display: none;
+          .dataHeader h2 {
+            font-size: 21px;
           }
 
-          .mobileChartControls {
-            position: relative;
-            z-index: 25;
-            padding: 12px 10px 10px;
-            display: grid;
-            gap: 10px;
-            border-bottom: 1px solid #eef0f2;
-            background: #fbfcfd;
-          }
 
-          .mobileChartControls .leftControls {
-            grid-area: auto;
-            grid-column: auto;
-            justify-self: stretch;
-            justify-content: stretch;
-          }
-
-          .mobileChartControls .rightMenu {
-            grid-area: auto;
-            grid-column: auto;
-            justify-self: stretch;
-          }
-
-          .periodText {
-            width: 100%;
-          }
-
-          .periodTitle {
-            font-size: 22px;
-            line-height: 1.08;
-            overflow-wrap: anywhere;
-          }
-
-          .periodSub {
-            margin-top: 5px;
-          }
-
-          .leftControls {
-            width: 100%;
-            max-width: none;
-            display: grid;
-            grid-template-columns: minmax(0, 1fr) 68px;
-            align-items: end;
-            gap: 8px;
-          }
-
-          .menu,
-          .leftMenu,
-          .rightMenu,
-          .parameterMenu {
-            width: 100%;
-            max-width: none;
-            min-width: 0;
-          }
-
-          .todayButton {
-            width: 68px;
-            height: 42px;
-            min-width: 0;
-            flex-basis: auto;
-          }
-
-          .menuLabel {
-            text-align: center;
-          }
 
           .dateNavigator {
-            min-height: 72px;
+            min-height: 0;
+            padding: 10px;
+            grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+            gap: 9px;
+          }
+
+          .navControlLeft,
+          .navControlRight {
+            grid-row: 1;
+          }
+
+          .dateNavigatorCenter {
+            position: static;
+            transform: none;
+            grid-column: 1 / -1;
+            grid-row: 2;
+            width: 100%;
+            display: grid;
+            grid-template-columns: 38px minmax(0, 1fr) 38px;
             gap: 8px;
-            padding: 10px 8px;
+          }
+
+          .navControlLeft,
+          .navControlRight {
+            width: 100%;
+          }
+
+          .navControlLabel {
+            font-size: 7px;
           }
 
           .dateText {
             min-width: 0;
-            flex: 1;
-            padding: 0 3px;
           }
 
           .dateText strong {
-            display: block;
             font-size: 12px;
             line-height: 1.2;
-            overflow-wrap: anywhere;
           }
 
           .dateText span {
-            font-size: 9px;
+            font-size: 8px;
           }
 
           .arrow {
             width: 38px;
             height: 38px;
+            flex-basis: 38px;
           }
+
+          .chartPanel {
+            margin: 0 10px 12px;
+            border-radius: 14px;
+          }
+
+          .chartPanelHead {
+            min-height: 64px;
+            padding: 10px 10px 8px;
+          }
+
+          .chartPanelKicker {
+            font-size: 7px;
+          }
+
+          .chartPanelHead h3 {
+            font-size: 18px;
+          }
+
 
           .chartArea {
             min-height: 340px;
@@ -7784,45 +8800,7 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
           .msg {
             min-height: 310px;
           }
-        }
 
-        @media (max-width: 430px) {
-          .periodHead {
-            padding-left: 10px;
-            padding-right: 10px;
-          }
-
-          .periodTitle {
-            font-size: 20px;
-          }
-
-          .leftControls {
-            grid-template-columns: minmax(0, 1fr) 62px;
-            gap: 7px;
-          }
-
-          .todayButton {
-            width: 62px;
-            font-size: 11px;
-          }
-
-          .menuLabel {
-            font-size: 9px;
-          }
-
-          .dateNavigator {
-            padding-left: 6px;
-            padding-right: 6px;
-          }
-
-          .dateText strong {
-            font-size: 11.5px;
-          }
-
-          .arrow {
-            width: 36px;
-            height: 36px;
-          }
         }
       `}</style>
     </div>
