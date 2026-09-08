@@ -35,23 +35,10 @@ function findMonthlyOverride(overrides, ym, field) {
 }
 
 export async function getStaticPaths() {
-  const rows = readDaily();
-
-  const ymSet = new Set(
-    rows
-      .map((r) => String(r?.date ?? "").trim())
-      .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d))
-      .map((d) => d.slice(0, 7))
-  );
-
-  const paths = Array.from(ymSet)
-    .sort()
-    .map((ym) => {
-      const [year, month] = ym.split("-");
-      return { params: { year, month } };
-    });
-
-  return { paths, fallback: false };
+  return {
+    paths: [],
+    fallback: "blocking",
+  };
 }
 
 export async function getStaticProps({ params }) {
@@ -65,6 +52,10 @@ export async function getStaticProps({ params }) {
   const days = rows
     .filter((r) => String(r?.date ?? "").startsWith(ym + "-"))
     .sort((a, b) => String(a.date).localeCompare(String(b.date)));
+
+  if (!days.length) {
+    return { notFound: true };
+  }
 
   const monthsInYear = Array.from(
     new Set(
