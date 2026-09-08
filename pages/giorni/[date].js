@@ -21,17 +21,24 @@ function readIntraday(date) {
 }
 
 export async function getStaticPaths() {
-  const rows = readDaily();
-  return { paths: rows.map((r) => ({ params: { date: r.date } })), fallback: false };
+  return {
+    paths: [],
+    fallback: "blocking",
+  };
 }
 
 export async function getStaticProps({ params }) {
   const rows = readDaily().sort((a, b) => String(a?.date || "").localeCompare(String(b?.date || "")));
   const ix = rows.findIndex((r) => r.date === params.date);
-  const day = ix >= 0 ? rows[ix] : null;
+
+  if (ix < 0) {
+    return { notFound: true };
+  }
+
+  const day = rows[ix];
 
   const prev = ix > 0 ? rows[ix - 1]?.date ?? null : null;
-  const next = ix >= 0 && ix < rows.length - 1 ? rows[ix + 1]?.date ?? null : null;
+  const next = ix < rows.length - 1 ? rows[ix + 1]?.date ?? null : null;
 
   const intraday = readIntraday(params.date);
 
