@@ -726,7 +726,7 @@ export async function getStaticProps() {
       dailyRainByDate,
       annualDataByYear,
     },
-    revalidate: 300,
+    revalidate: 60,
   };
 }
 

@@ -24,7 +24,7 @@ export async function getStaticProps({ params }) {
   if (ix < 0) {
     return {
       notFound: true,
-      revalidate: 300,
+      revalidate: 60,
     };
   }
 

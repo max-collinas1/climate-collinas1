@@ -55,7 +55,7 @@ export async function getStaticProps() {
         : null,
       dailyRows,
     },
-    revalidate: 300,
+    revalidate: 60,
   };
 }
 

@@ -45,7 +45,7 @@ export async function getStaticProps() {
         ? intradayDates[intradayDates.length - 1]
         : null,
     },
-    revalidate: 300,
+    revalidate: 60,
   };
 }
 

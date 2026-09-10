@@ -53,7 +53,7 @@ export async function getStaticProps({ params }) {
   if (!days.length) {
     return {
       notFound: true,
-      revalidate: 300,
+      revalidate: 60,
     };
   }
 
