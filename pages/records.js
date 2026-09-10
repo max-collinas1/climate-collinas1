@@ -1,37 +1,18 @@
-import fs from "fs";
-import path from "path";
 import Link from "next/link";
 import { Fragment, useMemo, useState } from "react";
 import SiteLayout from "../components/SiteLayout";
 import SiteHeader from "../components/SiteHeader";
-
-// -------------------- data load --------------------
-function readJsonFile(relPath, fallback) {
-  const filePath = path.join(process.cwd(), relPath);
-  if (!fs.existsSync(filePath)) return fallback;
-
-  try {
-    return JSON.parse(fs.readFileSync(filePath, "utf8"));
-  } catch {
-    return fallback;
-  }
-}
-
-function readRecords() {
-  return readJsonFile(path.join("data", "record.json"), null);
-}
-
-function readDaily() {
-  const rows = readJsonFile(path.join("data", "daily.json"), []);
-  return Array.isArray(rows) ? rows : [];
-}
+import { readDailyLive, readRecordsLive } from "../lib/liveData";
 
 export async function getStaticProps() {
-  const rawRecords = readRecords();
-  const dailyRows = readDaily();
+  const rawRecords = await readRecordsLive();
+  const dailyRows = await readDailyLive();
   const records = enhanceRecordsWithDaily(rawRecords, dailyRows);
 
-  return { props: { records } };
+  return {
+    props: { records },
+    revalidate: 300,
+  };
 }
 
 // -------------------- helpers --------------------

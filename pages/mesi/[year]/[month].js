@@ -1,27 +1,11 @@
-import fs from "fs";
-import path from "path";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/router";
 import SiteLayout from "../../../components/SiteLayout";
+import { readDailyLive, readMonthlyOverridesLive } from "../../../lib/liveData";
 
 const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
-
-// -------------------- data load --------------------
-function readDaily() {
-  const filePath = path.join(process.cwd(), "data", "daily.json");
-  if (!fs.existsSync(filePath)) return [];
-  const raw = JSON.parse(fs.readFileSync(filePath, "utf8"));
-  return Array.isArray(raw) ? raw : [];
-}
-
-function readMonthlyOverrides() {
-  const filePath = path.join(process.cwd(), "data", "monthly_overrides.json");
-  if (!fs.existsSync(filePath)) return [];
-  const raw = JSON.parse(fs.readFileSync(filePath, "utf8"));
-  return Array.isArray(raw) ? raw : [];
-}
 
 function findMonthlyOverride(overrides, ym, field) {
   return (
@@ -42,8 +26,8 @@ export async function getStaticPaths() {
 }
 
 export async function getStaticProps({ params }) {
-  const rows = readDaily();
-  const overrides = readMonthlyOverrides();
+  const rows = await readDailyLive();
+  const overrides = await readMonthlyOverridesLive();
 
   const year = String(params?.year ?? "");
   const month = String(params?.month ?? "").padStart(2, "0");
@@ -54,7 +38,10 @@ export async function getStaticProps({ params }) {
     .sort((a, b) => String(a.date).localeCompare(String(b.date)));
 
   if (!days.length) {
-    return { notFound: true };
+    return {
+      notFound: true,
+      revalidate: 300,
+    };
   }
 
   const monthsInYear = Array.from(
@@ -107,6 +94,7 @@ export async function getStaticProps({ params }) {
           }
         : null,
     },
+    revalidate: 300,
   };
 }
 

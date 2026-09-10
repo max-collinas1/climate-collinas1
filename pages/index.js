@@ -1,53 +1,10 @@
-import fs from "fs";
-import path from "path";
 import dynamic from "next/dynamic";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/router";
 import SiteLayout from "../components/SiteLayout";
+import { readDailyLive, readMonthlyOverridesLive } from "../lib/liveData";
 
 const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
-
-// -------------------- caricamento dati (SSG) --------------------
-function readDaily() {
-  const filePath = path.join(process.cwd(), "data", "daily.json");
-  if (!fs.existsSync(filePath)) return [];
-
-  try {
-    const raw = JSON.parse(fs.readFileSync(filePath, "utf8"));
-    return Array.isArray(raw) ? raw : [];
-  } catch {
-    return [];
-  }
-}
-
-function readMonthlyOverrides() {
-  const filePath = path.join(process.cwd(), "data", "monthly_overrides.json");
-  if (!fs.existsSync(filePath)) return [];
-
-  try {
-    const raw = JSON.parse(fs.readFileSync(filePath, "utf8"));
-    return Array.isArray(raw) ? raw : [];
-  } catch {
-    return [];
-  }
-}
-
-function readIntradayDates() {
-  const dirPath = path.join(process.cwd(), "public", "data", "intraday");
-  if (!fs.existsSync(dirPath)) return [];
-
-  try {
-    return fs
-      .readdirSync(dirPath, { withFileTypes: true })
-      .filter((entry) => entry.isFile())
-      .map((entry) => entry.name)
-      .filter((name) => /^\d{4}-\d{2}-\d{2}\.json$/.test(name))
-      .map((name) => name.replace(/\.json$/, ""))
-      .sort();
-  } catch {
-    return [];
-  }
-}
 
 function findMonthlyOverride(overrides, ym, field) {
   return (
@@ -646,11 +603,11 @@ function dailyGust(row) {
 
 // -------------------- getStaticProps --------------------
 export async function getStaticProps() {
-  const rows = readDaily()
+  const rows = (await readDailyLive())
     .filter((r) => /^\d{4}-\d{2}-\d{2}$/.test(String(r?.date || "")))
     .sort((a, b) => String(a?.date || "").localeCompare(String(b?.date || "")));
 
-  const overrides = readMonthlyOverrides();
+  const overrides = await readMonthlyOverridesLive();
 
   const years = Array.from(
     new Set(rows.map((r) => String(r?.date || "").slice(0, 4)).filter(Boolean)),
@@ -726,10 +683,7 @@ export async function getStaticProps() {
     .map((r) => String(r?.date || "").slice(0, 10))
     .filter((iso) => /^\d{4}-\d{2}-\d{2}$/.test(iso));
 
-  const diskIntradayDates = readIntradayDates();
-  const intradayDates = diskIntradayDates.length
-    ? diskIntradayDates
-    : Array.from(new Set(dailyDates)).sort();
+  const intradayDates = Array.from(new Set(dailyDates)).sort();
 
   const dailyRainByDate = {};
   for (const row of rows) {
@@ -5785,9 +5739,12 @@ async function fetchIntradayJson(
     ? `?v=${encodeURIComponent(String(refreshToken || Date.now()))}`
     : "";
 
-  const request = fetch(`/data/intraday/${dISO}.json${cacheBuster}`, {
-    cache: "no-store",
-  })
+  const request = fetch(
+    `https://raw.githubusercontent.com/max-collinas1/climate-collinas1/main/public/data/intraday/${encodeURIComponent(dISO)}.json${cacheBuster}`,
+    {
+      cache: "no-store",
+    },
+  )
     .then(async (res) => {
       if (!res.ok) return null;
       const arr = await res.json();

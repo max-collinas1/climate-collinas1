@@ -1,8 +1,7 @@
-import fs from "fs";
-import path from "path";
 import dynamic from "next/dynamic";
 import { useEffect, useMemo, useState } from "react";
 import SiteLayout from "../components/SiteLayout";
+import { readDailyLive } from "../lib/liveData";
 
 const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
 
@@ -32,25 +31,12 @@ const BIOMETE0_SOURCES = {
   },
 };
 
-function readIntradayDates() {
-  const dirPath = path.join(process.cwd(), "public", "data", "intraday");
-  if (!fs.existsSync(dirPath)) return [];
-
-  try {
-    return fs
-      .readdirSync(dirPath, { withFileTypes: true })
-      .filter((entry) => entry.isFile())
-      .map((entry) => entry.name)
-      .filter((name) => /^\d{4}-\d{2}-\d{2}\.json$/.test(name))
-      .map((name) => name.replace(/\.json$/, ""))
-      .sort();
-  } catch {
-    return [];
-  }
-}
-
 export async function getStaticProps() {
-  const intradayDates = readIntradayDates();
+  const dailyRows = await readDailyLive();
+  const intradayDates = dailyRows
+    .map((row) => String(row?.date || ""))
+    .filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(date))
+    .sort();
 
   return {
     props: {
@@ -509,10 +495,13 @@ async function fetchIntradayFile(iso, { fresh = false } = {}) {
     return HISTORICAL_CACHE.get(iso);
   }
 
-  const query = fresh ? `?v=${Date.now()}` : "";
-  const response = await fetch(`/data/intraday/${iso}.json${query}`, {
-    cache: "no-store",
-  });
+  const query = `?v=${Date.now()}`;
+  const response = await fetch(
+    `https://raw.githubusercontent.com/max-collinas1/climate-collinas1/main/public/data/intraday/${encodeURIComponent(iso)}.json${query}`,
+    {
+      cache: "no-store",
+    },
+  );
 
   if (!response.ok) {
     throw new Error(`File intraday ${iso} non disponibile.`);

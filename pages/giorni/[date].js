@@ -1,24 +1,11 @@
-import fs from "fs";
-import path from "path";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/router";
 import SiteLayout from "../../components/SiteLayout";
+import { readDailyLive, readIntradayLive } from "../../lib/liveData";
 
 const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
-
-// -------------------- data load --------------------
-function readDaily() {
-  const filePath = path.join(process.cwd(), "data", "daily.json");
-  return JSON.parse(fs.readFileSync(filePath, "utf8"));
-}
-
-function readIntraday(date) {
-  const filePath = path.join(process.cwd(), "public", "data", "intraday", `${date}.json`);
-  if (!fs.existsSync(filePath)) return [];
-  return JSON.parse(fs.readFileSync(filePath, "utf8"));
-}
 
 export async function getStaticPaths() {
   return {
@@ -28,11 +15,17 @@ export async function getStaticPaths() {
 }
 
 export async function getStaticProps({ params }) {
-  const rows = readDaily().sort((a, b) => String(a?.date || "").localeCompare(String(b?.date || "")));
+  const rows = (await readDailyLive()).sort((a, b) =>
+    String(a?.date || "").localeCompare(String(b?.date || "")),
+  );
+
   const ix = rows.findIndex((r) => r.date === params.date);
 
   if (ix < 0) {
-    return { notFound: true };
+    return {
+      notFound: true,
+      revalidate: 300,
+    };
   }
 
   const day = rows[ix];
@@ -40,7 +33,7 @@ export async function getStaticProps({ params }) {
   const prev = ix > 0 ? rows[ix - 1]?.date ?? null : null;
   const next = ix < rows.length - 1 ? rows[ix + 1]?.date ?? null : null;
 
-  const intraday = readIntraday(params.date);
+  const intraday = await readIntradayLive(params.date);
 
   const mmdd = String(params?.date || "").slice(5, 10);
   const ym = String(params?.date || "").slice(0, 7);
@@ -50,7 +43,10 @@ export async function getStaticProps({ params }) {
     .map((r) => String(r.date))
     .sort();
 
-  const compareOptions = sameDay.map((d) => ({ year: d.slice(0, 4), date: d }));
+  const compareOptions = sameDay.map((d) => ({
+    year: d.slice(0, 4),
+    date: d,
+  }));
 
   const monthDays = rows
     .filter((r) => String(r?.date || "").startsWith(`${ym}-`))
@@ -61,10 +57,19 @@ export async function getStaticProps({ params }) {
       dayNum: String(Number(date.slice(8, 10))),
     }));
 
-  return { props: { day, intraday, prev, next, compareOptions, monthDays } };
+  return {
+    props: {
+      day,
+      intraday,
+      prev,
+      next,
+      compareOptions,
+      monthDays,
+    },
+    revalidate: 300,
+  };
 }
 
-// -------------------- helpers --------------------
 function toNull(x) {
   if (x === null || x === undefined) return null;
   if (typeof x === "string" && x.trim() === "") return null;

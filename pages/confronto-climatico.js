@@ -1,24 +1,12 @@
-import fs from "fs";
-import path from "path";
 import dynamic from "next/dynamic";
 import { useEffect, useMemo, useState } from "react";
 import SiteLayout from "../components/SiteLayout";
+import { readDailyLive } from "../lib/liveData";
 
 const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
 
-// -----------------------------------------------------
-// DATA LOAD
-// -----------------------------------------------------
-function readDaily() {
-  const filePath = path.join(process.cwd(), "data", "daily.json");
-  if (!fs.existsSync(filePath)) return [];
-
-  const raw = JSON.parse(fs.readFileSync(filePath, "utf8"));
-  return Array.isArray(raw) ? raw : [];
-}
-
 export async function getStaticProps() {
-  const rows = readDaily()
+  const rows = (await readDailyLive())
     .filter((r) => /^\d{4}-\d{2}-\d{2}$/.test(String(r?.date ?? "").trim()))
     .sort((a, b) => String(a.date).localeCompare(String(b.date)));
 
@@ -26,6 +14,7 @@ export async function getStaticProps() {
     props: {
       dailyRows: rows,
     },
+    revalidate: 300,
   };
 }
 
@@ -409,12 +398,14 @@ function pickUnusedFromEnd(list, usedValues) {
 
 function getIntradayCandidatePaths(isoDate) {
   const [year, month, day] = String(isoDate).split("-");
+  const base =
+    "https://raw.githubusercontent.com/max-collinas1/climate-collinas1/main/public";
 
   return [
-    `/data/intraday/${year}/${month}/${day}.json`,
-    `/data/intraday/${year}/${month}/${year}-${month}-${day}.json`,
-    `/data/intraday/${year}-${month}-${day}.json`,
-    `/data/${year}/${month}/${day}.json`,
+    `${base}/data/intraday/${year}/${month}/${day}.json`,
+    `${base}/data/intraday/${year}/${month}/${year}-${month}-${day}.json`,
+    `${base}/data/intraday/${year}-${month}-${day}.json`,
+    `${base}/data/${year}/${month}/${day}.json`,
   ];
 }
 
@@ -1453,7 +1444,9 @@ export default function ConfrontoPage({ dailyRows }) {
     async function fetchIntradayByCandidates(isoDate) {
       for (const candidatePath of getIntradayCandidatePaths(isoDate)) {
         try {
-          const response = await fetch(candidatePath, { cache: "no-store" });
+          const response = await fetch(`${candidatePath}?v=${Date.now()}`, {
+            cache: "no-store",
+          });
           if (!response.ok) continue;
 
           const json = await response.json();

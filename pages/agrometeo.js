@@ -1,8 +1,7 @@
-import fs from "fs";
-import path from "path";
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import SiteLayout from "../components/SiteLayout";
+import { readDailyLive } from "../lib/liveData";
 
 const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
 
@@ -32,38 +31,8 @@ const SOURCES = {
   },
 };
 
-function readIntradayDates() {
-  const dirPath = path.join(process.cwd(), "public", "data", "intraday");
-  if (!fs.existsSync(dirPath)) return [];
-
-  try {
-    return fs
-      .readdirSync(dirPath, { withFileTypes: true })
-      .filter((entry) => entry.isFile())
-      .map((entry) => entry.name)
-      .filter((name) => /^\d{4}-\d{2}-\d{2}\.json$/.test(name))
-      .map((name) => name.replace(/\.json$/, ""))
-      .sort();
-  } catch {
-    return [];
-  }
-}
-
-function readDaily() {
-  const filePath = path.join(process.cwd(), "data", "daily.json");
-  if (!fs.existsSync(filePath)) return [];
-
-  try {
-    const raw = JSON.parse(fs.readFileSync(filePath, "utf8"));
-    return Array.isArray(raw) ? raw : [];
-  } catch {
-    return [];
-  }
-}
-
 export async function getStaticProps() {
-  const intradayDates = readIntradayDates();
-  const dailyRows = readDaily()
+  const dailyRows = (await readDailyLive())
     .filter((row) => /^\d{4}-\d{2}-\d{2}$/.test(String(row?.date || "")))
     .sort((a, b) => String(a.date).localeCompare(String(b.date)))
     .map((row) => ({
@@ -75,6 +44,8 @@ export async function getStaticProps() {
       obs_count: finiteOrNull(row.obs_count),
       has_obs: Boolean(row.has_obs),
     }));
+
+  const intradayDates = dailyRows.map((row) => row.date);
 
   return {
     props: {
@@ -585,7 +556,7 @@ async function fetchIntraday(iso, force = false) {
   if (!force && FETCH_CACHE.has(iso)) return FETCH_CACHE.get(iso);
 
   const response = await fetch(
-    `/data/intraday/${iso}.json?ts=${Date.now()}`,
+    `https://raw.githubusercontent.com/max-collinas1/climate-collinas1/main/public/data/intraday/${encodeURIComponent(iso)}.json?ts=${Date.now()}`,
     { cache: "no-store" },
   );
   if (!response.ok) throw new Error(`Dati ${iso} non disponibili`);
