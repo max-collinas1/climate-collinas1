@@ -14,7 +14,7 @@ export async function getStaticProps() {
     props: {
       dailyRows: rows,
     },
-    revalidate: 300,
+    revalidate: 60,
   };
 }
 
