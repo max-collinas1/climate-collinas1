@@ -17,7 +17,6 @@ function findMonthlyOverride(overrides, ym, field) {
   );
 }
 
-// -------------------- helper numerici --------------------
 function n(x) {
   if (x === null || x === undefined || x === "") return NaN;
   const v = Number(x);
@@ -128,7 +127,6 @@ function applyRainMonthOverride(rawValue, override) {
   };
 }
 
-// -------------------- helper date --------------------
 const MONTHS_IT_FULL = [
   "Gennaio",
   "Febbraio",
@@ -202,13 +200,10 @@ function dateRangeISO(startISO, endISO) {
 function getPeriodBounds(mode, selectedDate) {
   if (!selectedDate) return { startISO: null, endISO: null };
 
-  // "Oggi" è un giorno di calendario: 00:00–24:00 della data selezionata.
   if (mode === "day") {
     return { startISO: selectedDate, endISO: selectedDate };
   }
 
-  // Per 7 e 30 giorni carichiamo anche il giorno iniziale necessario a
-  // costruire una finestra mobile esatta fino all'ultima osservazione.
   if (mode === "week") {
     return {
       startISO: addDaysISO(selectedDate, -7),
@@ -246,85 +241,6 @@ function formatPeriodLabel(mode, selectedDate) {
 }
 
 
-function nearestAvailableDate(dates, targetISO, direction = 0) {
-  if (!Array.isArray(dates) || !dates.length) return targetISO || null;
-  const sorted = dates;
-
-  if (sorted.includes(targetISO)) return targetISO;
-
-  if (direction < 0) {
-    for (let i = sorted.length - 1; i >= 0; i -= 1) {
-      if (sorted[i] <= targetISO) return sorted[i];
-    }
-    return sorted[0];
-  }
-
-  if (direction > 0) {
-    for (let i = 0; i < sorted.length; i += 1) {
-      if (sorted[i] >= targetISO) return sorted[i];
-    }
-    return sorted[sorted.length - 1];
-  }
-
-  const target = isoToLocalDate(targetISO)?.getTime();
-  if (!Number.isFinite(target)) return sorted[sorted.length - 1];
-
-  let best = sorted[0];
-  let bestDistance = Infinity;
-
-  for (const iso of sorted) {
-    const t = isoToLocalDate(iso)?.getTime();
-    const distance = Number.isFinite(t) ? Math.abs(t - target) : Infinity;
-
-    if (distance < bestDistance) {
-      bestDistance = distance;
-      best = iso;
-    }
-  }
-
-  return best;
-}
-
-function moveSelectedDate(dates, selectedDate, mode, direction) {
-  if (!dates.length || !selectedDate) return selectedDate;
-
-  if (mode === "day") {
-    const current = nearestAvailableDate(dates, selectedDate, direction);
-    const index = Math.max(0, dates.indexOf(current));
-    const nextIndex = Math.max(
-      0,
-      Math.min(dates.length - 1, index + direction),
-    );
-    return dates[nextIndex];
-  }
-
-  const days = mode === "week" ? 7 : 30;
-  const target = addDaysISO(selectedDate, direction * days);
-  return nearestAvailableDate(dates, target, direction);
-}
-
-
-function navigationDisabled(dates, selectedDate, mode, direction) {
-  if (!dates.length || !selectedDate) return true;
-
-  if (mode === "day") {
-    const current = nearestAvailableDate(dates, selectedDate, direction);
-    const index = dates.indexOf(current);
-    return direction < 0 ? index <= 0 : index >= dates.length - 1;
-  }
-
-  const first = dates[0];
-  const last = dates[dates.length - 1];
-  const currentBounds = getPeriodBounds(mode, selectedDate);
-
-  if (!currentBounds?.startISO || !currentBounds?.endISO) return true;
-
-  return direction < 0
-    ? currentBounds.startISO <= first
-    : currentBounds.endISO >= last;
-}
-
-// -------------------- helper grafici --------------------
 function degToCardinal8(v) {
   const nn = Number(v);
   if (!Number.isFinite(nn)) return "";
@@ -399,12 +315,17 @@ function pointAtOrBeforeTimestamp(pairs, timestamp) {
   return null;
 }
 
-function makeRealtimePulseSeries(dataPairs, timestamp, yAxisIndex = 0) {
+function makeRealtimePulseSeries(
+  dataPairs,
+  timestamp,
+  yAxisIndex = 0,
+  seriesName = "Dato live",
+) {
   const point = pointAtOrBeforeTimestamp(dataPairs, timestamp);
   if (!point) return null;
 
   return {
-    name: "Dato live",
+    name: seriesName,
     type: "effectScatter",
     data: [point],
     yAxisIndex,
@@ -450,6 +371,34 @@ function trimTrailingNullPoints(pairs) {
   }
 
   return lastValidIndex >= 0 ? pairs.slice(0, lastValidIndex + 1) : [];
+}
+
+function makeChartToolbox({ filename, isMobile }) {
+  return {
+    feature: {
+      restore: { title: "Ripristina" },
+      saveAsImage: {
+        type: "png",
+        name: filename,
+        backgroundColor: "#ffffff",
+        pixelRatio: 2,
+        title: "Salva grafico",
+      },
+    },
+    left: isMobile ? 10 : 14,
+    top: isMobile ? 25 : 13,
+    itemSize: isMobile ? 14 : 17,
+    itemGap: isMobile ? 7 : 9,
+    iconStyle: {
+      borderColor: "#64748b",
+      borderWidth: 1.3,
+    },
+    emphasis: {
+      iconStyle: {
+        borderColor: "#2563eb",
+      },
+    },
+  };
 }
 
 function makePeriodDataZoom() {
@@ -562,7 +511,6 @@ function makePeriodTimeline(startISO, endISO, stepMinutes = 60) {
   return out;
 }
 
-// -------------------- helper dati giornalieri --------------------
 function dailyTempField(row, field) {
   const value = n(row?.[field]);
   return Number.isFinite(value) ? value : NaN;
@@ -601,7 +549,6 @@ function dailyGust(row) {
   return Number.isFinite(v) ? v : NaN;
 }
 
-// -------------------- getStaticProps --------------------
 export async function getStaticProps() {
   const rows = (await readDailyLive())
     .filter((r) => /^\d{4}-\d{2}-\d{2}$/.test(String(r?.date || "")))
@@ -695,8 +642,6 @@ export async function getStaticProps() {
     }
   }
 
-  // Dati giornalieri compatti usati esclusivamente dal grafico annuale
-  // della Home. Limitiamo il payload agli ultimi 6 anni mostrati in pagina.
   const annualDataByYear = {};
   for (const year of years.slice(0, 6)) {
     annualDataByYear[year] = (byYear.get(year) || []).map((row) => {
@@ -730,7 +675,6 @@ export async function getStaticProps() {
   };
 }
 
-// -------------------- homepage --------------------
 export default function Home({
   yearStats = [],
   start = null,
@@ -2095,7 +2039,6 @@ function HomeLowerSection({ yearStats = [], annualDataByYear = {} }) {
 }
 
 
-// -------------------- previsioni brevi --------------------
 const FORECAST_LATITUDE = 39.6413;
 const FORECAST_LONGITUDE = 8.8399;
 const FORECAST_TIMEZONE = "Europe/Rome";
@@ -2490,8 +2433,6 @@ function windArrowRotation(value) {
   if (!Number.isFinite(direction)) return 0;
 
   const normalized = ((direction % 360) + 360) % 360;
-  // La direzione meteorologica indica da dove proviene il vento.
-  // La freccia grafica mostra invece verso dove si sposta la massa d'aria.
   return normalized + 90;
 }
 
@@ -3914,8 +3855,6 @@ function ForecastSection() {
                       </div>
 
 
-
-
                       <div className="periodMetricRow">
                         <span className="rowGlyph cloudGlyph">☁</span>
                         <span className="mobileMetricLabel">Nuvolosità</span>
@@ -4847,8 +4786,7 @@ function ForecastSection() {
             border-radius: 0;
           }
 
-          /* Su telefono la legenda "Dettaglio previsione" viene eliminata:
-             ogni card riporta direttamente il nome del parametro. */
+
           .overviewLegend {
             display: none;
           }
@@ -4888,8 +4826,7 @@ function ForecastSection() {
             box-sizing: border-box;
           }
 
-          /* L'orario è un'etichetta indipendente nell'angolo: non partecipa
-             al layout e non sposta il blocco meteo dal centro. */
+
           .periodTimeCorner {
             position: absolute;
             top: 7px;
@@ -4908,8 +4845,7 @@ function ForecastSection() {
             white-space: nowrap;
           }
 
-          /* Nome fascia + icona + condizione + temperatura sono centrati
-             geometricamente nel pannello sinistro. */
+
           .periodSummaryCenter {
             position: absolute;
             inset: 0;
@@ -4967,8 +4903,7 @@ function ForecastSection() {
             white-space: nowrap;
           }
 
-          /* La temperatura è già mostrata sotto il simbolo: la riga duplicata
-             non deve comparire né occupare spazio nel pannello dati. */
+
           .periodMetricGrid > .temperatureMetricRow,
           .temperatureMetricRow {
             display: none !important;
@@ -5130,7 +5065,6 @@ function ForecastSection() {
 }
 
 
-// -------------------- menu a tendina personalizzato --------------------
 function CustomSelect({ value, options = [], onChange, ariaLabel, variant = "light" }) {
   const [open, setOpen] = useState(false);
   const wrapperRef = useRef(null);
@@ -5350,10 +5284,17 @@ function CustomSelect({ value, options = [], onChange, ariaLabel, variant = "lig
 
         @media (max-width: 720px) {
           .selectButton {
-            min-height: 44px;
-            padding-left: 34px;
-            padding-right: 34px;
-            font-size: 11.5px;
+            min-height: 40px;
+            padding-left: 30px;
+            padding-right: 30px;
+            font-size: 10.5px;
+          }
+
+          .dark .selectButton {
+            min-height: 32px;
+            padding: 5px 8px;
+            border-radius: 9px;
+            font-size: 9.5px;
           }
 
           .selectedValue {
@@ -5361,39 +5302,22 @@ function CustomSelect({ value, options = [], onChange, ariaLabel, variant = "lig
           }
 
           .chevron {
-            right: 12px;
+            right: 10px;
           }
 
           .options {
-            max-height: 240px;
+            max-height: 220px;
           }
 
           .option {
-            min-height: 38px;
-            padding: 9px 10px;
-            font-size: 11.5px;
+            min-height: 34px;
+            padding: 8px 9px;
+            font-size: 10.5px;
           }
         }
       `}</style>
     </div>
   );
-}
-
-// -------------------- grafico oggi / 7 giorni / 30 giorni --------------------
-function addYearsISO(iso, amount) {
-  const d = isoToLocalDate(iso);
-  if (!d) return iso;
-
-  const month = d.getMonth();
-  const day = d.getDate();
-  d.setDate(1);
-  d.setFullYear(d.getFullYear() + amount);
-  d.setMonth(month);
-
-  const lastDay = new Date(d.getFullYear(), month + 1, 0, 12).getDate();
-  d.setDate(Math.min(day, lastDay));
-
-  return dateToISO(d);
 }
 
 function localDayIndex(timestamp, startISO) {
@@ -5615,6 +5539,145 @@ function makeDeltaSeries({
   });
 }
 
+function movingAveragePairs(pairs, windowMinutes) {
+  const source = Array.isArray(pairs) ? pairs : [];
+  const windowMs = Number(windowMinutes) * 60 * 1000;
+
+  if (!Number.isFinite(windowMs) || windowMs <= 0) return source;
+
+  const halfWindow = windowMs / 2;
+  const valid = source
+    .map((point) => [Number(point?.[0]), n(point?.[1])])
+    .filter(
+      (point) =>
+        Number.isFinite(point[0]) &&
+        Number.isFinite(point[1]),
+    );
+
+  return source.map((point) => {
+    const timestamp = Number(point?.[0]);
+    const value = n(point?.[1]);
+
+    if (!Number.isFinite(timestamp) || !Number.isFinite(value)) {
+      return [timestamp, null];
+    }
+
+    let sum = 0;
+    let count = 0;
+
+    for (const candidate of valid) {
+      if (Math.abs(candidate[0] - timestamp) <= halfWindow) {
+        sum += candidate[1];
+        count += 1;
+      }
+    }
+
+    return [timestamp, count ? round1(sum / count) : null];
+  });
+}
+
+
+function anomalyWindowBounds(currentData, currentBounds, mode) {
+  const rollingStart = n(currentData?.windowStartTimestamp);
+  const rollingEnd = n(currentData?.latestTimestamp);
+
+  const start =
+    mode === "day"
+      ? isoToLocalDate(currentBounds?.startISO, 0)?.getTime()
+      : Number.isFinite(rollingStart)
+        ? rollingStart
+        : isoToLocalDate(currentBounds?.startISO, 0)?.getTime();
+
+  const end =
+    mode === "day"
+      ? (isoToLocalDate(addDaysISO(currentBounds?.endISO, 1), 0)?.getTime() ?? 0) - 1
+      : Number.isFinite(rollingEnd)
+        ? rollingEnd
+        : (isoToLocalDate(addDaysISO(currentBounds?.endISO, 1), 0)?.getTime() ?? 0) - 1;
+
+  return { start, end };
+}
+
+function makePeriodAnomalySeries({
+  currentData,
+  climatologyData,
+  currentBounds,
+  mode,
+  field,
+}) {
+  if (
+    !currentData ||
+    !climatologyData ||
+    !currentBounds?.startISO ||
+    !field
+  ) {
+    return { series: [], start: null, end: null };
+  }
+
+  const raw = makeDeltaSeries({
+    currentPairs: currentData?.[field],
+    comparisonPairs: climatologyData?.[field],
+    currentStartISO: currentBounds.startISO,
+    comparisonStartISO: currentBounds.startISO,
+    mode,
+  });
+
+  const { start, end } = anomalyWindowBounds(
+    currentData,
+    currentBounds,
+    mode,
+  );
+
+  const trimmed = trimTrailingNullPoints(raw);
+  const filtered =
+    Number.isFinite(start) && Number.isFinite(end)
+      ? trimmed.filter((point) => {
+          const timestamp = Number(point?.[0]);
+          return (
+            Number.isFinite(timestamp) &&
+            timestamp >= start &&
+            timestamp <= end
+          );
+        })
+      : trimmed;
+
+  const series =
+    mode === "week"
+      ? movingAveragePairs(filtered, 60)
+      : mode === "month"
+        ? movingAveragePairs(filtered, 180)
+        : filtered;
+
+  return { series, start, end };
+}
+
+function climatologyReferenceLabel(climatologyData) {
+  const reference = String(climatologyData?.referencePeriod || "").trim();
+
+  if (reference) {
+    return `Climatologia ${reference.replace("-", "–")}`;
+  }
+
+  const years = (Array.isArray(climatologyData?.years)
+    ? climatologyData.years
+    : []
+  )
+    .map((year) => Number(year))
+    .filter(Number.isFinite)
+    .sort((a, b) => a - b);
+
+  if (!years.length) return "Media storica";
+  if (years.length === 1) return `Media storica ${years[0]}`;
+  return `Media storica ${years[0]}–${years[years.length - 1]}`;
+}
+
+function anomalyIconType(groupKey) {
+  if (groupKey === "temp") return "temperature";
+  if (groupKey === "rh") return "humidity";
+  if (groupKey === "press") return "pressure";
+  return groupKey;
+}
+
 function splitDeltaSeriesBySign(pairs) {
   const positive = [];
   const negative = [];
@@ -5669,20 +5732,28 @@ function deltaStatsFromSeries(pairs) {
       minTimestamp: null,
       last: null,
       lastTimestamp: null,
+      abovePercent: null,
+      belowPercent: null,
     };
   }
 
   let total = 0;
+  let aboveCount = 0;
+  let belowCount = 0;
   let maxPoint = values[0];
   let minPoint = values[0];
 
   for (const point of values) {
     total += point.value;
 
+    if (point.value > 0) aboveCount += 1;
+    if (point.value < 0) belowCount += 1;
+
     if (point.value > maxPoint.value) maxPoint = point;
     if (point.value < minPoint.value) minPoint = point;
   }
 
+  const signedCount = aboveCount + belowCount;
   const lastPoint = values[values.length - 1];
 
   return {
@@ -5694,6 +5765,8 @@ function deltaStatsFromSeries(pairs) {
     minTimestamp: minPoint.timestamp,
     last: lastPoint.value,
     lastTimestamp: lastPoint.timestamp,
+    abovePercent: signedCount ? (aboveCount / signedCount) * 100 : 0,
+    belowPercent: signedCount ? (belowCount / signedCount) * 100 : 0,
   };
 }
 
@@ -5796,8 +5869,6 @@ function latestIntradayTimestamp(rows) {
 }
 
 function rollingWindowDurationMs(mode) {
-  // "Oggi" usa l'intero giorno di calendario, quindi non va ritagliato
-  // sulle 24 ore precedenti all'ultima osservazione.
   if (mode === "week") return 7 * 24 * 60 * 60 * 1000;
   if (mode === "month") return 30 * 24 * 60 * 60 * 1000;
   return null;
@@ -6110,188 +6181,57 @@ async function loadIntradayPeriod({
   };
 }
 
-const CLIMATOLOGY_FIELDS = [
-  "temp",
-  "dew",
-  "rh",
-  "press",
-  "wind",
-  "gust",
-  "rainH",
-  "rainCum",
-  "uv",
-  "solar",
-];
+async function loadFixedTemperatureClimatologyPeriod(currentPairs) {
+  const points = Array.isArray(currentPairs) ? currentPairs : [];
 
-function climatologyTimeKey(timestamp, mode) {
-  const d = new Date(Number(timestamp));
-  if (!Number.isFinite(d.getTime())) return null;
-
-  const hh = pad2(d.getHours());
-  const mm = pad2(d.getMinutes());
-
-  if (mode === "day") return `${hh}:${mm}`;
-  return `${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}|${hh}:${mm}`;
-}
-
-
-function climatologyCandidateBounds(mode, selectedDate, yearShift) {
-  if (!selectedDate || !Number.isFinite(Number(yearShift))) return null;
-
-  const shiftedAnchor = addYearsISO(selectedDate, yearShift);
-  if (!shiftedAnchor) return null;
-
-  if (
-    mode === "day" &&
-    String(shiftedAnchor).slice(5) !== String(selectedDate).slice(5)
-  ) {
-    return null;
+  if (!points.length) {
+    throw new Error("Nessun dato termico disponibile per il confronto climatico.");
   }
 
-  if (mode === "week") {
-    const current = getPeriodBounds("week", selectedDate);
-    return {
-      startISO: addYearsISO(current.startISO, yearShift),
-      endISO: addYearsISO(current.endISO, yearShift),
-    };
-  }
-
-  return getPeriodBounds("day", shiftedAnchor);
-}
-
-
-async function loadHistoricalAverage({
-  selectedDate,
-  currentBounds,
-  mode,
-  availableDates,
-  dailyRainByDate,
-}) {
-  if (!selectedDate || !currentBounds?.startISO || !currentBounds?.endISO) {
-    throw new Error("Periodo non valido per il calcolo della media storica.");
-  }
-
-  const anchorYear = Number(String(selectedDate).slice(0, 4));
-  const availableYears = Array.from(
-    new Set(
-      (Array.isArray(availableDates) ? availableDates : [])
-        .map((iso) => Number(String(iso).slice(0, 4)))
-        .filter(Number.isFinite),
-    ),
-  ).sort((a, b) => a - b);
-
-  const candidateYears = availableYears.filter((year) => year !== anchorYear);
-  if (!candidateYears.length) {
-    throw new Error(
-      "Servono dati della stessa data in almeno un altro anno per calcolare la media storica.",
-    );
-  }
-
-  const stepMinutes = 15;
-  const currentTimeline = makePeriodTimeline(
-    currentBounds.startISO,
-    currentBounds.endISO,
-    stepMinutes,
+  const response = await fetch(
+    "/climatologia/temperatura/intraday-climatology.json",
+    { cache: "force-cache" },
   );
 
-  if (!currentTimeline.length) {
-    throw new Error("Non è stato possibile costruire la linea temporale storica.");
-  }
-
-  const sums = {};
-  for (const field of CLIMATOLOGY_FIELDS) {
-    sums[field] = new Map();
-  }
-
-  const usedPeriods = [];
-
-  for (const year of candidateYears) {
-    const yearShift = year - anchorYear;
-    const historicalBounds = climatologyCandidateBounds(
-      mode,
-      selectedDate,
-      yearShift,
-    );
-
-    if (!historicalBounds?.startISO || !historicalBounds?.endISO) continue;
-
-    try {
-      const historicalPeriod = await loadIntradayPeriod({
-        startISO: historicalBounds.startISO,
-        endISO: historicalBounds.endISO,
-        mode,
-        availableDates,
-        dailyRainByDate,
-      });
-
-      if (!historicalPeriod?.loadedDays) continue;
-
-      usedPeriods.push({
-        year,
-        startISO: historicalBounds.startISO,
-        endISO: historicalBounds.endISO,
-        loadedDays: historicalPeriod.loadedDays,
-        requestedDays: historicalPeriod.requestedDays,
-      });
-
-      for (const field of CLIMATOLOGY_FIELDS) {
-        for (const point of Array.isArray(historicalPeriod?.[field])
-          ? historicalPeriod[field]
-          : []) {
-          const timestamp = Number(point?.[0]);
-          const value = n(point?.[1]);
-          const key = climatologyTimeKey(timestamp, mode);
-
-          if (!key || !Number.isFinite(value)) continue;
-
-          const previous = sums[field].get(key) || { sum: 0, count: 0 };
-          previous.sum += value;
-          previous.count += 1;
-          sums[field].set(key, previous);
-        }
-      }
-    } catch {
-    }
-  }
-
-  if (!usedPeriods.length) {
+  if (!response.ok) {
     throw new Error(
-      "Non sono disponibili periodi omologhi in altri anni per costruire la media storica.",
+      "Climatologia termica 1991–2020 non disponibile sul sito.",
     );
   }
 
-  const historicalAverage = {};
-  const sampleCounts = {};
+  const payload = await response.json();
 
-  for (const field of CLIMATOLOGY_FIELDS) {
-    historicalAverage[field] = currentTimeline.map((timestamp) => {
-      const key = climatologyTimeKey(timestamp, mode);
-      const aggregate = key ? sums[field].get(key) : null;
+  const valueAt = (timestamp, field) => {
+    const d = new Date(Number(timestamp));
+    if (!Number.isFinite(d.getTime())) return null;
 
-      if (!aggregate?.count) return [timestamp, null];
-      return [timestamp, round1(aggregate.sum / aggregate.count)];
+    const mmdd = `${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+    const slot = d.getHours() * 4 + Math.floor(d.getMinutes() / 15);
+    const values = payload?.[mmdd]?.[field];
+    const value = n(Array.isArray(values) ? values[slot] : null);
+
+    return Number.isFinite(value) ? value : null;
+  };
+
+  const toPairs = (field) =>
+    points.map((point) => {
+      const timestamp = Number(point?.[0]);
+      return [timestamp, valueAt(timestamp, field)];
     });
-
-    sampleCounts[field] = currentTimeline.map((timestamp) => {
-      const key = climatologyTimeKey(timestamp, mode);
-      const aggregate = key ? sums[field].get(key) : null;
-      return [timestamp, aggregate?.count || 0];
-    });
-  }
-
-  const historicalRainTotal = lastNonNullPoint(
-    historicalAverage.rainCum,
-  )?.[1];
 
   return {
-    ...historicalAverage,
-    sampleCounts,
-    periodCount: usedPeriods.length,
-    years: usedPeriods.map((period) => period.year).sort((a, b) => a - b),
-    periods: usedPeriods,
-    rainTotal: Number.isFinite(n(historicalRainTotal))
-      ? round1(historicalRainTotal)
-      : null,
+    temp: toPairs("n"),
+    tempP10: toPairs("p10"),
+    tempP25: toPairs("p25"),
+    tempP75: toPairs("p75"),
+    tempP90: toPairs("p90"),
+    sampleCounts: {
+      temp: points.map((point) => [Number(point?.[0]), 30]),
+    },
+    periodCount: 30,
+    years: ["1991–2020"],
+    referencePeriod: "1991-2020",
+    source: "fixed-temperature-climatology",
   };
 }
 
@@ -6729,37 +6669,76 @@ function PeriodSummary({ data, mode }) {
 
         @media (max-width: 720px) {
           .summarySection {
-            padding: 12px 10px;
+            padding: 9px 8px 10px;
           }
 
           .summaryGrid {
-            grid-template-columns: repeat(7, 166px);
-            gap: 8px;
+            grid-template-columns: repeat(7, 120px);
+            gap: 7px;
+            padding-bottom: 3px;
+            scroll-snap-type: x proximity;
           }
 
           .summaryCell {
-            min-height: 166px;
-            padding: 11px 9px 10px;
-            border-radius: 14px;
+            min-height: 120px;
+            padding: 7px 7px 6px;
+            border-radius: 12px;
+            scroll-snap-align: start;
           }
 
           .summaryLabel {
-            min-height: 24px;
-            font-size: 9px;
+            min-height: 17px;
+            font-size: 7.5px;
+            line-height: 1.05;
+          }
+
+          .summaryCore {
+            margin-top: 1px;
+            gap: 3px;
           }
 
           .summaryIcon {
-            width: 38px;
-            height: 38px;
+            width: 22px;
+            height: 22px;
+            border-width: 1px;
           }
 
           .summaryIcon :global(svg) {
-            width: 24px;
-            height: 24px;
+            width: 13px;
+            height: 13px;
+            stroke-width: 1.6;
           }
 
           .summaryMain strong {
-            font-size: 17px;
+            font-size: 14px;
+          }
+
+          .summaryMain small {
+            font-size: 7px;
+          }
+
+          .summaryDescription {
+            min-height: 27px;
+            padding: 6px 2px 0;
+            font-size: 6.8px;
+            line-height: 1.15;
+          }
+
+          .summaryMetrics {
+            padding-top: 6px;
+            gap: 2px;
+          }
+
+          .summaryMetric span {
+            font-size: 6px;
+          }
+
+          .summaryMetric b {
+            font-size: 7.5px;
+          }
+
+          .summaryMetric small {
+            font-size: 5.8px;
           }
         }
       `}</style>
@@ -6777,69 +6756,136 @@ function ClimatologyChart({
   loading,
   error,
   isMobile,
+  chartHeight,
 }) {
   const meta = useMemo(() => deltaMetaForGroup(groupKey), [groupKey]);
 
-  const anomalySeries = useMemo(() => {
-    if (!currentData || !climatologyData) return [];
-
-    return makeDeltaSeries({
-      currentPairs: currentData?.[meta.field],
-      comparisonPairs: climatologyData?.[meta.field],
-      currentStartISO: currentBounds.startISO,
-      comparisonStartISO: currentBounds.startISO,
+  const prepared = useMemo(
+    () =>
+      makePeriodAnomalySeries({
+        currentData,
+        climatologyData,
+        currentBounds,
+        mode,
+        field: meta.field,
+      }),
+    [
+      climatologyData,
+      currentBounds,
+      currentData,
+      meta.field,
       mode,
-    });
-  }, [
-    climatologyData,
-    currentBounds.startISO,
-    currentData,
-    meta.field,
-    mode,
-  ]);
-
-  const displayAnomalySeries = useMemo(
-    () => trimTrailingNullPoints(anomalySeries),
-    [anomalySeries],
+    ],
   );
 
+  const plotAnomalySeries = prepared.series;
+  const chartReferenceStart = prepared.start;
+  const chartReferenceEnd = prepared.end;
+
   const validAnomalyCount = useMemo(
-    () => seriesValues(displayAnomalySeries).length,
-    [displayAnomalySeries],
+    () => seriesValues(plotAnomalySeries).length,
+    [plotAnomalySeries],
   );
 
   const splitSeries = useMemo(
-    () => splitDeltaSeriesBySign(displayAnomalySeries),
-    [displayAnomalySeries],
+    () => splitDeltaSeriesBySign(plotAnomalySeries),
+    [plotAnomalySeries],
   );
 
-  const anomalyStats = useMemo(
-    () => deltaStatsFromSeries(displayAnomalySeries),
-    [displayAnomalySeries],
+  const anomalyTitle =
+    mode === "week"
+      ? "Anomalia ultimi 7 giorni"
+      : mode === "month"
+        ? "Anomalia ultimi 30 giorni"
+        : "Anomalia giornaliera";
+
+  const chartDateReference = formatChartDateReference(
+    mode,
+    chartReferenceStart,
+    chartReferenceEnd,
+    currentBounds?.endISO,
   );
 
   const option = useMemo(() => {
     if (!validAnomalyCount) return null;
 
-    const axis = symmetricAxisFromPairs(displayAnomalySeries);
+    const axis = symmetricAxisFromPairs(plotAnomalySeries);
+    const dayBoundaryMarkLine = makeDailyBoundaryMarkLine(
+      mode,
+      chartReferenceStart,
+      chartReferenceEnd,
+    );
+    const boundaryData = Array.isArray(dayBoundaryMarkLine?.data)
+      ? dayBoundaryMarkLine.data
+      : [];
 
     return {
       animation: true,
-      animationDuration: 220,
+      animationDuration: 250,
+      animationDurationUpdate: 250,
+      title: {
+        text: anomalyTitle,
+        subtext: chartDateReference,
+        left: "center",
+        top: isMobile ? 5 : 10,
+        itemGap: isMobile ? 3 : 4,
+        textStyle: {
+          fontSize: isMobile ? 17 : 18,
+          fontWeight: 800,
+          lineHeight: isMobile ? 20 : 22,
+          color: "#0f172a",
+        },
+        subtextStyle: {
+          fontSize: isMobile ? 9 : 10,
+          fontWeight: 650,
+          color: "#64748b",
+        },
+      },
+      toolbox: makeChartToolbox({
+        filename: `meteo-collinas-anomalia-${mode}-${groupKey}`,
+        isMobile,
+      }),
+      dataZoom: makePeriodDataZoom(),
       grid: isMobile
-        ? { left: 48, right: 14, top: 28, bottom: 42 }
-        : { left: 70, right: 34, top: 35, bottom: 58 },
+        ? {
+            left: 50,
+            right: 22,
+            top: 78,
+            bottom:
+              groupKey === "wind"
+                ? 78
+                : ["temp", "rain"].includes(groupKey)
+                  ? 62
+                  : 38,
+            containLabel: false,
+            show: true,
+            borderWidth: 0,
+            backgroundColor: "rgba(248, 250, 252, 0.52)",
+          }
+        : {
+            left: 68,
+            right: 30,
+            top: 80,
+            bottom: ["temp", "rain", "wind"].includes(groupKey) ? 82 : 42,
+            show: true,
+            borderWidth: 0,
+            backgroundColor: "rgba(248, 250, 252, 0.52)",
+          },
       tooltip: {
         trigger: "axis",
         triggerOn: "mousemove|click",
         confine: true,
-          backgroundColor: "rgba(255, 255, 255, 0.98)",
-          borderColor: "#dbe3ec",
-          borderWidth: 1,
-          padding: [9, 11],
-          extraCssText:
-            "border-radius:10px;box-shadow:0 10px 28px rgba(15,23,42,.12);",
-          textStyle: { color: "#0f172a", fontSize: 11, fontWeight: 650 },
+        backgroundColor: "rgba(255, 255, 255, 0.98)",
+        borderColor: "#dbe3ec",
+        borderWidth: 1,
+        padding: [9, 11],
+        extraCssText:
+          "border-radius:10px;box-shadow:0 10px 28px rgba(15,23,42,.12);",
+        textStyle: {
+          color: "#0f172a",
+          fontSize: 11,
+          fontWeight: 650,
+        },
         axisPointer: {
           type: "line",
           snap: true,
@@ -6854,14 +6900,18 @@ function ClimatologyChart({
           const axisTimestamp = Number(
             params?.[0]?.axisValue ?? params?.[0]?.data?.[0],
           );
-          const validPoints = seriesValues(displayAnomalySeries);
+          const validPoints = seriesValues(plotAnomalySeries);
+
           if (!validPoints.length) return "";
 
           let selectedPoint = validPoints[0];
+
           if (Number.isFinite(axisTimestamp)) {
             let bestDistance = Infinity;
+
             for (const point of validPoints) {
               const distance = Math.abs(point.timestamp - axisTimestamp);
+
               if (distance < bestDistance) {
                 bestDistance = distance;
                 selectedPoint = point;
@@ -6877,25 +6927,41 @@ function ClimatologyChart({
               : value < 0
                 ? meta.negativeColor
                 : "rgba(15, 23, 42, 0.55)";
-          const marker =
-            `<span style="display:inline-block;margin-right:6px;` +
-            `border-radius:50%;width:9px;height:9px;` +
-            `background:${markerColor};"></span>`;
 
           return (
             `${time}<br/>` +
-            `${marker}Scarto dalla media: ` +
-            `${formatSignedDelta(value, meta.unit)}`
+            `<span style="display:inline-block;margin-right:6px;border-radius:50%;width:9px;height:9px;background:${markerColor};"></span>` +
+            `Scarto dalla climatologia: ${formatSignedDelta(value, meta.unit)}`
           );
         },
       },
       xAxis: {
         type: "time",
-        min: isoToLocalDate(currentBounds.startISO, 0)?.getTime(),
-        max: isoToLocalDate(addDaysISO(currentBounds.endISO, 1), 0)?.getTime(),
+        min: chartReferenceStart,
+        max: chartReferenceEnd,
+        splitNumber:
+          mode === "day"
+            ? 8
+            : mode === "week"
+              ? 7
+              : mode === "month"
+                ? 10
+                : undefined,
+        axisLine: {
+          show: true,
+          lineStyle: {
+            color: "#cbd5e1",
+            width: 1,
+          },
+        },
+        axisTick: { show: false },
+        splitLine: { show: false },
         axisLabel: {
           hideOverlap: true,
           fontSize: isMobile ? 10 : 11,
+          fontWeight: 650,
+          color: "#64748b",
+          margin: isMobile ? 8 : 10,
           formatter:
             mode === "day"
               ? "{HH}:{mm}"
@@ -6916,424 +6982,711 @@ function ClimatologyChart({
         name: `Δ ${meta.unit}`,
         nameLocation: "middle",
         nameRotate: 90,
-        nameGap: isMobile ? 34 : 46,
+        nameGap: isMobile ? 34 : 42,
         min: axis.min,
         max: axis.max,
         interval: axis.interval,
+        nameTextStyle: {
+          fontSize: isMobile ? 10 : 11,
+          fontWeight: 700,
+          color: "#64748b",
+        },
+        axisLine: { show: false },
+        axisTick: { show: false },
         axisLabel: {
           fontSize: isMobile ? 10 : 11,
+          fontWeight: 650,
+          color: "#64748b",
           formatter: (value) => {
             const vv = Number(value);
             return `${vv > 0 ? "+" : ""}${vv.toFixed(1)}`;
           },
         },
-        splitLine: { show: true },
+        splitLine: {
+          show: true,
+          lineStyle: {
+            color: "rgba(148, 163, 184, 0.24)",
+            type: "dashed",
+            width: 1,
+          },
+        },
+        splitNumber: 6,
       },
       series: [
         {
-          name: "Sopra la media storica",
+          name: "Sopra climatologia",
           type: "line",
           data: splitSeries.positive,
           showSymbol: false,
           connectNulls: false,
           smooth: false,
           sampling: "lttb",
-          lineStyle: { width: 2.4, color: meta.positiveColor },
-          itemStyle: { color: meta.positiveColor },
+          lineStyle: {
+            width: 2.3,
+            color: meta.positiveColor,
+          },
+          itemStyle: {
+            color: meta.positiveColor,
+          },
+          emphasis: {
+            focus: "series",
+          },
           markLine: {
             silent: true,
             symbol: "none",
             label: { show: false },
-            lineStyle: {
-              width: 1.2,
-              type: "dashed",
-              color: "rgba(15, 23, 42, 0.42)",
-            },
-            data: [{ yAxis: 0 }],
+            data: [
+              {
+                yAxis: 0,
+                lineStyle: {
+                  width: 1.2,
+                  type: "dashed",
+                  color: "rgba(15, 23, 42, 0.42)",
+                },
+              },
+              ...boundaryData.map((item) => ({
+                ...item,
+                lineStyle: {
+                  color: "rgba(148, 163, 184, 0.18)",
+                  width: 1,
+                  type: "solid",
+                },
+              })),
+            ],
           },
         },
         {
-          name: "Sotto la media storica",
+          name: "Sotto climatologia",
           type: "line",
           data: splitSeries.negative,
           showSymbol: false,
           connectNulls: false,
           smooth: false,
           sampling: "lttb",
-          lineStyle: { width: 2.4, color: meta.negativeColor },
-          itemStyle: { color: meta.negativeColor },
+          lineStyle: {
+            width: 2.3,
+            color: meta.negativeColor,
+          },
+          itemStyle: {
+            color: meta.negativeColor,
+          },
+          emphasis: {
+            focus: "series",
+          },
         },
       ],
     };
   }, [
-    currentBounds.endISO,
-    currentBounds.startISO,
-    displayAnomalySeries,
+    anomalyTitle,
+    chartDateReference,
+    chartReferenceEnd,
+    chartReferenceStart,
+    groupKey,
     isMobile,
     meta.negativeColor,
     meta.positiveColor,
     meta.unit,
     mode,
+    plotAnomalySeries,
     splitSeries.negative,
     splitSeries.positive,
     validAnomalyCount,
   ]);
 
-  const historicalYears = Array.isArray(climatologyData?.years)
-    ? climatologyData.years
-    : [];
-  const yearsText = historicalYears.length
-    ? historicalYears.join(", ")
-    : "—";
-  const periodCount = Number(climatologyData?.periodCount || 0);
-
-  const summaryItems = [
-    {
-      label: "Scarto medio",
-      value: formatSignedDelta(anomalyStats.mean, meta.unit),
-      detail: anomalyStats.count
-        ? `media su ${anomalyStats.count} intervalli`
-        : "nessun intervallo",
-      tone: deltaTone(anomalyStats.mean),
-    },
-    {
-      label: "Scarto massimo",
-      value: formatSignedDelta(anomalyStats.max, meta.unit),
-      detail: Number.isFinite(Number(anomalyStats.maxTimestamp))
-        ? formatSummaryTimestamp(anomalyStats.maxTimestamp, mode)
-        : "—",
-      tone: deltaTone(anomalyStats.max),
-    },
-    {
-      label: "Scarto minimo",
-      value: formatSignedDelta(anomalyStats.min, meta.unit),
-      detail: Number.isFinite(Number(anomalyStats.minTimestamp))
-        ? formatSummaryTimestamp(anomalyStats.minTimestamp, mode)
-        : "—",
-      tone: deltaTone(anomalyStats.min),
-    },
-    {
-      label: "Ultimo scarto",
-      value: formatSignedDelta(anomalyStats.last, meta.unit),
-      detail: Number.isFinite(Number(anomalyStats.lastTimestamp))
-        ? formatSummaryTimestamp(anomalyStats.lastTimestamp, mode)
-        : "ultimo intervallo disponibile",
-      tone: deltaTone(anomalyStats.last),
-    },
-  ];
-
   return (
-    <section
-      className="climatologySection"
-      aria-label="Confronto con la media storica"
-    >
-      <div className="climatologyHead">
-        <div className="climatologyText">
-          <h3>Scarto rispetto alla media storica</h3>
-          <p>
-            {meta.shortLabel}: periodo selezionato meno media delle stesse date
-            e degli stessi orari negli altri anni disponibili
-          </p>
-        </div>
-
-        <div className="archiveInfo">
-          <span>Archivio utilizzato</span>
-          <strong>
-            {periodCount
-              ? `${periodCount} ${periodCount === 1 ? "periodo" : "periodi"}`
-              : "—"}
-          </strong>
-          <small title={yearsText}>{yearsText}</small>
-        </div>
-      </div>
-
-      <div className="climatologyChart">
-        {loading && <div className="climateMsg">Calcolo media storica…</div>}
-        {!loading && error && <div className="climateMsg">{error}</div>}
-        {!loading && !error && !validAnomalyCount && (
-          <div className="climateMsg">
-            La media storica esiste, ma non ci sono ancora intervalli comuni
-            sufficienti per calcolare lo scarto.
-          </div>
-        )}
-        {!loading && !error && option && (
-          <ReactECharts
-            option={option}
-            style={{ height: isMobile ? 210 : 260, width: "100%" }}
-            notMerge={true}
-            lazyUpdate={true}
-          />
-        )}
-      </div>
-
-      {!loading && !error && validAnomalyCount > 0 && (
-        <div
-          className="climateSummary"
-          style={{
-            "--positive-color": meta.positiveColor,
-            "--negative-color": meta.negativeColor,
-          }}
-        >
-          {summaryItems.map((item) => (
-            <div className={`climateCell tone-${item.tone}`} key={item.label}>
-              <span className="climateLabel">{item.label}</span>
-              <strong className={item.tone}>{item.value}</strong>
-              <small>{item.detail}</small>
-            </div>
-          ))}
+    <div className="chartArea">
+      {loading && <div className="msg">Calcolo scarto climatologico…</div>}
+      {!loading && error && <div className="msg">{error}</div>}
+      {!loading && !error && !validAnomalyCount && (
+        <div className="msg">
+          Non ci sono intervalli sufficienti per calcolare lo scarto.
         </div>
       )}
-
-      <div className="climateNote">
-        La media non è salvata manualmente: viene ricalcolata dai JSON intraday
-        presenti nell’archivio. Un dato mancante viene escluso soltanto da
-        quell’orario e non viene trasformato in 0; un valore reale pari a 0
-        resta invece valido. I nuovi dati Wunderground entrano automaticamente
-        nel riferimento storico quando diventano disponibili per i periodi
-        omologhi.
-      </div>
+      {!loading && !error && option && (
+        <ReactECharts
+          option={option}
+          style={{ height: chartHeight, width: "100%" }}
+          notMerge={true}
+          lazyUpdate={true}
+        />
+      )}
 
       <style jsx>{`
-        .climatologySection {
+        .chartArea {
           position: relative;
-          z-index: 3;
-          border-top: 1px solid #e8ebef;
-          background: #fff;
-        }
-
-        .climatologyHead {
-          min-height: 82px;
-          padding: 15px 18px 10px;
-          display: grid;
-          grid-template-columns: 1fr auto 1fr;
-          align-items: center;
-          gap: 18px;
-        }
-
-        .climatologyText {
-          grid-column: 2;
-          text-align: center;
-        }
-
-        .climatologyText h3 {
-          margin: 0;
-          font-size: 17px;
-          font-weight: 950;
-          color: #0f172a;
-        }
-
-        .climatologyText p {
-          max-width: 620px;
-          margin: 4px auto 0;
-          font-size: 10px;
-          font-weight: 750;
-          line-height: 1.45;
-          color: rgba(15, 23, 42, 0.55);
-        }
-
-        .archiveInfo {
-          grid-column: 3;
-          justify-self: end;
-          width: 220px;
+          z-index: 1;
+          width: 100%;
           min-width: 0;
-          padding: 9px 11px;
-          display: grid;
-          gap: 2px;
-          border: 1px solid #e4e8ed;
-          border-radius: 13px;
-          background: #fbfcfd;
-          text-align: center;
+          min-height: 0;
+          padding: 0;
+          box-sizing: border-box;
+          background: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
         }
 
-        .archiveInfo span {
-          font-size: 8.5px;
-          font-weight: 950;
-          color: rgba(15, 23, 42, 0.54);
-          text-transform: uppercase;
-          letter-spacing: 0.04em;
-        }
-
-        .archiveInfo strong {
-          font-size: 13px;
-          font-weight: 950;
-          color: #0f172a;
-        }
-
-        .archiveInfo small {
-          overflow: hidden;
-          font-size: 8.5px;
-          font-weight: 750;
-          color: rgba(15, 23, 42, 0.48);
-          text-overflow: ellipsis;
-          white-space: nowrap;
-        }
-
-        .climatologyChart {
-          min-height: 260px;
-          padding: 0 8px 2px;
-        }
-
-        .climateMsg {
-          min-height: 240px;
+        .msg {
+          min-height: 390px;
           display: flex;
           align-items: center;
           justify-content: center;
-          padding: 18px;
-          color: rgba(15, 23, 42, 0.62);
-          font-size: 11px;
-          font-weight: 800;
+          padding: 20px;
           text-align: center;
-        }
-
-        .climateSummary {
-          width: min(calc(100% - 36px), 920px);
-          margin: 0 auto 10px;
-          display: grid;
-          grid-template-columns: repeat(4, minmax(0, 1fr));
-          gap: 6px;
-        }
-
-        .climateCell {
-          min-width: 0;
-          min-height: 42px;
-          padding: 5px 8px;
-          display: grid;
-          align-content: center;
-          justify-items: center;
-          gap: 0;
-          text-align: center;
-          border: 1px solid #e3e7ec;
-          border-radius: 9px;
-          background: linear-gradient(180deg, #ffffff, #fafbfc);
-        }
-
-        .climateCell.tone-positive {
-          border-color: color-mix(
-            in srgb,
-            var(--positive-color) 24%,
-            #e3e7ec
-          );
-          background: color-mix(
-            in srgb,
-            var(--positive-color) 6%,
-            #ffffff
-          );
-        }
-
-        .climateCell.tone-negative {
-          border-color: color-mix(
-            in srgb,
-            var(--negative-color) 24%,
-            #e3e7ec
-          );
-          background: color-mix(
-            in srgb,
-            var(--negative-color) 6%,
-            #ffffff
-          );
-        }
-
-        .climateLabel {
-          overflow: hidden;
-          font-size: 7.5px;
-          font-weight: 900;
-          color: rgba(15, 23, 42, 0.53);
-          text-transform: uppercase;
-          letter-spacing: 0.035em;
-          text-overflow: ellipsis;
-          white-space: nowrap;
-        }
-
-        .climateCell strong {
-          overflow: hidden;
-          font-size: 13px;
-          font-weight: 950;
-          color: #0f172a;
-          text-overflow: ellipsis;
-          white-space: nowrap;
-        }
-
-        .climateCell strong.positive {
-          color: var(--positive-color);
-        }
-
-        .climateCell strong.negative {
-          color: var(--negative-color);
-        }
-
-        .climateCell small {
-          overflow: hidden;
-          font-size: 7.5px;
-          font-weight: 750;
-          color: rgba(15, 23, 42, 0.47);
-          text-overflow: ellipsis;
-          white-space: nowrap;
-        }
-
-        .climateNote {
-          margin: 0 18px 16px;
-          padding: 10px 12px;
-          border: 1px solid #e8ebef;
-          border-radius: 12px;
-          background: #f8fafc;
-          color: rgba(15, 23, 42, 0.58);
-          font-size: 9.5px;
-          font-weight: 750;
-          line-height: 1.45;
-          text-align: center;
+          font-size: 12px;
+          color: rgba(15, 23, 42, 0.66);
+          font-weight: 850;
         }
 
         @media (max-width: 720px) {
-          .climatologyHead {
+          .chartArea {
             min-height: 0;
-            padding: 14px 10px 10px;
+            padding: 0;
+            overflow: hidden;
+          }
+
+          .msg {
+            min-height: 280px;
+          }
+        }
+      `}</style>
+    </div>
+  );
+}
+
+function AnomalySummaryPanel({
+  mode,
+  groupKey,
+  currentData,
+  climatologyData,
+  currentBounds,
+}) {
+  const meta = useMemo(() => deltaMetaForGroup(groupKey), [groupKey]);
+
+  const prepared = useMemo(
+    () =>
+      makePeriodAnomalySeries({
+        currentData,
+        climatologyData,
+        currentBounds,
+        mode,
+        field: meta.field,
+      }),
+    [
+      climatologyData,
+      currentBounds,
+      currentData,
+      meta.field,
+      mode,
+    ],
+  );
+
+  const stats = useMemo(
+    () => deltaStatsFromSeries(prepared.series),
+    [prepared.series],
+  );
+
+  if (!stats.count) return null;
+
+  const scaleMin = Math.min(0, n(stats.min));
+  const scaleMax = Math.max(0, n(stats.max));
+  const scaleRange = scaleMax - scaleMin || 1;
+  const clampPercent = (value) =>
+    Math.max(0, Math.min(100, ((value - scaleMin) / scaleRange) * 100));
+
+  const zeroPosition = clampPercent(0);
+  const meanPosition = clampPercent(n(stats.mean));
+  const above = Math.round(n(stats.abovePercent));
+  const below = Math.round(n(stats.belowPercent));
+  const referenceLabel = climatologyReferenceLabel(climatologyData);
+  const iconType = anomalyIconType(groupKey);
+
+  return (
+    <section
+      className={`anomalySummary ${deltaTone(stats.mean)}`}
+      aria-label={`Riepilogo anomalia ${meta.label}`}
+      style={{
+        "--positive": meta.positiveColor,
+        "--negative": meta.negativeColor,
+        "--zero-position": `${zeroPosition}%`,
+        "--mean-position": `${meanPosition}%`,
+        "--above": `${Number.isFinite(above) ? above : 0}%`,
+        "--below": `${Number.isFinite(below) ? below : 0}%`,
+      }}
+    >
+      <div className="anomalyMain">
+        <div className="anomalyScale">
+          <div className="anomalyHeader">
+            <span className="anomalyIcon" aria-hidden="true">
+              <SummaryParameterIcon type={iconType} />
+            </span>
+            <div className="anomalyHeaderText">
+              <span>Anomalia {meta.label}</span>
+              <i aria-hidden="true">·</i>
+              <strong>{referenceLabel}</strong>
+            </div>
+          </div>
+
+          <div className="meanBadge">
+            <span>Anomalia media</span>
+            <strong>{formatSignedDelta(stats.mean, meta.unit)}</strong>
+            <i aria-hidden="true" />
+          </div>
+
+          <div className="scaleTrack">
+            <span className="zeroMarker" aria-hidden="true" />
+            <span className="meanMarker" aria-hidden="true" />
+            <span className="minDot" aria-hidden="true" />
+            <span className="maxDot" aria-hidden="true" />
+          </div>
+
+          <div className="scaleLabels">
+            <div className="minLabel">
+              <strong>{formatSignedDelta(stats.min, meta.unit)}</strong>
+              <span>Scarto minimo</span>
+            </div>
+            <div className="zeroLabel" style={{ left: `${zeroPosition}%` }}>
+              <strong>0 {meta.unit}</strong>
+              <span>Media climatica</span>
+            </div>
+            <div className="maxLabel">
+              <strong>{formatSignedDelta(stats.max, meta.unit)}</strong>
+              <span>Scarto massimo</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="anomalyTime">
+        <div className="timeMetric above">
+          <strong>{Number.isFinite(above) ? `${above}%` : "—"}</strong>
+          <span>Tempo sopra climatologia</span>
+          <i><b /></i>
+        </div>
+        <div className="timeMetric below">
+          <strong>{Number.isFinite(below) ? `${below}%` : "—"}</strong>
+          <span>Tempo sotto climatologia</span>
+          <i><b /></i>
+        </div>
+      </div>
+
+      <style jsx>{`
+        .anomalySummary {
+          margin: -7px 20px 14px;
+          min-width: 0;
+          min-height: 88px;
+          padding: 8px 14px;
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) 220px;
+          align-items: stretch;
+          gap: 14px;
+          border: 1px solid #dce5ef;
+          border-left: 4px solid var(--positive);
+          border-radius: 15px;
+          background:
+            radial-gradient(520px 100px at 50% -60%, rgba(37, 99, 235, 0.045), transparent 72%),
+            linear-gradient(180deg, #ffffff, #fbfdff);
+          box-shadow: 0 6px 18px rgba(15, 23, 42, 0.035);
+        }
+
+        .anomalySummary.negative {
+          border-left-color: var(--negative);
+        }
+
+        .anomalyMain {
+          min-width: 0;
+          padding-right: 14px;
+          border-right: 1px solid #e5ebf1;
+        }
+
+        .anomalyHeader {
+          position: absolute;
+          left: 2px;
+          top: 0;
+          z-index: 4;
+          min-width: 0;
+          max-width: 42%;
+          height: 20px;
+          display: flex;
+          align-items: center;
+          gap: 6px;
+        }
+
+        .anomalyIcon {
+          width: 20px;
+          height: 20px;
+          flex: 0 0 20px;
+          display: grid;
+          place-items: center;
+          border-radius: 7px;
+          background: color-mix(in srgb, var(--positive) 10%, white);
+          color: var(--positive);
+        }
+
+        .negative .anomalyIcon {
+          background: color-mix(in srgb, var(--negative) 10%, white);
+          color: var(--negative);
+        }
+
+        .anomalyIcon :global(svg) {
+          width: 13px;
+          height: 13px;
+          fill: none;
+          stroke: currentColor;
+          stroke-width: 1.8;
+          stroke-linecap: round;
+          stroke-linejoin: round;
+        }
+
+        .anomalyHeaderText {
+          min-width: 0;
+          display: flex;
+          align-items: baseline;
+          gap: 6px;
+          overflow: hidden;
+          white-space: nowrap;
+        }
+
+        .anomalyHeaderText span {
+          color: #64748b;
+          font-size: 7px;
+          font-weight: 950;
+          letter-spacing: 0.05em;
+          text-transform: uppercase;
+        }
+
+        .anomalyHeaderText i {
+          color: #94a3b8;
+          font-size: 9px;
+          font-style: normal;
+          font-weight: 900;
+        }
+
+        .anomalyHeaderText strong {
+          overflow: hidden;
+          color: #0f172a;
+          font-size: 9.5px;
+          font-weight: 950;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .anomalyScale {
+          position: relative;
+          min-width: 0;
+          padding: 35px 4px 12px;
+        }
+
+        .meanBadge {
+          position: absolute;
+          left: var(--mean-position);
+          top: 18px;
+          z-index: 4;
+          display: flex;
+          align-items: baseline;
+          gap: 4px;
+          color: var(--positive);
+          text-align: center;
+          transform: translateX(-50%);
+          white-space: nowrap;
+        }
+
+        .negative .meanBadge {
+          color: var(--negative);
+        }
+
+        .meanBadge span {
+          font-size: 6.8px;
+          font-weight: 900;
+        }
+
+        .meanBadge strong {
+          font-size: 11.5px;
+          font-weight: 950;
+          line-height: 1;
+        }
+
+        .meanBadge i {
+          position: absolute;
+          left: 50%;
+          top: calc(100% + 1px);
+          width: 0;
+          height: 0;
+          border-left: 4px solid transparent;
+          border-right: 4px solid transparent;
+          border-top: 5px solid currentColor;
+          transform: translateX(-50%);
+        }
+
+        .scaleTrack {
+          position: relative;
+          height: 10px;
+          border-radius: 999px;
+          background:
+            linear-gradient(
+              90deg,
+              var(--negative) 0%,
+              #dbeafe var(--zero-position),
+              #fee2e2 var(--zero-position),
+              var(--positive) 100%
+            );
+          box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.12);
+        }
+
+        .zeroMarker {
+          position: absolute;
+          left: var(--zero-position);
+          top: -6px;
+          width: 2px;
+          height: 23px;
+          border-radius: 999px;
+          background: #334155;
+          transform: translateX(-50%);
+        }
+
+        .meanMarker,
+        .minDot,
+        .maxDot {
+          position: absolute;
+          top: 50%;
+          border-radius: 50%;
+          transform: translate(-50%, -50%);
+        }
+
+        .meanMarker {
+          left: var(--mean-position);
+          z-index: 3;
+          width: 16px;
+          height: 16px;
+          border: 3px solid #fff;
+          background: var(--positive);
+          box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.12);
+        }
+
+        .negative .meanMarker {
+          background: var(--negative);
+        }
+
+        .minDot,
+        .maxDot {
+          width: 14px;
+          height: 14px;
+        }
+
+        .minDot {
+          left: 0;
+          border: 2px solid color-mix(in srgb, var(--negative) 30%, white);
+          background: var(--negative);
+        }
+
+        .maxDot {
+          left: 100%;
+          border: 2px solid color-mix(in srgb, var(--positive) 30%, white);
+          background: var(--positive);
+        }
+
+        .scaleLabels {
+          position: relative;
+          min-height: 20px;
+          margin-top: 4px;
+        }
+
+        .scaleLabels > div {
+          position: absolute;
+          top: 0;
+          display: grid;
+          gap: 0;
+        }
+
+        .scaleLabels strong {
+          color: #0f172a;
+          font-size: 9px;
+          font-weight: 950;
+          line-height: 1.05;
+          white-space: nowrap;
+        }
+
+        .scaleLabels span {
+          color: #64748b;
+          font-size: 6.5px;
+          font-weight: 850;
+          text-transform: uppercase;
+          letter-spacing: 0.02em;
+          white-space: nowrap;
+        }
+
+        .minLabel {
+          left: 0;
+          justify-items: start;
+        }
+
+        .maxLabel {
+          right: 0;
+          justify-items: end;
+        }
+
+        .zeroLabel {
+          justify-items: center;
+          transform: translateX(-50%);
+        }
+
+        .anomalyTime {
+          min-width: 0;
+          display: grid;
+          align-content: center;
+          gap: 7px;
+        }
+
+        .timeMetric {
+          display: grid;
+          grid-template-columns: 48px minmax(0, 1fr);
+          align-items: center;
+          gap: 0 9px;
+        }
+
+        .timeMetric strong {
+          grid-row: 1 / span 2;
+          min-width: 44px;
+          font-size: 17px;
+          font-weight: 950;
+          line-height: 1;
+          text-align: right;
+        }
+
+        .timeMetric span {
+          align-self: end;
+          overflow: hidden;
+          color: #64748b;
+          font-size: 6.8px;
+          font-weight: 900;
+          text-transform: uppercase;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .timeMetric i {
+          align-self: start;
+          height: 5px;
+          margin-top: 2px;
+          overflow: hidden;
+          border-radius: 999px;
+          background: #e9eef4;
+        }
+
+        .timeMetric b {
+          display: block;
+          height: 100%;
+          border-radius: inherit;
+        }
+
+        .timeMetric.above strong {
+          color: var(--positive);
+        }
+
+        .timeMetric.above b {
+          width: var(--above);
+          background: var(--positive);
+        }
+
+        .timeMetric.below strong {
+          color: var(--negative);
+        }
+
+        .timeMetric.below b {
+          width: var(--below);
+          background: var(--negative);
+        }
+
+        @media (max-width: 1050px) {
+          .anomalySummary {
+            grid-template-columns: minmax(0, 1fr) 190px;
+            gap: 11px;
+          }
+
+          .anomalyMain {
+            padding-right: 11px;
+          }
+
+          .timeMetric {
+            grid-template-columns: 42px minmax(0, 1fr);
+            gap: 0 7px;
+          }
+
+          .timeMetric strong {
+            font-size: 15px;
+          }
+        }
+
+        @media (max-width: 760px) {
+          .anomalySummary {
+            margin: -2px 10px 12px;
+            min-height: 0;
+            padding: 10px;
             grid-template-columns: 1fr;
+            gap: 9px;
+          }
+
+          .anomalyMain {
+            padding: 0 0 9px;
+            border-right: 0;
+            border-bottom: 1px solid #e5ebf1;
+          }
+
+          .anomalyHeader {
+            position: relative;
+            left: auto;
+            top: auto;
+            max-width: 100%;
+            height: 22px;
+            margin-bottom: 2px;
+          }
+
+          .anomalyScale {
+            padding: 20px 4px 20px;
+          }
+
+          .meanBadge {
+            top: 3px;
+          }
+
+          .anomalyTime {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
             gap: 10px;
           }
 
-          .climatologyText,
-          .archiveInfo {
-            grid-column: 1;
+          .timeMetric {
+            grid-template-columns: 42px minmax(0, 1fr);
           }
 
-          .climatologyText h3 {
-            font-size: 16px;
+          .timeMetric span {
+            white-space: normal;
+          }
+        }
+
+        @media (max-width: 430px) {
+          .anomalyHeaderText {
+            gap: 4px;
           }
 
-          .archiveInfo {
-            justify-self: stretch;
-            width: auto;
+          .anomalyHeaderText span {
+            font-size: 6.8px;
           }
 
-          .climatologyChart {
-            min-height: 210px;
-            padding-left: 0;
-            padding-right: 0;
-          }
-
-          .climateMsg {
-            min-height: 188px;
-          }
-
-          .climateSummary {
-            width: calc(100% - 20px);
-            margin: 0 auto 10px;
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 5px;
-          }
-
-          .climateCell {
-            min-height: 42px;
-            padding: 5px 7px;
-          }
-
-          .climateCell strong {
-            font-size: 12.5px;
-          }
-
-          .climateNote {
-            margin: 0 10px 14px;
+          .anomalyHeaderText strong {
             font-size: 9px;
+          }
+
+          .meanBadge strong {
+            font-size: 10.5px;
+          }
+
+          .scaleLabels strong {
+            font-size: 8.5px;
+          }
+
+          .scaleLabels span {
+            font-size: 6px;
+          }
+
+          .zeroLabel span {
+            display: none;
           }
         }
       `}</style>
@@ -7379,6 +7732,7 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
 
   const [mode, setMode] = useState("day");
   const [groupKey, setGroupKey] = useState("temp");
+  const [chartView, setChartView] = useState("observed");
   const [selectedDate, setSelectedDate] = useState(
     availableDates.length ? availableDates[availableDates.length - 1] : null,
   );
@@ -7429,12 +7783,6 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
     if (mode === "week") return "Dati ultimi 7 giorni";
     if (mode === "month") return "Dati ultimi 30 giorni";
     return "Dati giornalieri";
-  }, [mode]);
-
-  const periodDurationLabel = useMemo(() => {
-    if (mode === "week") return "7 giorni · intervalli di 15 minuti";
-    if (mode === "month") return "30 giorni · intervalli di 1 ora";
-    return "Intervalli di 15 minuti";
   }, [mode]);
 
   const periodLabel = useMemo(
@@ -7523,36 +7871,22 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
   const showRealtimePulse =
     mode === "day" && selectedDate === latestAvailableDate;
 
-  const canGoBack = !navigationDisabled(
-    availableDates,
-    selectedDate,
-    mode,
-    -1,
-  );
+  const supportsClimatology =
+    groupKey === "temp" && ["day", "week", "month"].includes(mode);
 
-  const canGoForward = !navigationDisabled(
-    availableDates,
-    selectedDate,
-    mode,
-    1,
-  );
-
-  const supportsClimatology = mode === "day" || mode === "week";
+  useEffect(() => {
+    if (!supportsClimatology && chartView !== "observed") {
+      setChartView("observed");
+    }
+  }, [chartView, supportsClimatology]);
 
   const changeMode = (nextMode) => {
     setMode(nextMode);
 
-    // Se si sceglie "Oggi", si torna sempre all'ultima data disponibile.
     if (nextMode === "day" && latestAvailableDate) {
       setSelectedDate(latestAvailableDate);
       setRefreshTick((value) => value + 1);
     }
-  };
-
-  const changePeriod = (direction) => {
-    setSelectedDate((current) =>
-      moveSelectedDate(availableDates, current, mode, direction),
-    );
   };
 
   useEffect(() => {
@@ -7631,7 +7965,14 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
   useEffect(() => {
     let alive = true;
 
-    if (!supportsClimatology) {
+    if (
+      !supportsClimatology ||
+      !selectedDate ||
+      !bounds.startISO ||
+      !bounds.endISO ||
+      !Array.isArray(data?.temp) ||
+      !data.temp.length
+    ) {
       setClimatologyError("");
       setClimatologyData(null);
       setClimatologyLoading(false);
@@ -7643,29 +7984,16 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
     async function runClimatology() {
       setClimatologyError("");
       setClimatologyData(null);
-
-      if (!selectedDate || !bounds.startISO || !bounds.endISO) {
-        setClimatologyLoading(false);
-        return;
-      }
-
       setClimatologyLoading(true);
 
       try {
-        const result = await loadHistoricalAverage({
-          selectedDate,
-          currentBounds: bounds,
-          mode,
-          availableDates,
-          dailyRainByDate,
-        });
-
+        const result = await loadFixedTemperatureClimatologyPeriod(data.temp);
         if (alive) setClimatologyData(result);
       } catch (error) {
         if (alive) {
           setClimatologyError(
             error?.message ||
-              "Non è stato possibile calcolare la media storica.",
+              "Non è stato possibile caricare la climatologia termica.",
           );
         }
       } finally {
@@ -7679,14 +8007,14 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
       alive = false;
     };
   }, [
-    availableDates,
     bounds.endISO,
     bounds.startISO,
-    dailyRainByDate,
+    data,
     mode,
     selectedDate,
     supportsClimatology,
   ]);
+
 
   const parameterOptions = GROUPS;
 
@@ -7697,10 +8025,13 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
       ? {
           bottom: 4,
           left: "center",
-          orient: "vertical",
-          itemGap: 4,
+          orient: "horizontal",
+          width: isVeryNarrowChart ? 250 : 270,
+          itemGap: 10,
+          itemWidth: 14,
+          itemHeight: 7,
           textStyle: {
-            fontSize: 10.5,
+            fontSize: 9.5,
             fontWeight: 750,
             color: "#475569",
           },
@@ -7737,34 +8068,19 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
         };
 
     const gridWithLegend = isMobileChart
-      ? { left: 50, right: 22, top: 78, bottom: 98, containLabel: false }
+      ? {
+          left: 50,
+          right: 22,
+          top: 78,
+          bottom: groupKey === "wind" ? 78 : 62,
+          containLabel: false,
+        }
       : desktopGridBase;
 
-    const toolboxZoom = {
-      feature: {
-        restore: { title: "Ripristina" },
-        saveAsImage: {
-          type: "png",
-          name: `meteo-collinas-${mode}-${groupKey}`,
-          backgroundColor: "#ffffff",
-          pixelRatio: 2,
-          title: "Salva grafico",
-        },
-      },
-      right: isMobileChart ? 6 : 14,
-      top: isMobileChart ? 38 : 13,
-      itemSize: isMobileChart ? 16 : 17,
-      itemGap: isMobileChart ? 8 : 9,
-      iconStyle: {
-        borderColor: "#64748b",
-        borderWidth: 1.3,
-      },
-      emphasis: {
-        iconStyle: {
-          borderColor: "#2563eb",
-        },
-      },
-    };
+    const toolboxZoom = makeChartToolbox({
+      filename: `meteo-collinas-${mode}-${groupKey}`,
+      isMobile: isMobileChart,
+    });
 
     const rollingEnd = n(data?.latestTimestamp);
     const rollingStart = n(data?.windowStartTimestamp);
@@ -7963,10 +8279,20 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
       const axis = axisNice(mm.min - 1, mm.max + 1, 6);
 
       const pulseTemp = showRealtimePulse
-        ? makeRealtimePulseSeries(data.temp, data.latestTimestamp, 0)
+        ? makeRealtimePulseSeries(
+            data.temp,
+            data.latestTimestamp,
+            0,
+            "Temperatura (°C)",
+          )
         : null;
       const pulseDew = showRealtimePulse
-        ? makeRealtimePulseSeries(data.dew, data.latestTimestamp, 0)
+        ? makeRealtimePulseSeries(
+            data.dew,
+            data.latestTimestamp,
+            0,
+            "Punto di rugiada (°C)",
+          )
         : null;
 
       return {
@@ -8017,12 +8343,6 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
 
     if (groupKey === "rain") {
 
-      const pulseRain = showRealtimePulse
-        ? makeRealtimePulseSeries(data.rainH, data.latestTimestamp, 0)
-        : null;
-      const pulseCum = showRealtimePulse
-        ? makeRealtimePulseSeries(data.rainCum, data.latestTimestamp, 1)
-        : null;
       const rainStepLabel =
         mode === "day" || mode === "week"
           ? "Pioggia 15 min (mm)"
@@ -8030,6 +8350,22 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
       const rainAxisLabel =
         mode === "day" || mode === "week" ? "mm/15m" : "mm/h";
 
+      const pulseRain = showRealtimePulse
+        ? makeRealtimePulseSeries(
+            data.rainH,
+            data.latestTimestamp,
+            0,
+            rainStepLabel,
+          )
+        : null;
+      const pulseCum = showRealtimePulse
+        ? makeRealtimePulseSeries(
+            data.rainCum,
+            data.latestTimestamp,
+            1,
+            "Cumulata (mm)",
+          )
+        : null;
       return {
         ...common,
         title: chartTitle("Precipitazioni"),
@@ -8075,7 +8411,12 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
     if (groupKey === "rh") {
 
       const pulse = showRealtimePulse
-        ? makeRealtimePulseSeries(data.rh, data.latestTimestamp, 0)
+        ? makeRealtimePulseSeries(
+            data.rh,
+            data.latestTimestamp,
+            0,
+            "Umidità (%)",
+          )
         : null;
 
       return {
@@ -8106,13 +8447,28 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
     if (groupKey === "wind") {
 
       const pulseWind = showRealtimePulse
-        ? makeRealtimePulseSeries(data.wind, data.latestTimestamp, 0)
+        ? makeRealtimePulseSeries(
+            data.wind,
+            data.latestTimestamp,
+            0,
+            "Vento medio (km/h)",
+          )
         : null;
       const pulseGust = showRealtimePulse
-        ? makeRealtimePulseSeries(data.gust, data.latestTimestamp, 0)
+        ? makeRealtimePulseSeries(
+            data.gust,
+            data.latestTimestamp,
+            0,
+            "Raffiche (km/h)",
+          )
         : null;
       const pulseDir = showRealtimePulse
-        ? makeRealtimePulseSeries(data.dirMean, data.latestTimestamp, 1)
+        ? makeRealtimePulseSeries(
+            data.dirMean,
+            data.latestTimestamp,
+            1,
+            "Direzione",
+          )
         : null;
 
       return {
@@ -8222,7 +8578,12 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
       const mm = minMaxFrom(data.press) || { min: 1010, max: 1020 };
       const axis = axisNice(mm.min - 1.5, mm.max + 1.5, 6);
       const pulse = showRealtimePulse
-        ? makeRealtimePulseSeries(data.press, data.latestTimestamp, 0)
+        ? makeRealtimePulseSeries(
+            data.press,
+            data.latestTimestamp,
+            0,
+            "Pressione (hPa)",
+          )
         : null;
 
       return {
@@ -8257,7 +8618,12 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
     if (groupKey === "uv") {
 
       const pulse = showRealtimePulse
-        ? makeRealtimePulseSeries(data.uv, data.latestTimestamp, 0)
+        ? makeRealtimePulseSeries(
+            data.uv,
+            data.latestTimestamp,
+            0,
+            "Indice UV",
+          )
         : null;
 
       return {
@@ -8287,7 +8653,12 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
 
 
     const pulse = showRealtimePulse
-      ? makeRealtimePulseSeries(data.solar, data.latestTimestamp, 0)
+      ? makeRealtimePulseSeries(
+          data.solar,
+          data.latestTimestamp,
+          0,
+          "Radiazione solare (W/m²)",
+        )
       : null;
 
     return {
@@ -8326,9 +8697,9 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
 
   const chartHeight = isMobileChart
     ? groupKey === "wind"
-      ? 370
-      : 340
-    : 390;
+      ? 330
+      : 310
+    : 370;
 
 
   return (
@@ -8350,32 +8721,9 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
         </div>
 
         <div className="dateNavigatorCenter">
-          <button
-            type="button"
-            className="arrow"
-            aria-label="Periodo precedente"
-            title="Periodo precedente"
-            disabled={!canGoBack}
-            onClick={() => changePeriod(-1)}
-          >
-            ←
-          </button>
-
           <div className="dateText">
             <strong>{periodLabel}</strong>
-            <span>{periodDurationLabel}</span>
           </div>
-
-          <button
-            type="button"
-            className="arrow"
-            aria-label="Periodo successivo"
-            title="Periodo successivo"
-            disabled={!canGoForward}
-            onClick={() => changePeriod(1)}
-          >
-            →
-          </button>
         </div>
 
         <div className="navControl navControlRight">
@@ -8394,39 +8742,74 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
         <PeriodSummary data={data} mode={mode} />
       )}
 
-      <section className="chartPanel" aria-label="Andamento del periodo">
-        <div className="chartPanelHead">
-          <span className="chartPanelKicker">Andamento del periodo</span>
-          <h3>{periodTitle}</h3>
-        </div>
+      <section
+        className="chartPanel"
+        aria-label={chartView === "anomaly" ? "Anomalia climatica" : "Andamento del periodo"}
+      >
+        {supportsClimatology && (
+          <div className="chartViewToggle">
+            <button
+              type="button"
+              className={`anomalyToggle ${chartView === "anomaly" ? "active" : ""}`}
+              aria-pressed={chartView === "anomaly"}
+              aria-label={
+                chartView === "anomaly"
+                  ? "Torna al grafico dell'andamento"
+                  : "Mostra il grafico dell'anomalia climatica"
+              }
+              onClick={() =>
+                setChartView((current) =>
+                  current === "anomaly" ? "observed" : "anomaly",
+                )
+              }
+            >
+              Anomalia
+            </button>
+          </div>
+        )}
 
-        <div className="chartArea">
-          {loading && <div className="msg">Caricamento del grafico…</div>}
-          {!loading && err && <div className="msg">{err}</div>}
-          {!loading && !err && option && (
-            <ReactECharts
-              option={option}
-              style={{ height: chartHeight, width: "100%" }}
-              notMerge={true}
-              lazyUpdate={true}
-            />
-          )}
-        </div>
+        {chartView === "anomaly" ? (
+          <ClimatologyChart
+            mode={mode}
+            groupKey={groupKey}
+            currentData={data}
+            climatologyData={climatologyData}
+            currentBounds={bounds}
+            loading={loading || climatologyLoading}
+            error={climatologyError}
+            isMobile={isMobileChart}
+            chartHeight={chartHeight}
+          />
+        ) : (
+          <div className="chartArea">
+            {loading && <div className="msg">Caricamento del grafico…</div>}
+            {!loading && err && <div className="msg">{err}</div>}
+            {!loading && !err && option && (
+              <ReactECharts
+                option={option}
+                style={{ height: chartHeight, width: "100%" }}
+                notMerge={true}
+                lazyUpdate={true}
+              />
+            )}
+          </div>
+        )}
       </section>
 
-
-      {supportsClimatology && (
-        <ClimatologyChart
-          mode={mode}
-          groupKey={groupKey}
-          currentData={data}
-          climatologyData={climatologyData}
-          currentBounds={bounds}
-          loading={loading || climatologyLoading}
-          error={climatologyError}
-          isMobile={isMobileChart}
-        />
-      )}
+      {supportsClimatology &&
+        !loading &&
+        !err &&
+        data &&
+        climatologyData &&
+        !climatologyError && (
+          <AnomalySummaryPanel
+            mode={mode}
+            groupKey={groupKey}
+            currentData={data}
+            climatologyData={climatologyData}
+            currentBounds={bounds}
+          />
+        )}
 
       <style jsx>{`
         .periodCard {
@@ -8458,9 +8841,6 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
           letter-spacing: -0.025em;
           color: #0b1f45;
         }
-
-
-
 
 
         .dateNavigator {
@@ -8512,48 +8892,16 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
           top: 50%;
           transform: translate(-50%, -50%);
           min-width: 0;
-          display: grid;
-          grid-template-columns: 42px auto 42px;
+          display: flex;
           align-items: center;
           justify-content: center;
-          gap: 8px;
           z-index: 1;
-        }
-
-        .arrow {
-          width: 42px;
-          height: 42px;
-          flex: 0 0 42px;
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          border: 1px solid rgba(255, 255, 255, 0.14);
-          border-radius: 50%;
-          background: rgba(255, 255, 255, 0.12);
-          color: #fff;
-          font-size: 22px;
-          font-weight: 800;
-          cursor: pointer;
-          transition:
-            transform 120ms ease,
-            background 120ms ease;
-        }
-
-        .arrow:hover:not(:disabled) {
-          transform: translateY(-1px);
-          background: rgba(255, 255, 255, 0.19);
-        }
-
-        .arrow:disabled {
-          opacity: 0.28;
-          cursor: not-allowed;
         }
 
         .dateText {
           min-width: 270px;
           display: grid;
           justify-items: center;
-          gap: 3px;
           text-align: center;
         }
 
@@ -8563,15 +8911,8 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
           text-transform: capitalize;
         }
 
-        .dateText span {
-          font-size: 9px;
-          font-weight: 800;
-          color: rgba(255, 255, 255, 0.78);
-          text-transform: uppercase;
-          letter-spacing: 0.06em;
-        }
-
         .chartPanel {
+          position: relative;
           margin: 0 20px 18px;
           overflow: hidden;
           border: 1px solid #dce5ef;
@@ -8580,35 +8921,52 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
           box-shadow: 0 8px 24px rgba(15, 23, 42, 0.045);
         }
 
-        .chartPanelHead {
-          min-height: 68px;
-          padding: 11px 18px 10px;
-          display: grid;
-          justify-items: center;
-          align-content: center;
-          gap: 2px;
-          border-bottom: 1px solid #edf1f5;
-          background:
-            radial-gradient(420px 90px at 50% -45%, rgba(37, 99, 235, 0.08), transparent 72%),
-            linear-gradient(180deg, #ffffff, #fbfdff);
-          text-align: center;
+        .chartViewToggle {
+          position: absolute;
+          right: 14px;
+          top: 13px;
+          z-index: 20;
         }
 
-        .chartPanelKicker {
-          font-size: 8px;
-          font-weight: 950;
-          color: #64748b;
-          text-transform: uppercase;
-          letter-spacing: 0.07em;
+        .anomalyToggle {
+          min-width: 94px;
+          min-height: 27px;
+          padding: 5px 11px;
+          border: 1px solid #d7e0ea;
+          border-radius: 9px;
+          background: #ffffff;
+          color: #0f172a;
+          font: inherit;
+          font-size: 9px;
+          font-weight: 900;
+          line-height: 1;
+          cursor: pointer;
+          box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
+          transition:
+            border-color 120ms ease,
+            background 120ms ease,
+            color 120ms ease,
+            box-shadow 120ms ease;
         }
 
-        .chartPanelHead h3 {
-          margin: 0;
-          font-size: 20px;
-          font-weight: 950;
-          line-height: 1.08;
-          letter-spacing: -0.025em;
-          color: #0b1f45;
+        .anomalyToggle:hover {
+          border-color: #9db9dc;
+          background: #f8fbff;
+        }
+
+        .anomalyToggle:focus-visible {
+          outline: none;
+          border-color: #6ea5ea;
+          box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+        }
+
+        .anomalyToggle.active {
+          border-color: #70a7ef;
+          background: #eaf3ff;
+          color: #0b5ed7;
+          box-shadow:
+            inset 0 0 0 1px rgba(37, 99, 235, 0.04),
+            0 1px 2px rgba(15, 23, 42, 0.03);
         }
 
         .chartArea {
@@ -8616,8 +8974,8 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
           z-index: 1;
           width: 100%;
           min-width: 0;
-          min-height: 400px;
-          padding: 4px 10px 8px;
+          min-height: 0;
+          padding: 0;
           box-sizing: border-box;
           background: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
         }
@@ -8647,15 +9005,7 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
           .navControlRight { width: 205px; }
 
           .dateNavigatorCenter {
-            grid-template-columns: 40px auto 40px;
             justify-content: center;
-            gap: 7px;
-          }
-
-          .arrow {
-            width: 40px;
-            height: 40px;
-            flex-basis: 40px;
           }
 
           .dateText {
@@ -8665,49 +9015,57 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
 
         @media (max-width: 720px) {
           .periodCard {
-            border-radius: 18px;
+            border-radius: 17px;
           }
 
           .dataHeader {
-            padding: 15px 12px 13px;
+            padding: 11px 10px 10px;
           }
 
           .dataHeader h2 {
-            font-size: 21px;
+            font-size: 19px;
           }
-
-
 
           .dateNavigator {
             min-height: 0;
-            padding: 10px;
-            grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-            gap: 9px;
-          }
-
-          .navControlLeft,
-          .navControlRight {
-            grid-row: 1;
+            padding: 9px 10px 10px;
+            grid-template-columns: minmax(92px, 0.78fr) minmax(0, 1.45fr);
+            grid-template-rows: auto auto;
+            align-items: end;
+            gap: 8px 10px;
           }
 
           .dateNavigatorCenter {
             position: static;
             transform: none;
             grid-column: 1 / -1;
-            grid-row: 2;
+            grid-row: 1;
             width: 100%;
-            display: grid;
-            grid-template-columns: 38px minmax(0, 1fr) 38px;
-            gap: 8px;
+            display: flex;
+            justify-content: center;
           }
 
-          .navControlLeft,
-          .navControlRight {
+          .navControlLeft {
+            grid-column: 1;
+            grid-row: 2;
             width: 100%;
+            justify-self: stretch;
+          }
+
+          .navControlRight {
+            grid-column: 2;
+            grid-row: 2;
+            width: 100%;
+            justify-self: stretch;
+          }
+
+          .navControl {
+            gap: 3px;
           }
 
           .navControlLabel {
-            font-size: 7px;
+            font-size: 6.5px;
+            letter-spacing: 0.055em;
           }
 
           .dateText {
@@ -8715,49 +9073,55 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
           }
 
           .dateText strong {
-            font-size: 12px;
-            line-height: 1.2;
-          }
-
-          .dateText span {
-            font-size: 8px;
-          }
-
-          .arrow {
-            width: 38px;
-            height: 38px;
-            flex-basis: 38px;
+            font-size: 12.5px;
+            line-height: 1.1;
           }
 
           .chartPanel {
-            margin: 0 10px 12px;
-            border-radius: 14px;
+            margin: 0 8px 10px;
+            border-radius: 13px;
           }
 
-          .chartPanelHead {
-            min-height: 64px;
-            padding: 10px 10px 8px;
+          .chartViewToggle {
+            right: 8px;
+            top: 38px;
           }
 
-          .chartPanelKicker {
-            font-size: 7px;
+          .anomalyToggle {
+            min-width: 78px;
+            min-height: 25px;
+            padding: 4px 8px;
+            border-radius: 8px;
+            font-size: 8.5px;
           }
-
-          .chartPanelHead h3 {
-            font-size: 18px;
-          }
-
 
           .chartArea {
-            min-height: 340px;
+            min-height: 0;
             padding: 0;
             overflow: hidden;
           }
 
           .msg {
-            min-height: 310px;
+            min-height: 280px;
+          }
+        }
+
+        @media (max-width: 390px) {
+          .dateNavigator {
+            grid-template-columns: 90px minmax(0, 1fr);
+            gap: 7px;
           }
 
+          .dateText strong {
+            font-size: 11.5px;
+          }
+
+          .anomalyToggle {
+            min-width: 72px;
+            padding-left: 6px;
+            padding-right: 6px;
+            font-size: 8px;
+          }
         }
       `}</style>
     </div>
