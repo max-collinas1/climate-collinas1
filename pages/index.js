@@ -1,4 +1,6 @@
 import dynamic from "next/dynamic";
+import fs from "fs/promises";
+import path from "path";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/router";
 import SiteLayout from "../components/SiteLayout";
@@ -33,11 +35,6 @@ function round1(x) {
   const v = n(x);
   if (!Number.isFinite(v)) return null;
   return Math.round((v + Number.EPSILON) * 10) / 10;
-}
-
-function fmt1(x, fallback = "—") {
-  const r = round1(x);
-  return r === null ? fallback : r.toFixed(1);
 }
 
 function sumFinite(arr) {
@@ -221,7 +218,6 @@ function getPeriodBounds(mode, selectedDate) {
   return { startISO: selectedDate, endISO: selectedDate };
 }
 
-
 function formatLongDate(iso) {
   const d = isoToLocalDate(iso);
   if (!d) return iso || "—";
@@ -239,7 +235,6 @@ function formatPeriodLabel(mode, selectedDate) {
 
   return formatLongDate(selectedDate);
 }
-
 
 function degToCardinal8(v) {
   const nn = Number(v);
@@ -278,23 +273,6 @@ function axisNice(min, max, targetTicks = 6) {
   const niceMax = Math.ceil(max / interval) * interval;
 
   return { min: niceMin, max: niceMax, interval };
-}
-
-function lastNonNullPoint(pairs) {
-  if (!Array.isArray(pairs)) return null;
-
-  for (let i = pairs.length - 1; i >= 0; i -= 1) {
-    const point = pairs[i];
-    const x = point?.[0];
-    const rawY = point?.[1];
-    const y = n(rawY);
-
-    if (x !== null && x !== undefined && Number.isFinite(y)) {
-      return [Number(x), y];
-    }
-  }
-
-  return null;
 }
 
 function pointAtOrBeforeTimestamp(pairs, timestamp) {
@@ -549,6 +527,144 @@ function dailyGust(row) {
   return Number.isFinite(v) ? v : NaN;
 }
 
+function firstFiniteField(row, keys = []) {
+  for (const key of keys) {
+    const value = n(row?.[key]);
+    if (Number.isFinite(value)) return value;
+  }
+
+  return NaN;
+}
+
+function longestDrySpellDays(rows, threshold = 1) {
+  let longest = 0;
+  let current = 0;
+
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const rain = dailyRain(row);
+
+    if (Number.isFinite(rain) && rain < threshold) {
+      current += 1;
+      longest = Math.max(longest, current);
+    } else {
+      current = 0;
+    }
+  }
+
+  return longest;
+}
+
+function yearlyExpectedDays(year) {
+  const y = Number(year);
+  if (!Number.isFinite(y)) return 365;
+
+  const leap = y % 4 === 0 && (y % 100 !== 0 || y % 400 === 0);
+  return leap ? 366 : 365;
+}
+
+
+function longestWetSpellDays(rows, threshold = 1) {
+  let longest = 0;
+  let current = 0;
+
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const rain = dailyRain(row);
+
+    if (Number.isFinite(rain) && rain >= threshold) {
+      current += 1;
+      longest = Math.max(longest, current);
+    } else {
+      current = 0;
+    }
+  }
+
+  return longest;
+}
+
+
+async function readPublicJson(relativeParts = []) {
+  try {
+    const filePath = path.join(
+      process.cwd(),
+      "public",
+      ...relativeParts.map((part) => String(part)),
+    );
+
+    const raw = await fs.readFile(filePath, "utf8");
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+async function loadCivilProtectionStatus() {
+  const fallback = {
+    zoneCode: "SARD-C",
+    zoneName: "Bacini Montevecchio-Pischilappiu",
+    updatedAt: null,
+    sourceUrl: "https://www.sardegnaambiente.it/protezionecivile/",
+    current: {
+      level: "unknown",
+      label: "Stato da verificare",
+      validFrom: null,
+      validTo: null,
+      risks: [],
+      note: "Consulta il bollettino ufficiale della Protezione Civile regionale.",
+    },
+    next: {
+      level: "unknown",
+      label: "Prossimo stato da verificare",
+      validFrom: null,
+      validTo: null,
+      risks: [],
+      note: "Il prossimo livello verrà mostrato quando disponibile.",
+    },
+  };
+
+  try {
+    const payload = await readPublicJson([
+      "data",
+      "protezione-civile.json",
+    ]);
+
+    if (!payload || typeof payload !== "object") {
+      return fallback;
+    }
+
+    const normalizePeriod = (period, fallbackLabel) => {
+      const source = period && typeof period === "object" ? period : {};
+
+      return {
+        level: String(source.level || "unknown").toLowerCase(),
+        label: String(source.label || fallbackLabel),
+        validFrom: source.validFrom || null,
+        validTo: source.validTo || null,
+        risks: Array.isArray(source.risks)
+          ? source.risks.map((item) => String(item)).filter(Boolean)
+          : [],
+        note: source.note ? String(source.note) : "",
+      };
+    };
+
+    return {
+      zoneCode: String(payload.zoneCode || fallback.zoneCode),
+      zoneName: String(payload.zoneName || fallback.zoneName),
+      updatedAt: payload.updatedAt || null,
+      sourceUrl: String(payload.sourceUrl || fallback.sourceUrl),
+      current: normalizePeriod(
+        payload.current,
+        "Stato attuale da verificare",
+      ),
+      next: normalizePeriod(
+        payload.next,
+        "Prossimo stato da verificare",
+      ),
+    };
+  } catch {
+    return fallback;
+  }
+}
+
 export async function getStaticProps() {
   const rows = (await readDailyLive())
     .filter((r) => /^\d{4}-\d{2}-\d{2}$/.test(String(r?.date || "")))
@@ -602,23 +718,198 @@ export async function getStaticProps() {
 
     const overrideMonths = monthly.filter((m) => m.rainIsOverride);
 
-    const tmin = minFinite(d.map((x) => dailyTmin(x)));
-    const tmax = maxFinite(d.map((x) => dailyTmax(x)));
-    const tmean = avgFinite(d.map((x) => dailyTmean(x)));
+    const tminValues = d.map((x) => dailyTmin(x)).filter(Number.isFinite);
+    const tmeanValues = d.map((x) => dailyTmean(x)).filter(Number.isFinite);
+    const tmaxValues = d.map((x) => dailyTmax(x)).filter(Number.isFinite);
+    const rainValues = d.map((x) => dailyRain(x)).filter(Number.isFinite);
+
+    const humidityMeanValues = d
+      .map((row) =>
+        firstFiniteField(row, [
+          "rh_mean",
+          "rh_avg",
+          "humidity_mean",
+          "humidity_avg",
+          "rh_pct_mean",
+          "rh_pct_avg",
+        ]),
+      )
+      .filter(Number.isFinite);
+
+    const humidityMinValues = d
+      .map((row) =>
+        firstFiniteField(row, [
+          "rh_min",
+          "humidity_min",
+          "rh_pct_min",
+        ]),
+      )
+      .filter(Number.isFinite);
+
+    const humidityMaxValues = d
+      .map((row) =>
+        firstFiniteField(row, [
+          "rh_max",
+          "humidity_max",
+          "rh_pct_max",
+        ]),
+      )
+      .filter(Number.isFinite);
+
+    const windMeanValues = d
+      .map((row) =>
+        firstFiniteField(row, [
+          "wind_mean",
+          "wind_avg",
+          "wind_kmh_mean",
+          "wind_kmh_avg",
+          "wind_speed_mean",
+          "wind_speed_avg",
+        ]),
+      )
+      .filter(Number.isFinite);
+
+    const windMaxMeanValues = d
+      .map((row) =>
+        firstFiniteField(row, [
+          "wind_max",
+          "wind_kmh_max",
+          "wind_speed_max",
+        ]),
+      )
+      .filter(Number.isFinite);
+
+    const gustMeanValues = d
+      .map((row) =>
+        firstFiniteField(row, [
+          "gust_mean",
+          "gust_avg",
+          "gust_kmh_mean",
+          "gust_kmh_avg",
+          "wind_gust_mean",
+          "wind_gust_avg",
+        ]),
+      )
+      .filter(Number.isFinite);
+
+    const gustMaxValues = d
+      .map((row) =>
+        firstFiniteField(row, [
+          "gust_max",
+          "gust_kmh",
+          "gust_kmh_max",
+          "wind_gust_max",
+          "wind_gust_kmh",
+        ]),
+      )
+      .filter(Number.isFinite);
+
+    const pressureMeanValues = d
+      .map((row) =>
+        firstFiniteField(row, [
+          "press_mean",
+          "press_avg",
+          "pressure_mean",
+          "pressure_avg",
+          "press_hpa_mean",
+          "press_hpa_avg",
+        ]),
+      )
+      .filter(Number.isFinite);
+
+    const pressureMinValues = d
+      .map((row) =>
+        firstFiniteField(row, [
+          "press_min",
+          "pressure_min",
+          "press_hpa_min",
+        ]),
+      )
+      .filter(Number.isFinite);
+
+    const pressureMaxValues = d
+      .map((row) =>
+        firstFiniteField(row, [
+          "press_max",
+          "pressure_max",
+          "press_hpa_max",
+        ]),
+      )
+      .filter(Number.isFinite);
+
     const rainSum = sumFinite(monthly.map((m) => m.rainSum));
-    const gustMax = maxFinite(d.map((x) => dailyGust(x)));
+    const expectedDays = yearlyExpectedDays(y);
+    const lastDate = d.length ? String(d[d.length - 1]?.date || "") : "";
+    const yearEnded = lastDate === `${y}-12-31`;
+    const coverage = expectedDays > 0 ? d.length / expectedDays : 0;
+    const complete = yearEnded && coverage >= 0.99;
 
     return {
       year: y,
       ndays: d.length,
-      tmin: Number.isFinite(tmin) ? tmin : null,
-      tmax: Number.isFinite(tmax) ? tmax : null,
-      tmean: Number.isFinite(tmean) ? tmean : null,
+      expectedDays,
+      complete,
+
+      tmin: tminValues.length ? Math.min(...tminValues) : null,
+      tmax: tmaxValues.length ? Math.max(...tmaxValues) : null,
+      tmean: tmeanValues.length ? avgFinite(tmeanValues) : null,
+      tminMean: tminValues.length ? avgFinite(tminValues) : null,
+      tmaxMean: tmaxValues.length ? avgFinite(tmaxValues) : null,
+
+      summerDays25: tmaxValues.filter((value) => value >= 25).length,
+      hotDays30: tmaxValues.filter((value) => value >= 30).length,
+      hotDays35: tmaxValues.filter((value) => value >= 35).length,
+      hotDays40: tmaxValues.filter((value) => value >= 40).length,
+      tropicalNights20: tminValues.filter((value) => value >= 20).length,
+      veryWarmNights25: tminValues.filter((value) => value >= 25).length,
+      frostDays0: tminValues.filter((value) => value <= 0).length,
+
       rain: Number.isFinite(rainSum) ? rainSum : null,
-      rainyDays: d
-        .map((x) => n(x?.rain_total))
-        .filter((x) => Number.isFinite(x) && x > 1).length,
-      gustMax: Number.isFinite(gustMax) ? gustMax : null,
+      rainyDays: rainValues.filter((value) => value >= 1).length,
+      rainDays5: rainValues.filter((value) => value >= 5).length,
+      rainDays10: rainValues.filter((value) => value >= 10).length,
+      rainDays20: rainValues.filter((value) => value >= 20).length,
+      rainDays30: rainValues.filter((value) => value >= 30).length,
+      rainDays50: rainValues.filter((value) => value >= 50).length,
+      rainDays100: rainValues.filter((value) => value >= 100).length,
+      dryDays1: rainValues.filter((value) => value < 1).length,
+      rainMax24h: rainValues.length ? Math.max(...rainValues) : null,
+      drySpellMax: rainValues.length ? longestDrySpellDays(d, 1) : null,
+      wetSpellMax: rainValues.length ? longestWetSpellDays(d, 1) : null,
+
+      humidityMean: humidityMeanValues.length
+        ? avgFinite(humidityMeanValues)
+        : null,
+      humidityMinMean: humidityMinValues.length
+        ? avgFinite(humidityMinValues)
+        : null,
+      humidityMaxMean: humidityMaxValues.length
+        ? avgFinite(humidityMaxValues)
+        : null,
+      humidityMin: humidityMinValues.length
+        ? Math.min(...humidityMinValues)
+        : null,
+      humidityMax: humidityMaxValues.length
+        ? Math.max(...humidityMaxValues)
+        : null,
+
+      windMean: windMeanValues.length ? avgFinite(windMeanValues) : null,
+      windMaxMean: windMaxMeanValues.length
+        ? Math.max(...windMaxMeanValues)
+        : null,
+      gustMean: gustMeanValues.length ? avgFinite(gustMeanValues) : null,
+      gustMax: gustMaxValues.length ? Math.max(...gustMaxValues) : null,
+
+      pressureMean: pressureMeanValues.length
+        ? avgFinite(pressureMeanValues)
+        : null,
+      pressureMin: pressureMinValues.length
+        ? Math.min(...pressureMinValues)
+        : null,
+      pressureMax: pressureMaxValues.length
+        ? Math.max(...pressureMaxValues)
+        : null,
+
       rainHasOverride: overrideMonths.length > 0,
       rainOverrideMonthsText: overrideMonths
         .map((m) => monthFull(m.ym))
@@ -642,34 +933,17 @@ export async function getStaticProps() {
     }
   }
 
-  const annualDataByYear = {};
-  for (const year of years.slice(0, 6)) {
-    annualDataByYear[year] = (byYear.get(year) || []).map((row) => {
-      const tmin = dailyTmin(row);
-      const tmean = dailyTmean(row);
-      const tmax = dailyTmax(row);
-      const rain = dailyRain(row);
-      const gust = dailyGust(row);
 
-      return {
-        date: String(row?.date || ""),
-        tmin: Number.isFinite(tmin) ? round1(tmin) : null,
-        tmean: Number.isFinite(tmean) ? round1(tmean) : null,
-        tmax: Number.isFinite(tmax) ? round1(tmax) : null,
-        rain: Number.isFinite(rain) ? round1(rain) : null,
-        gust: Number.isFinite(gust) ? round1(gust) : null,
-      };
-    });
-  }
+  const civilProtectionStatus = await loadCivilProtectionStatus();
 
   return {
     props: {
       start,
       end,
       yearStats,
+      civilProtectionStatus,
       intradayDates,
       dailyRainByDate,
-      annualDataByYear,
     },
     revalidate: 60,
   };
@@ -677,11 +951,11 @@ export async function getStaticProps() {
 
 export default function Home({
   yearStats = [],
+  civilProtectionStatus = null,
   start = null,
   end = null,
   intradayDates = [],
   dailyRainByDate = {},
-  annualDataByYear = {},
 }) {
   return (
     <SiteLayout
@@ -694,7 +968,7 @@ export default function Home({
         currentPath: "/",
       }}
     >
-      <CivilProtectionSection />
+      <CivilProtectionSection status={civilProtectionStatus} />
 
       <ForecastSection />
 
@@ -707,7 +981,6 @@ export default function Home({
 
       <HomeLowerSection
         yearStats={yearStats}
-        annualDataByYear={annualDataByYear}
       />
 
       <style jsx>{`
@@ -719,722 +992,1911 @@ export default function Home({
   );
 }
 
-function CivilProtectionSection() {
+function civilLevelMeta(level) {
+  const key = String(level || "unknown").toLowerCase();
+
+  const map = {
+    green: {
+      label: "Verde",
+      color: "#16a34a",
+      soft: "#effcf4",
+      border: "#c9efd5",
+      icon: "✓",
+    },
+    yellow: {
+      label: "Gialla",
+      color: "#d99a00",
+      soft: "#fffaf0",
+      border: "#f6df9d",
+      icon: "!",
+    },
+    orange: {
+      label: "Arancione",
+      color: "#ea580c",
+      soft: "#fff7ed",
+      border: "#fed7aa",
+      icon: "!",
+    },
+    red: {
+      label: "Rossa",
+      color: "#dc2626",
+      soft: "#fef2f2",
+      border: "#fecaca",
+      icon: "!",
+    },
+    unknown: {
+      label: "Da verificare",
+      color: "#64748b",
+      soft: "#f8fafc",
+      border: "#dbe3ec",
+      icon: "?",
+    },
+  };
+
+  return map[key] || map.unknown;
+}
+
+function formatCivilDateTime(value) {
+  if (!value) return "—";
+
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return String(value);
+
+  return new Intl.DateTimeFormat("it-IT", {
+    timeZone: "Europe/Rome",
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
+function formatCivilTime(value) {
+  if (!value) return "";
+
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return "";
+
+  return new Intl.DateTimeFormat("it-IT", {
+    timeZone: "Europe/Rome",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
+function civilAlertHeadline(period) {
+  const data = period && typeof period === "object" ? period : {};
+  const meta = civilLevelMeta(data.level);
+
+  if (data.label && !/da verificare/i.test(String(data.label))) {
+    return String(data.label);
+  }
+
+  if (String(data.level || "").toLowerCase() === "unknown") {
+    return "Stato da verificare";
+  }
+
+  return `Allerta ${meta.label.toLowerCase()}`;
+}
+
+function CivilProtectionStatusCard({ title, period, next = false }) {
+  const data = period && typeof period === "object" ? period : {};
+  const meta = civilLevelMeta(data.level);
+  const risks = Array.isArray(data.risks) ? data.risks : [];
+  const startTime = next ? formatCivilTime(data.validFrom) : "";
+  const isUnknown = String(data.level || "unknown").toLowerCase() === "unknown";
+
+  const badge = next
+    ? startTime
+      ? `DALLE ${startTime}`
+      : "DA VERIFICARE"
+    : isUnknown
+      ? "DA VERIFICARE"
+      : "IN CORSO";
+
+  const defaultNote = next
+    ? risks.length
+      ? `Prevista criticità per ${risks.join(", ").toLowerCase()}.`
+      : "Nessuna nuova criticità indicata per la prossima fase."
+    : isUnknown
+      ? "Consulta gli avvisi ufficiali per conoscere lo stato in vigore."
+      : "Situazione attuale riferita alla zona di allerta di Collinas.";
+
   return (
-    <section
-      className="civilProtectionSection"
-      aria-label="Protezione Civile e avvisi ufficiali"
+    <article
+      className={`civilStatusCard ${next ? "next" : "current"}`}
+      style={{
+        "--civil-level": meta.color,
+        "--civil-soft": meta.soft,
+        "--civil-border": meta.border,
+      }}
     >
-      <div className="civilHeading">
-        <span className="civilShield" aria-hidden="true">◇</span>
+      <div className="civilStatusTop">
         <div>
-          <h2>Protezione Civile e avvisi</h2>
-          <p>
-            Informazioni ufficiali su allerte, criticità e avvisi per il territorio
-            di Collinas e la Sardegna.
-          </p>
+          <h3>{title}</h3>
+          <span>{formatCivilDateTime(data.validFrom)}</span>
+        </div>
+
+        <b className="civilStatusBadge">{badge}</b>
+      </div>
+
+      <div className="civilStatusHero">
+        <span className="civilHeroIcon" aria-hidden="true">{meta.icon}</span>
+        <div>
+          <strong>{civilAlertHeadline(data)}</strong>
+          {next && startTime ? <span>Dalle {startTime}</span> : null}
         </div>
       </div>
 
-      <div className="civilBody">
-        <div className="civilStatusCard">
-          <span className="civilStatusIcon" aria-hidden="true">◇</span>
-          <div>
-            <span className="civilEyebrow">Stato attuale</span>
-            <strong>Consulta gli avvisi in corso</strong>
+      <div className="civilStatusDivider" />
+
+      <p className="civilStatusNote">{data.note || defaultNote}</p>
+
+      {next ? (
+        <div className="civilNextRisks">
+          <span>Rischi previsti</span>
+          {risks.length ? (
+            <div className="civilRiskChips">
+              {risks.map((risk) => (
+                <b key={risk}>{risk}</b>
+              ))}
+            </div>
+          ) : (
+            <small>Nessun rischio specificato</small>
+          )}
+        </div>
+      ) : null}
+    </article>
+  );
+}
+
+function CivilProtectionInfoCard({ icon, title, children }) {
+  return (
+    <div className="civilInfoCard">
+      <span className="civilInfoIcon" aria-hidden="true">{icon}</span>
+      <div>
+        <strong>{title}</strong>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function CivilProtectionSection({ status = null }) {
+  const resolvedStatus = status || {
+    zoneCode: "SARD-C",
+    zoneName: "Bacini Montevecchio-Pischilappiu",
+    sourceUrl: "https://www.sardegnaambiente.it/protezionecivile/",
+    updatedAt: null,
+    current: {
+      levelLabel: "Dati non disponibili",
+      statusLabel: "Da verificare",
+      summary: "L’aggiornamento automatico non ha ancora prodotto un dato valido.",
+      validFrom: null,
+      validTo: null,
+      risks: [],
+    },
+    next: {
+      levelLabel: "Dati non disponibili",
+      statusLabel: "Da verificare",
+      summary: "Il prossimo stato verrà mostrato automaticamente quando pubblicato dalla Protezione Civile.",
+      validFrom: null,
+      validTo: null,
+      risks: [],
+    },
+  };
+
+  const zoneCode = resolvedStatus?.zoneCode || "SARD-C";
+  const zoneName = resolvedStatus?.zoneName || "Bacini Montevecchio-Pischilappiu";
+  const sourceUrl =
+    resolvedStatus?.sourceUrl ||
+    "https://www.sardegnaambiente.it/protezionecivile/";
+  const current = resolvedStatus?.current || {};
+  const next = resolvedStatus?.next || {};
+
+  const pickText = (...values) =>
+    values.find((value) => typeof value === "string" && value.trim()) || "";
+
+  const normalizeRisks = (entry) =>
+    Array.isArray(entry?.risks)
+      ? entry.risks.filter((value) => typeof value === "string" && value.trim())
+      : [];
+
+  const formatDateTime = (value) => {
+    if (!value) return "Da verificare";
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return String(value);
+    return parsed.toLocaleString("it-IT", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  };
+
+  const toneFromText = (entry) => {
+    const textPool = [
+      pickText(entry?.levelLabel, entry?.statusLabel, entry?.title, entry?.summary),
+      ...normalizeRisks(entry),
+    ]
+      .join(" ")
+      .toLowerCase();
+
+    if (!textPool || textPool.includes("da verificare")) {
+      return {
+        chipClass: "tone-neutral",
+        cardClass: "tone-neutral-card",
+        dot: "○",
+      };
+    }
+
+    if (
+      textPool.includes("ross") ||
+      textPool.includes("allarme") ||
+      textPool.includes("elevata")
+    ) {
+      return {
+        chipClass: "tone-red",
+        cardClass: "tone-red-card",
+        dot: "●",
+      };
+    }
+
+    if (
+      textPool.includes("aranc") ||
+      textPool.includes("moderata") ||
+      textPool.includes("attenzione")
+    ) {
+      return {
+        chipClass: "tone-orange",
+        cardClass: "tone-orange-card",
+        dot: "●",
+      };
+    }
+
+    if (
+      textPool.includes("giall") ||
+      textPool.includes("ordinaria") ||
+      textPool.includes("criticità")
+    ) {
+      return {
+        chipClass: "tone-yellow",
+        cardClass: "tone-yellow-card",
+        dot: "●",
+      };
+    }
+
+    if (
+      textPool.includes("verde") ||
+      textPool.includes("nessuna") ||
+      textPool.includes("assenza")
+    ) {
+      return {
+        chipClass: "tone-green",
+        cardClass: "tone-green-card",
+        dot: "●",
+      };
+    }
+
+    return {
+      chipClass: "tone-neutral",
+      cardClass: "tone-neutral-card",
+      dot: "○",
+    };
+  };
+
+  const currentLabel = pickText(
+    current?.levelLabel,
+    current?.statusLabel,
+    current?.title,
+    "Da verificare",
+  );
+  const nextLabel = pickText(
+    next?.levelLabel,
+    next?.statusLabel,
+    next?.title,
+    "Da verificare",
+  );
+
+  const currentSummary = pickText(
+    current?.summary,
+    current?.message,
+    "Consulta gli avvisi ufficiali per conoscere lo stato in vigore.",
+  );
+  const nextSummary = pickText(
+    next?.summary,
+    next?.message,
+    "Nessuna nuova criticità indicata per la prossima fase.",
+  );
+
+  const currentRisks = normalizeRisks(current);
+  const nextRisks = normalizeRisks(next);
+
+  const currentTone = toneFromText(current);
+  const nextTone = toneFromText(next);
+
+  const updatedAt = formatDateTime(resolvedStatus?.updatedAt);
+  const validityText = next?.validFrom
+    ? `Dal ${formatDateTime(next.validFrom)}`
+    : current?.validFrom
+      ? `Dal ${formatDateTime(current.validFrom)}`
+      : "Da verificare";
+  const expiryText = next?.validTo
+    ? `Fino al ${formatDateTime(next.validTo)}`
+    : current?.validTo
+      ? `Fino al ${formatDateTime(current.validTo)}`
+      : "Fino a nuova comunicazione";
+
+  const renderRiskPills = (risks, emptyText) =>
+    risks.length ? (
+      <div className="civilRiskPills">
+        {risks.map((risk) => (
+          <span className="civilRiskPill" key={risk}>
+            {risk}
+          </span>
+        ))}
+      </div>
+    ) : (
+      <p className="civilMuted">{emptyText}</p>
+    );
+
+  return (
+    <article className="lowerPanel civilSection">
+      <div className="civilHeader">
+        <div className="civilHeading">
+          <span className="civilHeadingIcon" aria-hidden="true">◇</span>
+          <div className="civilHeadingCopy">
+            <h2>Protezione Civile e avvisi</h2>
             <p>
-              Lo stato mostrato sul sito non sostituisce le comunicazioni ufficiali:
-              verifica sempre gli ultimi bollettini pubblicati dalla Regione Sardegna.
+              Stato attuale e successivo per Collinas · zona di allerta{" "}
+              <strong>{zoneCode}</strong> · {zoneName}.
             </p>
           </div>
         </div>
+      </div>
 
-        <div className="civilLinksCard">
-          <div className="civilLinksTitle">
-            <span className="civilLinkIcon" aria-hidden="true">↗</span>
+      <div className="civilGrid">
+        <section className={`civilStatusCard ${currentTone.cardClass}`}>
+          <div className="civilStatusTop">
+            <span className={`civilToneChip ${currentTone.chipClass}`}>
+              {currentTone.dot} Stato attuale
+            </span>
+            <h3>{currentLabel}</h3>
+          </div>
+          <p className="civilStatusText">{currentSummary}</p>
+          <div className="civilStatusMeta">
             <div>
-              <span className="civilEyebrow">Link ufficiali</span>
-              <strong>Approfondisci e consulta</strong>
-              <p>Bollettini, allerte e comunicazioni della Protezione Civile regionale.</p>
+              <span>In vigore da</span>
+              <b>{formatDateTime(current?.validFrom)}</b>
+            </div>
+            <div>
+              <span>Valida fino a</span>
+              <b>{formatDateTime(current?.validTo)}</b>
+            </div>
+          </div>
+          <div className="civilRiskBlock">
+            <span className="civilBlockLabel">Rischi / fenomeni</span>
+            {renderRiskPills(currentRisks, "Nessun rischio specificato")}
+          </div>
+        </section>
+
+        <section className={`civilStatusCard ${nextTone.cardClass}`}>
+          <div className="civilStatusTop">
+            <span className={`civilToneChip ${nextTone.chipClass}`}>
+              {nextTone.dot} Stato successivo
+            </span>
+            <h3>{nextLabel}</h3>
+          </div>
+          <p className="civilStatusText">{nextSummary}</p>
+          <div className="civilStatusMeta">
+            <div>
+              <span>Entrerà in vigore</span>
+              <b>{formatDateTime(next?.validFrom)}</b>
+            </div>
+            <div>
+              <span>Valida fino a</span>
+              <b>{formatDateTime(next?.validTo)}</b>
+            </div>
+          </div>
+          <div className="civilRiskBlock">
+            <span className="civilBlockLabel">Rischi / fenomeni</span>
+            {renderRiskPills(nextRisks, "Nessun rischio specificato")}
+          </div>
+        </section>
+
+        <aside className="civilSideColumn">
+          <div className="civilInfoCard">
+            <span className="civilInfoIcon" aria-hidden="true">◫</span>
+            <div>
+              <strong>Validità</strong>
+              <p>{validityText}</p>
+              <p>{expiryText}</p>
             </div>
           </div>
 
-          <div className="civilLinks">
-            <a
-              href="https://www.sardegnaambiente.it/protezionecivile/"
-              target="_blank"
-              rel="noreferrer"
-            >
-              <span aria-hidden="true">↗</span>
-              <span>
-                <b>Bollettini e avvisi</b>
-                <small>Protezione Civile Sardegna</small>
-              </span>
-              <i aria-hidden="true">›</i>
-            </a>
-            <a
-              href="https://www.sardegnaambiente.it/"
-              target="_blank"
-              rel="noreferrer"
-            >
-              <span aria-hidden="true">↗</span>
-              <span>
-                <b>Portale regionale</b>
-                <small>Regione Sardegna</small>
-              </span>
-              <i aria-hidden="true">›</i>
-            </a>
+          <div className="civilInfoCard">
+            <span className="civilInfoIcon" aria-hidden="true">△</span>
+            <div>
+              <strong>Rischi previsti</strong>
+              {renderRiskPills(
+                nextRisks.length ? nextRisks : currentRisks,
+                "Nessun rischio specificato",
+              )}
+            </div>
           </div>
-        </div>
+
+          <div className="civilInfoCard">
+            <span className="civilInfoIcon" aria-hidden="true">◷</span>
+            <div>
+              <strong>Aggiornato</strong>
+              <p>{updatedAt}</p>
+              <p>Fonte: Protezione Civile Regione Sardegna</p>
+            </div>
+          </div>
+        </aside>
       </div>
 
+      <div className="civilActionRow">
+        <a
+          className="civilActionButton"
+          href={sourceUrl}
+          target="_blank"
+          rel="noreferrer"
+        >
+          Bollettini e avvisi ↗
+        </a>
+        <a
+          className="civilActionButton"
+          href="https://www.regione.sardegna.it/"
+          target="_blank"
+          rel="noreferrer"
+        >
+          Portale ufficiale ↗
+        </a>
+      </div>
+
+      <p className="civilFootnote">
+        Dati informativi: fanno sempre fede gli avvisi ufficiali della Protezione
+        Civile della Regione Sardegna.
+      </p>
+
       <style jsx>{`
-        .civilProtectionSection {
-          margin: 18px auto 0;
-          padding: 18px;
-          border: 1px solid #e1e8f0;
-          border-radius: 22px;
-          background: #ffffff;
-          box-shadow: 0 10px 28px rgba(15, 23, 42, 0.045);
+        .civilSection {
+          padding: 20px;
+        }
+
+        .civilHeader {
+          margin-bottom: 16px;
         }
 
         .civilHeading {
           display: flex;
-          align-items: center;
+          align-items: flex-start;
           gap: 14px;
-          margin-bottom: 14px;
         }
 
-        .civilShield,
-        .civilStatusIcon,
-        .civilLinkIcon {
+        .civilHeadingIcon {
+          width: 60px;
+          height: 60px;
+          border-radius: 18px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 30px;
+          color: #1f6fff;
+          background: #eef5ff;
           flex: 0 0 auto;
-          display: grid;
-          place-items: center;
-          border-radius: 50%;
-          font-weight: 950;
         }
 
-        .civilShield {
-          width: 48px;
-          height: 48px;
-          background: #eaf3ff;
-          color: #1667d9;
-          font-size: 27px;
-        }
-
-        .civilHeading h2,
-        .civilHeading p,
-        .civilStatusCard p,
-        .civilLinksTitle p {
+        .civilHeadingCopy h2 {
           margin: 0;
-        }
-
-        .civilHeading h2 {
-          font-size: 22px;
-          line-height: 1.08;
-          font-weight: 950;
-          letter-spacing: -0.025em;
+          font-size: 28px;
+          line-height: 1.05;
           color: #0f172a;
         }
 
-        .civilHeading p {
-          margin-top: 3px;
+        .civilHeadingCopy p {
+          margin: 7px 0 0;
+          color: #52637d;
+          font-size: 12px;
+          line-height: 1.5;
+        }
+
+        .civilGrid {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 320px;
+          gap: 14px;
+          align-items: stretch;
+        }
+
+        .civilStatusCard {
+          border: 1px solid #dce5ef;
+          border-radius: 20px;
+          padding: 16px;
+          background: #ffffff;
+          min-width: 0;
+        }
+
+        .tone-green-card {
+          background: linear-gradient(180deg, #f4fbf6 0%, #ffffff 100%);
+          border-color: #cfe8d8;
+        }
+
+        .tone-yellow-card {
+          background: linear-gradient(180deg, #fffcf1 0%, #ffffff 100%);
+          border-color: #f1e2a9;
+        }
+
+        .tone-orange-card {
+          background: linear-gradient(180deg, #fff7ef 0%, #ffffff 100%);
+          border-color: #f4c99a;
+        }
+
+        .tone-red-card {
+          background: linear-gradient(180deg, #fff3f3 0%, #ffffff 100%);
+          border-color: #f2b9b9;
+        }
+
+        .tone-neutral-card {
+          background: linear-gradient(180deg, #f8fafc 0%, #ffffff 100%);
+          border-color: #dce5ef;
+        }
+
+        .civilStatusTop {
+          display: grid;
+          gap: 8px;
+          margin-bottom: 10px;
+        }
+
+        .civilToneChip {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          padding: 6px 10px;
+          border-radius: 999px;
+          width: fit-content;
+          font-size: 10px;
+          font-weight: 800;
+          letter-spacing: 0.05em;
+          text-transform: uppercase;
+        }
+
+        .tone-green {
+          background: #eaf8ee;
+          color: #15803d;
+        }
+
+        .tone-yellow {
+          background: #fff8da;
+          color: #a16207;
+        }
+
+        .tone-orange {
+          background: #ffeddc;
+          color: #c2410c;
+        }
+
+        .tone-red {
+          background: #ffe4e6;
+          color: #be123c;
+        }
+
+        .tone-neutral {
+          background: #eef2f7;
+          color: #52637d;
+        }
+
+        .civilStatusTop h3 {
+          margin: 0;
+          font-size: 23px;
+          line-height: 1.1;
+          color: #0f172a;
+        }
+
+        .civilStatusText {
+          margin: 0 0 12px;
+          color: #334155;
+          font-size: 12px;
+          line-height: 1.55;
+        }
+
+        .civilStatusMeta {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 10px;
+          margin-bottom: 12px;
+        }
+
+        .civilStatusMeta span,
+        .civilBlockLabel,
+        .civilInfoCard strong {
+          display: block;
+          font-size: 10px;
+          font-weight: 800;
+          letter-spacing: 0.05em;
+          text-transform: uppercase;
+          color: #64748b;
+          margin-bottom: 4px;
+        }
+
+        .civilStatusMeta b {
+          display: block;
+          font-size: 13px;
+          color: #0f172a;
+        }
+
+        .civilRiskBlock {
+          display: grid;
+          gap: 8px;
+        }
+
+        .civilRiskPills {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 7px;
+        }
+
+        .civilRiskPill {
+          padding: 7px 10px;
+          border-radius: 999px;
+          background: #f3f7fb;
+          border: 1px solid #d9e4ef;
+          color: #334155;
+          font-size: 11px;
+          font-weight: 700;
+          line-height: 1.2;
+        }
+
+        .civilMuted {
+          margin: 0;
           font-size: 11px;
           color: #64748b;
         }
 
-        .civilBody {
+        .civilSideColumn {
           display: grid;
-          grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
           gap: 12px;
         }
 
-        .civilStatusCard,
-        .civilLinksCard {
-          min-width: 0;
-          border: 1px solid #e3e9ef;
-          border-radius: 17px;
-          padding: 16px;
-          background: #fbfdff;
-        }
-
-        .civilStatusCard {
+        .civilInfoCard {
           display: grid;
-          grid-template-columns: 58px minmax(0, 1fr);
+          grid-template-columns: 36px minmax(0, 1fr);
+          gap: 10px;
+          align-items: flex-start;
+          padding: 13px;
+          border-radius: 18px;
+          background: #f8fbff;
+          border: 1px solid #dce5ef;
+        }
+
+        .civilInfoIcon {
+          width: 36px;
+          height: 36px;
+          border-radius: 12px;
+          display: inline-flex;
           align-items: center;
+          justify-content: center;
+          font-size: 18px;
+          background: #eef5ff;
+          color: #1f6fff;
+        }
+
+        .civilInfoCard p {
+          margin: 0;
+          font-size: 11.5px;
+          color: #334155;
+          line-height: 1.45;
+        }
+
+        .civilActionRow {
+          display: flex;
+          flex-wrap: wrap;
+          justify-content: flex-end;
+          gap: 10px;
+          margin-top: 14px;
+        }
+
+        .civilActionButton {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          min-height: 44px;
+          padding: 0 16px;
+          border-radius: 14px;
+          border: 1px solid #b9d0f0;
+          background: #ffffff;
+          color: #1f6fff;
+          font-size: 11px;
+          font-weight: 800;
+          text-decoration: none;
+          white-space: nowrap;
+          transition:
+            background-color 0.16s ease,
+            border-color 0.16s ease,
+            color 0.16s ease;
+        }
+
+        .civilActionButton:hover {
+          background: #f5f9ff;
+          border-color: #8fb4ec;
+        }
+
+        .civilFootnote {
+          margin: 16px 0 0;
+          padding-top: 14px;
+          border-top: 1px solid #e6edf5;
+          font-size: 11px;
+          color: #64748b;
+          line-height: 1.45;
+        }
+
+
+        .archiveSection {
+          display: none;
+        }
+
+        .annualHeaderCentered {
+          display: grid;
+          justify-items: center;
+          text-align: center;
+          gap: 8px;
+          margin-bottom: 14px;
+        }
+
+        .annualHeaderCentered h2 {
+          margin: 0;
+          font-size: 34px;
+          line-height: 1.02;
+          color: #0f172a;
+        }
+
+        .annualHeaderCentered p {
+          margin: 0;
+          max-width: 620px;
+          color: #64748b;
+          font-size: 12px;
+          line-height: 1.5;
+        }
+
+        .annualToolbar {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) minmax(280px, 340px);
           gap: 14px;
-          background: linear-gradient(135deg, #f3fff8 0%, #ffffff 100%);
-          border-color: #d9efe2;
+          align-items: start;
         }
 
-        .civilStatusIcon {
-          width: 58px;
-          height: 58px;
-          background: #dcfce7;
-          color: #0a9b59;
-          font-size: 33px;
+        .parameterMobileControl {
+          display: grid;
+          gap: 6px;
+          width: 100%;
         }
 
-        .civilEyebrow {
-          display: block;
-          margin-bottom: 4px;
-          font-size: 9px;
-          font-weight: 950;
-          letter-spacing: 0.06em;
+        .parameterMobileControl > span,
+        .indicatorControl > span {
+          font-size: 10px;
+          font-weight: 800;
+          letter-spacing: 0.05em;
           text-transform: uppercase;
           color: #64748b;
         }
 
-        .civilStatusCard strong,
-        .civilLinksTitle strong {
-          display: block;
-          font-size: 17px;
-          line-height: 1.12;
-          font-weight: 950;
-          color: #0f172a;
+        .annualChartCardMerged {
+          overflow: hidden;
         }
 
-        .civilStatusCard p,
-        .civilLinksTitle p {
-          margin-top: 6px;
-          font-size: 10px;
-          line-height: 1.4;
-          color: #64748b;
-        }
-
-        .civilLinksTitle {
+        .annualYearRail {
           display: grid;
-          grid-template-columns: 46px minmax(0, 1fr);
-          align-items: center;
+          grid-template-columns: repeat(6, minmax(0, 1fr));
           gap: 12px;
+          padding: 14px 14px 14px;
+          border-top: 1px solid #e6edf5;
+          background: linear-gradient(180deg, rgba(248,250,252,.45) 0%, rgba(255,255,255,1) 100%);
         }
 
-        .civilLinkIcon {
-          width: 46px;
-          height: 46px;
-          background: #eaf3ff;
-          color: #1768d9;
-          font-size: 20px;
+        .annualYearMiniCard {
+          appearance: none;
+          -webkit-appearance: none;
+          width: 100%;
+          min-width: 0;
+          display: grid;
+          gap: 8px;
+          padding: 12px;
+          border-radius: 18px;
+          border: 1px solid #dce5ef;
+          background: #ffffff;
+          text-align: left;
+          cursor: pointer;
+          transition:
+            transform 0.16s ease,
+            box-shadow 0.16s ease,
+            border-color 0.16s ease,
+            background-color 0.16s ease;
         }
 
-        .civilLinks {
-          margin-top: 12px;
+        .annualYearMiniCard:hover {
+          transform: translateY(-1px);
+          box-shadow: 0 8px 20px rgba(15, 23, 42, 0.06);
+          border-color: #bfd1e8;
+          background: #fbfdff;
+        }
+
+        .annualYearMiniTop {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
+        }
+
+        .annualYearMiniTop strong {
+          font-size: 24px;
+          line-height: 1;
+          color: #0f172a;
+          font-weight: 800;
+        }
+
+        .annualYearMiniArrow {
+          color: #1f6fff;
+          font-size: 22px;
+          line-height: 1;
+          font-weight: 700;
+        }
+
+        .annualYearMiniBadge {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          min-height: 26px;
+          width: fit-content;
+          padding: 0 10px;
+          border-radius: 999px;
+          border: 1px solid #dce5ef;
+          background: #f8fbff;
+          color: #64748b;
+          font-size: 10px;
+          font-weight: 800;
+          white-space: nowrap;
+        }
+
+        .annualYearMiniStats {
           display: grid;
           grid-template-columns: repeat(2, minmax(0, 1fr));
           gap: 8px;
         }
 
-        .civilLinks a {
-          min-width: 0;
-          min-height: 52px;
-          padding: 9px 11px;
+        .annualYearMiniStat {
           display: grid;
-          grid-template-columns: 24px minmax(0, 1fr) auto;
-          align-items: center;
-          gap: 8px;
-          border: 1px solid #e0e9f5;
-          border-radius: 12px;
-          background: #eef5ff;
-          color: #0f5bc7;
-          text-decoration: none;
-          transition: transform 120ms ease, border-color 120ms ease, background 120ms ease;
-        }
-
-        .civilLinks a:hover {
-          transform: translateY(-1px);
-          border-color: #b6d2f7;
-          background: #e6f1ff;
-        }
-
-        .civilLinks a > span:first-child {
-          font-size: 17px;
-          font-weight: 900;
-          text-align: center;
-        }
-
-        .civilLinks a > span:nth-child(2) {
+          gap: 3px;
           min-width: 0;
-          display: grid;
-          gap: 2px;
         }
 
-        .civilLinks b {
-          overflow: hidden;
-          font-size: 10.5px;
-          font-weight: 950;
-          text-overflow: ellipsis;
+        .annualYearMiniStat small {
+          font-size: 9px;
+          line-height: 1.15;
+          text-transform: uppercase;
+          letter-spacing: 0.04em;
+          color: #64748b;
+          font-weight: 800;
+        }
+
+        .annualYearMiniStat b {
+          font-size: 12px;
+          line-height: 1.15;
+          color: #0f172a;
+          font-weight: 800;
           white-space: nowrap;
         }
 
-        .civilLinks small {
-          overflow: hidden;
-          font-size: 8.5px;
-          color: #5f7fa9;
-          text-overflow: ellipsis;
-          white-space: nowrap;
-        }
-
-        .civilLinks i {
-          font-size: 20px;
-          font-style: normal;
-          color: #1768d9;
-        }
-
-        @media (max-width: 760px) {
-          .civilProtectionSection {
-            padding: 14px;
-            border-radius: 18px;
-          }
-
-          .civilHeading h2 {
-            font-size: 19px;
-          }
-
-          .civilBody {
+        @media (max-width: 1180px) {
+          .civilGrid {
             grid-template-columns: 1fr;
           }
+
+          .civilSideColumn {
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+          }
         }
 
-        @media (max-width: 480px) {
-          .civilHeading {
-            align-items: flex-start;
+        @media (max-width: 720px) {
+          .civilSection {
+            padding: 16px;
           }
 
-          .civilShield {
-            width: 42px;
-            height: 42px;
+          .civilHeadingIcon {
+            width: 48px;
+            height: 48px;
+            border-radius: 15px;
             font-size: 24px;
           }
 
-          .civilHeading h2 {
-            font-size: 17px;
+          .civilHeadingCopy h2 {
+            font-size: 22px;
           }
 
-          .civilHeading p {
-            font-size: 9.5px;
+          .civilHeadingCopy p {
+            font-size: 11px;
           }
 
-          .civilStatusCard {
-            grid-template-columns: 46px minmax(0, 1fr);
-            padding: 13px;
+          .civilStatusTop h3 {
+            font-size: 18px;
           }
 
-          .civilStatusIcon {
-            width: 46px;
-            height: 46px;
-            font-size: 27px;
+          .civilStatusMeta {
+            grid-template-columns: 1fr;
           }
 
-          .civilStatusCard strong,
-          .civilLinksTitle strong {
-            font-size: 14px;
+          .civilActionRow {
+            justify-content: stretch;
           }
 
-          .civilLinks {
+          .civilActionButton {
+            flex: 1 1 210px;
+          }
+
+          .civilSideColumn {
             grid-template-columns: 1fr;
           }
         }
+
+        @media (max-width: 430px) {
+          .civilHeading {
+            gap: 10px;
+          }
+
+          .civilHeadingCopy h2 {
+            font-size: 18px;
+          }
+
+          .civilHeadingCopy p {
+            font-size: 10px;
+            line-height: 1.4;
+          }
+
+          .civilStatusCard {
+            padding: 13px;
+          }
+
+          .civilToneChip {
+            font-size: 9px;
+          }
+
+          .civilStatusTop h3 {
+            font-size: 16px;
+          }
+
+          .civilStatusText,
+          .civilInfoCard p,
+          .civilFootnote {
+            font-size: 10px;
+          }
+
+          .civilRiskPill {
+            font-size: 10px;
+            padding: 6px 8px;
+          }
+
+          .civilActionButton {
+            width: 100%;
+            min-height: 42px;
+          }
+        }
       `}</style>
-    </section>
+    </article>
   );
 }
 
-function HomeLowerSection({ yearStats = [], annualDataByYear = {} }) {
+function HomeLowerSection({
+  yearStats = [],
+}) {
   const router = useRouter();
+  const [annualViewportWidth, setAnnualViewportWidth] = useState(1280);
+
+  useEffect(() => {
+    const updateWidth = () => setAnnualViewportWidth(window.innerWidth);
+
+    updateWidth();
+    window.addEventListener("resize", updateWidth, { passive: true });
+
+    return () => window.removeEventListener("resize", updateWidth);
+  }, []);
+
+  const annualIsMobile = annualViewportWidth <= 720;
+  const annualIsVeryNarrow = annualViewportWidth <= 430;
+  const annualChartHeight = annualIsMobile
+    ? annualIsVeryNarrow
+      ? 318
+      : 326
+    : 370;
+
   const years = Array.isArray(yearStats) ? yearStats.slice(0, 6) : [];
-  const [selectedYear, setSelectedYear] = useState(years[0]?.year || "");
-  const [annualParameter, setAnnualParameter] = useState("temperature");
 
-  const selectedStats =
-    years.find((item) => String(item?.year) === String(selectedYear)) ||
-    years[0] ||
-    null;
-
-  const selectedRows = Array.isArray(annualDataByYear?.[selectedYear])
-    ? annualDataByYear[selectedYear]
+  // Solo dati realmente registrati dalla stazione.
+  // Gli anni incompleti restano nelle card ma non entrano nei confronti annuali.
+  const comparisonYears = Array.isArray(yearStats)
+    ? yearStats
+        .filter((row) => row?.complete)
+        .sort((a, b) => Number(a?.year) - Number(b?.year))
     : [];
 
-  const annualParameterOptions = [
-    { key: "temperature", label: "Temperatura dell'aria (°C)" },
-    { key: "rain", label: "Precipitazioni (mm)" },
-    { key: "gust", label: "Raffica massima (km/h)" },
-  ];
-
-  const annualChartOption = useMemo(() => {
-    if (!selectedRows.length) return null;
-
-    const dates = selectedRows.map((row) => String(row?.date || ""));
-    const monthLines = dates
-      .filter((date, index) => {
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return false;
-        if (index === 0) return false;
-        return date.endsWith("-01");
-      })
-      .map((date) => ({ xAxis: date }));
-
-    const commonMarkLine = monthLines.length
-      ? {
-          silent: true,
-          symbol: "none",
-          label: { show: false },
-          lineStyle: {
-            color: "rgba(148, 163, 184, 0.20)",
-            width: 1,
-            type: "solid",
-          },
-          data: monthLines,
-        }
-      : undefined;
-
-    const axisLabelFormatter = (value, index) => {
-      const date = String(value || "");
-      const match = date.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-      if (!match) return "";
-
-      const day = Number(match[3]);
-      if (index !== 0 && day !== 1) return "";
-
-      const month = MONTHS_IT_FULL[Number(match[2]) - 1] || "";
-      return month.slice(0, 3);
-    };
-
-    const base = {
-      animationDuration: 260,
-      color: ["#ef4444", "#64748b", "#2563eb", "#0ea5e9"],
-      grid: { left: 58, right: 42, top: 24, bottom: 62 },
-      tooltip: {
-        trigger: "axis",
-        confine: true,
-        backgroundColor: "rgba(255,255,255,.98)",
-        borderColor: "#dbe3ec",
-        borderWidth: 1,
-        padding: [9, 11],
-        textStyle: { color: "#0f172a", fontSize: 11, fontWeight: 650 },
-        extraCssText:
-          "border-radius:10px;box-shadow:0 10px 28px rgba(15,23,42,.12);",
-      },
-      toolbox: {
-        right: 4,
-        top: -2,
-        feature: {
-          restore: { title: "Ripristina" },
-          saveAsImage: {
-            title: "Salva grafico",
-            name: `meteo-collinas-${selectedYear}-${annualParameter}`,
-            pixelRatio: 2,
-            backgroundColor: "#ffffff",
-          },
-        },
-      },
-      xAxis: {
-        type: "category",
-        boundaryGap: false,
-        data: dates,
-        axisTick: { show: false },
-        axisLine: { lineStyle: { color: "#aab4c0" } },
-        axisLabel: {
-          color: "#64748b",
-          fontSize: 10,
-          interval: 0,
-          formatter: axisLabelFormatter,
-        },
-        splitLine: { show: false },
-      },
-      dataZoom: [
+  const parameterConfigs = [
+    {
+      key: "temperature",
+      label: "Temperature",
+      icon: "temperature",
+      accent: "#f97316",
+      indicators: [
         {
-          type: "inside",
-          xAxisIndex: 0,
-          filterMode: "none",
-          zoomOnMouseWheel: true,
-          moveOnMouseWheel: true,
-          moveOnMouseMove: true,
+          key: "tmaxMean",
+          field: "tmaxMean",
+          label: "Media delle massime (°C)",
+          title: "Temperatura massima media annua",
+          description: "Media delle temperature massime giornaliere di ciascun anno.",
+          unit: "°C",
+          decimals: 1,
+          percentDelta: false,
+        },
+        {
+          key: "tmean",
+          field: "tmean",
+          label: "Temperatura media (°C)",
+          title: "Temperatura media annua",
+          description: "Media delle temperature medie giornaliere di ciascun anno.",
+          unit: "°C",
+          decimals: 1,
+          percentDelta: false,
+        },
+        {
+          key: "tminMean",
+          field: "tminMean",
+          label: "Media delle minime (°C)",
+          title: "Temperatura minima media annua",
+          description: "Media delle temperature minime giornaliere di ciascun anno.",
+          unit: "°C",
+          decimals: 1,
+          percentDelta: false,
+        },
+        {
+          key: "tmax",
+          field: "tmax",
+          label: "Massima assoluta (°C)",
+          title: "Temperatura massima assoluta per anno",
+          description: "Temperatura più elevata registrata dalla stazione in ciascun anno.",
+          unit: "°C",
+          decimals: 1,
+          percentDelta: false,
+        },
+        {
+          key: "tmin",
+          field: "tmin",
+          label: "Minima assoluta (°C)",
+          title: "Temperatura minima assoluta per anno",
+          description: "Temperatura più bassa registrata dalla stazione in ciascun anno.",
+          unit: "°C",
+          decimals: 1,
+          percentDelta: false,
+        },
+        {
+          key: "summerDays25",
+          field: "summerDays25",
+          label: "Giorni con Tmax ≥ 25 °C",
+          title: "Giorni annui con Tmax ≥ 25 °C",
+          description: "Numero di giorni con temperatura massima almeno pari a 25 °C.",
+          unit: "giorni",
+          decimals: 0,
+          percentDelta: true,
+        },
+        {
+          key: "hotDays30",
+          field: "hotDays30",
+          label: "Giorni con Tmax ≥ 30 °C",
+          title: "Giorni annui con Tmax ≥ 30 °C",
+          description: "Numero di giorni con temperatura massima almeno pari a 30 °C.",
+          unit: "giorni",
+          decimals: 0,
+          percentDelta: true,
+        },
+        {
+          key: "hotDays35",
+          field: "hotDays35",
+          label: "Giorni con Tmax ≥ 35 °C",
+          title: "Giorni annui con Tmax ≥ 35 °C",
+          description: "Numero di giorni con temperatura massima almeno pari a 35 °C.",
+          unit: "giorni",
+          decimals: 0,
+          percentDelta: true,
+        },
+        {
+          key: "hotDays40",
+          field: "hotDays40",
+          label: "Giorni con Tmax ≥ 40 °C",
+          title: "Giorni annui con Tmax ≥ 40 °C",
+          description: "Numero di giorni con temperatura massima almeno pari a 40 °C.",
+          unit: "giorni",
+          decimals: 0,
+          percentDelta: true,
+        },
+        {
+          key: "tropicalNights20",
+          field: "tropicalNights20",
+          label: "Notti tropicali · Tmin ≥ 20 °C",
+          title: "Notti tropicali per anno",
+          description: "Numero di giorni con temperatura minima almeno pari a 20 °C.",
+          unit: "giorni",
+          decimals: 0,
+          percentDelta: true,
+        },
+        {
+          key: "veryWarmNights25",
+          field: "veryWarmNights25",
+          label: "Notti molto calde · Tmin ≥ 25 °C",
+          title: "Notti molto calde per anno",
+          description: "Numero di giorni con temperatura minima almeno pari a 25 °C.",
+          unit: "giorni",
+          decimals: 0,
+          percentDelta: true,
+        },
+        {
+          key: "frostDays0",
+          field: "frostDays0",
+          label: "Giorni di gelo · Tmin ≤ 0 °C",
+          title: "Giorni di gelo per anno",
+          description: "Numero di giorni con temperatura minima pari o inferiore a 0 °C.",
+          unit: "giorni",
+          decimals: 0,
+          percentDelta: true,
         },
       ],
-    };
-
-    if (annualParameter === "rain") {
-      let cumulative = 0;
-      const rainDaily = selectedRows.map((row) => {
-        const value = n(row?.rain);
-        return Number.isFinite(value) ? Math.max(0, value) : null;
-      });
-      const rainCumulative = rainDaily.map((value) => {
-        if (Number.isFinite(n(value))) cumulative += n(value);
-        return round1(cumulative);
-      });
-
-      return {
-        ...base,
-        legend: {
-          bottom: 4,
-          left: "center",
-          itemGap: 22,
-          textStyle: { color: "#475569", fontSize: 10, fontWeight: 700 },
-          data: ["Pioggia giornaliera", "Cumulata"],
+    },
+    {
+      key: "rain",
+      label: "Precipitazioni",
+      icon: "rain",
+      accent: "#1677ff",
+      indicators: [
+        {
+          key: "rain",
+          field: "rain",
+          label: "Precipitazione totale (mm)",
+          title: "Precipitazioni totali annue",
+          description: "Totale di precipitazione accumulato in ciascun anno.",
+          unit: "mm",
+          decimals: 1,
+          percentDelta: true,
         },
-        xAxis: { ...base.xAxis, boundaryGap: true },
-        yAxis: [
-          {
-            type: "value",
-            name: "mm",
-            nameLocation: "middle",
-            nameGap: 42,
-            min: 0,
-            splitLine: {
-              lineStyle: { color: "rgba(148,163,184,.18)", type: "dashed" },
-            },
-            axisLabel: { color: "#64748b", fontSize: 10 },
-          },
-          {
-            type: "value",
-            name: "mm cum.",
-            nameLocation: "middle",
-            nameGap: 40,
-            min: 0,
-            splitLine: { show: false },
-            axisLabel: { color: "#64748b", fontSize: 10 },
-          },
-        ],
-        series: [
-          {
-            name: "Pioggia giornaliera",
-            type: "bar",
-            data: rainDaily,
-            yAxisIndex: 0,
-            barMaxWidth: 8,
-            itemStyle: {
-              color: "#38bdf8",
-              borderRadius: [3, 3, 0, 0],
-            },
-            markLine: commonMarkLine,
-          },
-          {
-            name: "Cumulata",
-            type: "line",
-            data: rainCumulative,
-            yAxisIndex: 1,
-            showSymbol: false,
-            smooth: false,
-            lineStyle: { width: 2.2, color: "#2563eb" },
-            itemStyle: { color: "#2563eb" },
-          },
-        ],
-      };
-    }
+        {
+          key: "rainyDays",
+          field: "rainyDays",
+          label: "Giorni piovosi ≥ 1 mm",
+          title: "Giorni piovosi annui",
+          description: "Numero di giorni dell’anno con almeno 1 mm di precipitazione.",
+          unit: "giorni",
+          decimals: 0,
+          percentDelta: true,
+        },
+        {
+          key: "rainDays5",
+          field: "rainDays5",
+          label: "Giorni ≥ 5 mm",
+          title: "Giorni annui con precipitazione ≥ 5 mm",
+          description: "Numero di giorni dell’anno con almeno 5 mm di precipitazione.",
+          unit: "giorni",
+          decimals: 0,
+          percentDelta: true,
+        },
+        {
+          key: "rainDays10",
+          field: "rainDays10",
+          label: "Giorni ≥ 10 mm",
+          title: "Giorni annui con precipitazione ≥ 10 mm",
+          description: "Numero di giorni dell’anno con almeno 10 mm di precipitazione.",
+          unit: "giorni",
+          decimals: 0,
+          percentDelta: true,
+        },
+        {
+          key: "rainDays20",
+          field: "rainDays20",
+          label: "Giorni ≥ 20 mm",
+          title: "Giorni annui con precipitazione ≥ 20 mm",
+          description: "Numero di giorni dell’anno con almeno 20 mm di precipitazione.",
+          unit: "giorni",
+          decimals: 0,
+          percentDelta: true,
+        },
+        {
+          key: "rainDays30",
+          field: "rainDays30",
+          label: "Giorni ≥ 30 mm",
+          title: "Giorni annui con precipitazione ≥ 30 mm",
+          description: "Numero di giorni dell’anno con almeno 30 mm di precipitazione.",
+          unit: "giorni",
+          decimals: 0,
+          percentDelta: true,
+        },
+        {
+          key: "rainDays50",
+          field: "rainDays50",
+          label: "Giorni ≥ 50 mm",
+          title: "Giorni annui con precipitazione ≥ 50 mm",
+          description: "Numero di giorni dell’anno con almeno 50 mm di precipitazione.",
+          unit: "giorni",
+          decimals: 0,
+          percentDelta: true,
+        },
+        {
+          key: "rainDays100",
+          field: "rainDays100",
+          label: "Giorni ≥ 100 mm",
+          title: "Giorni annui con precipitazione ≥ 100 mm",
+          description: "Numero di giorni dell’anno con almeno 100 mm di precipitazione.",
+          unit: "giorni",
+          decimals: 0,
+          percentDelta: true,
+        },
+        {
+          key: "rainMax24h",
+          field: "rainMax24h",
+          label: "Massimo giornaliero (mm)",
+          title: "Massima precipitazione giornaliera per anno",
+          description: "Massimo accumulo registrato dalla stazione in un singolo giorno.",
+          unit: "mm",
+          decimals: 1,
+          percentDelta: true,
+        },
+        {
+          key: "dryDays1",
+          field: "dryDays1",
+          label: "Giorni secchi · < 1 mm",
+          title: "Numero di giorni secchi per anno",
+          description: "Numero di giorni con precipitazione inferiore a 1 mm.",
+          unit: "giorni",
+          decimals: 0,
+          percentDelta: true,
+        },
+        {
+          key: "drySpellMax",
+          field: "drySpellMax",
+          label: "Periodo secco più lungo",
+          title: "Massima durata del periodo secco",
+          description: "Numero massimo di giorni consecutivi con precipitazione inferiore a 1 mm.",
+          unit: "giorni",
+          decimals: 0,
+          percentDelta: true,
+        },
+        {
+          key: "wetSpellMax",
+          field: "wetSpellMax",
+          label: "Periodo piovoso più lungo",
+          title: "Massima durata del periodo piovoso",
+          description: "Numero massimo di giorni consecutivi con precipitazione almeno pari a 1 mm.",
+          unit: "giorni",
+          decimals: 0,
+          percentDelta: true,
+        },
+      ],
+    },
+    {
+      key: "humidity",
+      label: "Umidità",
+      icon: "humidity",
+      accent: "#0891b2",
+      indicators: [
+        {
+          key: "humidityMean",
+          field: "humidityMean",
+          label: "Umidità media annua (%)",
+          title: "Umidità relativa media annua",
+          description: "Media annuale dell’umidità relativa.",
+          unit: "%",
+          decimals: 1,
+          percentDelta: true,
+        },
+        {
+          key: "humidityMinMean",
+          field: "humidityMinMean",
+          label: "Umidità minima media (%)",
+          title: "Umidità minima media annua",
+          description: "Media annuale dei valori minimi giornalieri di umidità relativa.",
+          unit: "%",
+          decimals: 1,
+          percentDelta: true,
+        },
+        {
+          key: "humidityMaxMean",
+          field: "humidityMaxMean",
+          label: "Umidità massima media (%)",
+          title: "Umidità massima media annua",
+          description: "Media annuale dei valori massimi giornalieri di umidità relativa.",
+          unit: "%",
+          decimals: 1,
+          percentDelta: true,
+        },
+      ],
+    },
+    {
+      key: "wind",
+      label: "Vento",
+      icon: "wind",
+      accent: "#7c3aed",
+      indicators: [
+        {
+          key: "windMean",
+          field: "windMean",
+          label: "Velocità media annua (km/h)",
+          title: "Velocità media annua del vento",
+          description: "Media annuale della velocità del vento. Le raffiche non sono incluse.",
+          unit: "km/h",
+          decimals: 1,
+          percentDelta: true,
+        },
+        {
+          key: "windMaxMean",
+          field: "windMaxMean",
+          label: "Massimo vento medio (km/h)",
+          title: "Massimo vento medio per anno",
+          description: "Massimo valore disponibile della velocità media del vento, senza raffiche.",
+          unit: "km/h",
+          decimals: 1,
+          percentDelta: true,
+        },
+        {
+          key: "gustMean",
+          field: "gustMean",
+          label: "Media delle raffiche (km/h)",
+          title: "Raffica media annua",
+          description: "Media annuale delle raffiche disponibili nella serie della stazione.",
+          unit: "km/h",
+          decimals: 1,
+          percentDelta: true,
+        },
+        {
+          key: "gustMax",
+          field: "gustMax",
+          label: "Raffica massima (km/h)",
+          title: "Raffica massima assoluta per anno",
+          description: "Raffica più intensa registrata dalla stazione in ciascun anno.",
+          unit: "km/h",
+          decimals: 1,
+          percentDelta: true,
+        },
+      ],
+    },
+    {
+      key: "pressure",
+      label: "Pressione",
+      icon: "pressure",
+      accent: "#2563eb",
+      indicators: [
+        {
+          key: "pressureMean",
+          field: "pressureMean",
+          label: "Pressione media annua (hPa)",
+          title: "Pressione media annua al livello del mare",
+          description: "Media annuale della pressione ridotta al livello del mare.",
+          unit: "hPa",
+          decimals: 1,
+          percentDelta: false,
+        },
+        {
+          key: "pressureMax",
+          field: "pressureMax",
+          label: "Pressione massima (hPa)",
+          title: "Pressione massima annuale al livello del mare",
+          description: "Massimo valore annuale della pressione ridotta al livello del mare.",
+          unit: "hPa",
+          decimals: 1,
+          percentDelta: false,
+        },
+        {
+          key: "pressureMin",
+          field: "pressureMin",
+          label: "Pressione minima (hPa)",
+          title: "Pressione minima annuale al livello del mare",
+          description: "Minimo valore annuale della pressione ridotta al livello del mare.",
+          unit: "hPa",
+          decimals: 1,
+          percentDelta: false,
+        },
+      ],
+    },
+  ];
 
-    if (annualParameter === "gust") {
-      return {
-        ...base,
-        legend: {
-          bottom: 4,
+  const parameterHasData = (parameter) =>
+    parameter.indicators.some((indicator) =>
+      comparisonYears.some((row) => Number.isFinite(n(row?.[indicator.field]))),
+    );
+
+  const firstAvailableParameter =
+    parameterConfigs.find(parameterHasData)?.key || "temperature";
+
+  const [annualParameter, setAnnualParameter] = useState(firstAvailableParameter);
+  const selectedParameter =
+    parameterConfigs.find((parameter) => parameter.key === annualParameter) ||
+    parameterConfigs[0];
+
+  const firstAvailableIndicator =
+    selectedParameter.indicators.find((indicator) =>
+      comparisonYears.some((row) => Number.isFinite(n(row?.[indicator.field]))),
+    ) || selectedParameter.indicators[0];
+
+  const [annualIndicator, setAnnualIndicator] = useState(firstAvailableIndicator.key);
+
+  useEffect(() => {
+    const parameter =
+      parameterConfigs.find((entry) => entry.key === annualParameter) ||
+      parameterConfigs[0];
+
+    const indicatorAvailable = parameter.indicators.some(
+      (indicator) =>
+        indicator.key === annualIndicator &&
+        comparisonYears.some((row) =>
+          Number.isFinite(n(row?.[indicator.field])),
+        ),
+    );
+
+    if (indicatorAvailable) return;
+
+    const nextIndicator =
+      parameter.indicators.find((indicator) =>
+        comparisonYears.some((row) =>
+          Number.isFinite(n(row?.[indicator.field])),
+        ),
+      ) || parameter.indicators[0];
+
+    setAnnualIndicator(nextIndicator.key);
+  }, [annualParameter, annualIndicator, yearStats]);
+
+  const selectedIndicator =
+    selectedParameter.indicators.find(
+      (indicator) => indicator.key === annualIndicator,
+    ) || firstAvailableIndicator;
+
+  const indicatorOptions = selectedParameter.indicators
+    .filter((indicator) =>
+      comparisonYears.some((row) => Number.isFinite(n(row?.[indicator.field]))),
+    )
+    .map((indicator) => ({
+      key: indicator.key,
+      label: indicator.label,
+    }));
+
+  const parameterSelectOptions = parameterConfigs
+    .filter((parameter) => parameterHasData(parameter))
+    .map((parameter) => ({
+      key: parameter.key,
+      label: parameter.label,
+    }));
+
+  const formatAnnualValue = (value, indicator = selectedIndicator) => {
+    const numeric = n(value);
+    if (!Number.isFinite(numeric)) return "—";
+
+    const formatted = numeric.toFixed(indicator.decimals ?? 1);
+    return indicator.unit ? `${formatted} ${indicator.unit}` : formatted;
+  };
+
+  const annualSeriesRows = comparisonYears.map((row) => ({
+    ...row,
+    value: n(row?.[selectedIndicator.field]),
+  }));
+
+  const validRows = annualSeriesRows.filter((row) =>
+    Number.isFinite(row.value),
+  );
+
+  const periodMean = validRows.length
+    ? avgFinite(validRows.map((row) => row.value))
+    : NaN;
+
+  const periodStart = validRows[0]?.year || "—";
+  const periodEnd = validRows[validRows.length - 1]?.year || "—";
+  const periodLabel =
+    periodStart === periodEnd
+      ? String(periodStart)
+      : `${periodStart}–${periodEnd}`;
+
+  const lineAnnualParameter = [
+    "temperature",
+    "humidity",
+    "wind",
+    "pressure",
+  ].includes(selectedParameter.key);
+
+  const annualChartOption = validRows.length
+    ? {
+        animation: true,
+        animationDuration: 250,
+        animationDurationUpdate: 250,
+        title: {
+          text: `${selectedIndicator.title} (${periodLabel})`,
+          subtext: selectedIndicator.description,
           left: "center",
-          textStyle: { color: "#475569", fontSize: 10, fontWeight: 700 },
-          data: ["Raffica massima"],
+          top: annualIsMobile ? 5 : 10,
+          itemGap: annualIsMobile ? 3 : 4,
+          textStyle: {
+            fontSize: annualIsMobile ? 13 : 17,
+            fontWeight: 800,
+            lineHeight: annualIsMobile ? 15 : 21,
+            color: "#0f172a",
+          },
+          subtextStyle: {
+            fontSize: annualIsMobile ? 7.5 : 10,
+            fontWeight: 650,
+            color: "#64748b",
+          },
+        },
+        toolbox: makeChartToolbox({
+          filename: `meteo-collinas-dati-annuali-${annualParameter}-${annualIndicator}`,
+          isMobile: annualIsMobile,
+        }),
+        dataZoom: makePeriodDataZoom(),
+        grid: annualIsMobile
+          ? {
+              left: annualIsVeryNarrow ? 46 : 50,
+              right: 12,
+              top: 82,
+              bottom: 86,
+              containLabel: false,
+              show: true,
+              borderWidth: 0,
+              backgroundColor: "rgba(248, 250, 252, 0.52)",
+            }
+          : {
+              left: 68,
+              right: 30,
+              top: 82,
+              bottom: 70,
+              containLabel: false,
+              show: true,
+              borderWidth: 0,
+              backgroundColor: "rgba(248, 250, 252, 0.52)",
+            },
+        tooltip: {
+          trigger: "axis",
+          triggerOn: "mousemove|click",
+          confine: true,
+          backgroundColor: "rgba(255,255,255,.98)",
+          borderColor: "#dbe3ec",
+          borderWidth: 1,
+          padding: [9, 11],
+          axisPointer: {
+            type: "line",
+            snap: true,
+            lineStyle: {
+              color: "rgba(59, 130, 246, 0.35)",
+              width: 1,
+            },
+          },
+          textStyle: {
+            color: "#0f172a",
+            fontSize: annualIsMobile ? 9 : 11,
+            fontWeight: 650,
+          },
+          extraCssText:
+            "border-radius:10px;box-shadow:0 10px 28px rgba(15,23,42,.12);",
+          formatter: (params) => {
+            const allParams = Array.isArray(params) ? params : [];
+            const year = String(allParams[0]?.axisValue || "");
+            const row = annualSeriesRows.find(
+              (candidate) => String(candidate.year) === year,
+            );
+            const value = n(row?.value);
+
+            if (!row || !Number.isFinite(value)) return year;
+
+            return `<strong>${year}</strong><br/>${selectedIndicator.label}: <b>${formatAnnualValue(
+              value,
+            )}</b><br/><span style="color:#64748b;font-weight:700;">Dato registrato dalla stazione</span>`;
+          },
+        },
+        legend: {
+          show: Number.isFinite(periodMean),
+          left: "center",
+          bottom: annualIsMobile ? 8 : 13,
+          itemWidth: annualIsMobile ? 16 : 18,
+          itemHeight: annualIsMobile ? 9 : 9,
+          itemGap: annualIsMobile ? 12 : 18,
+          textStyle: {
+            color: "#52637d",
+            fontSize: annualIsMobile ? 9 : 10.5,
+            fontWeight: 750,
+          },
+          data: [
+            selectedIndicator.label,
+            `Media ${periodLabel}`,
+          ],
+        },
+        xAxis: {
+          type: "category",
+          boundaryGap: !lineAnnualParameter,
+          data: annualSeriesRows.map((row) => String(row.year)),
+          axisTick: { show: false },
+          axisLine: {
+            lineStyle: {
+              color: "#cbd5e1",
+              width: 1,
+            },
+          },
+          axisLabel: {
+            color: "#64748b",
+            fontSize: annualIsMobile ? 9 : 10,
+            interval: 0,
+            formatter: (value, index) => {
+              if (annualIsMobile && comparisonYears.length > 8) {
+                const year = Number(value);
+                const isLast = index === comparisonYears.length - 1;
+                return isLast || year % 2 === 0 ? value : "";
+              }
+
+              if (!annualIsMobile && comparisonYears.length > 18) {
+                const year = Number(value);
+                const isLast = index === comparisonYears.length - 1;
+                return isLast || year % 2 === 0 ? value : "";
+              }
+
+              return value;
+            },
+          },
+          splitLine: {
+            show: true,
+            lineStyle: {
+              color: "rgba(148,163,184,.10)",
+              type: "solid",
+            },
+          },
         },
         yAxis: {
           type: "value",
-          name: "km/h",
+          name: selectedIndicator.unit || "",
           nameLocation: "middle",
-          nameGap: 45,
-          min: 0,
-          splitLine: {
-            lineStyle: { color: "rgba(148,163,184,.18)", type: "dashed" },
+          nameGap: annualIsMobile ? 34 : 44,
+          nameTextStyle: {
+            color: "#64748b",
+            fontSize: annualIsMobile ? 9 : 10,
           },
-          axisLabel: { color: "#64748b", fontSize: 10 },
+          scale:
+            selectedParameter.key === "temperature" ||
+            selectedParameter.key === "pressure",
+          min:
+            ["giorni", "mm", "km/h", "%"].includes(selectedIndicator.unit)
+              ? 0
+              : undefined,
+          axisLine: { show: false },
+          axisTick: { show: false },
+          splitLine: {
+            lineStyle: {
+              color: "rgba(148,163,184,.18)",
+              type: "dashed",
+            },
+          },
+          axisLabel: {
+            color: "#64748b",
+            fontSize: annualIsMobile ? 9 : 10,
+          },
         },
         series: [
-          {
-            name: "Raffica massima",
-            type: "line",
-            data: selectedRows.map((row) => {
-              const value = n(row?.gust);
-              return Number.isFinite(value) ? value : null;
-            }),
-            showSymbol: false,
-            connectNulls: false,
-            smooth: false,
-            lineStyle: { width: 2.1, color: "#7c3aed" },
-            itemStyle: { color: "#7c3aed" },
-            markLine: commonMarkLine,
-          },
+          lineAnnualParameter
+            ? {
+                name: selectedIndicator.label,
+                type: "line",
+                data: annualSeriesRows.map((row) =>
+                  Number.isFinite(row.value) ? row.value : null,
+                ),
+                showSymbol: true,
+                symbol: "circle",
+                symbolSize: annualIsMobile ? 6 : 7,
+                connectNulls: false,
+                smooth: false,
+                lineStyle: {
+                  width: 2.5,
+                  color: selectedParameter.accent,
+                },
+                itemStyle: {
+                  color: "#ffffff",
+                  borderColor: selectedParameter.accent,
+                  borderWidth: 2.2,
+                },
+                emphasis: {
+                  focus: "series",
+                  scale: 1.2,
+                },
+                z: 4,
+              }
+            : {
+                name: selectedIndicator.label,
+                type: "bar",
+                data: annualSeriesRows.map((row) =>
+                  Number.isFinite(row.value) ? row.value : null,
+                ),
+                barMaxWidth: annualIsMobile ? 28 : 42,
+                itemStyle: {
+                  color: selectedParameter.accent,
+                  opacity: 0.78,
+                  borderRadius: [5, 5, 0, 0],
+                },
+                emphasis: {
+                  focus: "series",
+                  itemStyle: {
+                    opacity: 1,
+                  },
+                },
+                z: 4,
+              },
+          ...(Number.isFinite(periodMean)
+            ? [
+                {
+                  name: `Media ${periodLabel}`,
+                  type: "line",
+                  data: annualSeriesRows.map((row) =>
+                    Number.isFinite(row.value) ? periodMean : null,
+                  ),
+                  showSymbol: false,
+                  connectNulls: false,
+                  smooth: false,
+                  silent: true,
+                  lineStyle: {
+                    width: 1.6,
+                    color: "#64748b",
+                    type: "dashed",
+                    opacity: 0.95,
+                  },
+                  itemStyle: { color: "#64748b" },
+                  z: 3,
+                },
+              ]
+            : []),
         ],
-      };
-    }
+      }
+    : null;
 
-    return {
-      ...base,
-      legend: {
-        bottom: 4,
-        left: "center",
-        itemGap: 22,
-        textStyle: { color: "#475569", fontSize: 10, fontWeight: 700 },
-        data: ["Temperatura massima", "Temperatura media", "Temperatura minima"],
-      },
-      yAxis: {
-        type: "value",
-        name: "°C",
-        nameLocation: "middle",
-        nameGap: 42,
-        splitLine: {
-          lineStyle: { color: "rgba(148,163,184,.18)", type: "dashed" },
-        },
-        axisLabel: { color: "#64748b", fontSize: 10 },
-      },
-      series: [
-        {
-          name: "Temperatura massima",
-          type: "line",
-          data: selectedRows.map((row) => {
-            const value = n(row?.tmax);
-            return Number.isFinite(value) ? value : null;
-          }),
-          showSymbol: false,
-          connectNulls: false,
-          smooth: false,
-          lineStyle: { width: 1.9, color: "#ef4444" },
-          itemStyle: { color: "#ef4444" },
-          markLine: commonMarkLine,
-        },
-        {
-          name: "Temperatura media",
-          type: "line",
-          data: selectedRows.map((row) => {
-            const value = n(row?.tmean);
-            return Number.isFinite(value) ? value : null;
-          }),
-          showSymbol: false,
-          connectNulls: false,
-          smooth: false,
-          lineStyle: { width: 2.2, color: "#64748b", type: "dashed" },
-          itemStyle: { color: "#64748b" },
-        },
-        {
-          name: "Temperatura minima",
-          type: "line",
-          data: selectedRows.map((row) => {
-            const value = n(row?.tmin);
-            return Number.isFinite(value) ? value : null;
-          }),
-          showSymbol: false,
-          connectNulls: false,
-          smooth: false,
-          lineStyle: { width: 1.9, color: "#2563eb" },
-          itemStyle: { color: "#2563eb" },
-        },
-      ],
-    };
-  }, [annualParameter, selectedRows, selectedYear]);
+  const chooseParameter = (key) => {
+    const next =
+      parameterConfigs.find((parameter) => parameter.key === key) ||
+      parameterConfigs[0];
 
-  const latestYear = years[0]?.year || null;
-  const goArchive = () => {
-    if (latestYear) router.push(`/anni/${latestYear}`);
+    if (!parameterHasData(next)) return;
+
+    setAnnualParameter(next.key);
+
+    const nextIndicator =
+      next.indicators.find((indicator) =>
+        comparisonYears.some((row) =>
+          Number.isFinite(n(row?.[indicator.field])),
+        ),
+      ) || next.indicators[0];
+
+    setAnnualIndicator(nextIndicator.key);
   };
 
+
+
   return (
-    <section className="homeLower" aria-label="Archivio meteo e stazione meteorologica">
-      <article className="lowerPanel archiveSection">
-        <div className="lowerPanelHead">
-          <div className="lowerTitle">
-            <span className="lowerIcon" aria-hidden="true">▥</span>
-            <div>
-              <h2>Archivio meteo</h2>
-              <p>Consulta e confronta i dati meteorologici degli anni passati.</p>
-            </div>
-          </div>
-
-          <button type="button" className="archiveLink" onClick={goArchive} disabled={!latestYear}>
-            Vedi l&apos;archivio completo <span aria-hidden="true">→</span>
-          </button>
-        </div>
-
-        <div className="yearCards">
-          {years.map((item) => {
-            const active = String(item?.year) === String(selectedYear);
-            return (
-              <button
-                key={item.year}
-                type="button"
-                className={`yearCard ${active ? "active" : ""}`}
-                onClick={() => setSelectedYear(String(item.year))}
-                aria-pressed={active}
-              >
-                <div className="yearCardTop">
-                  <strong>{item.year}</strong>
-                  <span>{Number.isFinite(n(item.ndays)) ? `${item.ndays} giorni` : "—"}</span>
-                </div>
-                <div className="yearMetric temperatureMetric">
-                  <i aria-hidden="true">↕</i>
-                  <span><b>{fmt(item.tmean, 1)} °C</b><small>Temp. media</small></span>
-                </div>
-                <div className="yearMetric rainMetric">
-                  <i aria-hidden="true">◆</i>
-                  <span><b>{fmt(item.rain, 1)} mm</b><small>Prec. totale</small></span>
-                </div>
-                <span className="yearChevron" aria-hidden="true">›</span>
-              </button>
-            );
-          })}
-        </div>
-      </article>
-
+    <section
+      className="homeLower"
+      aria-label="Dati annuali e stazione meteorologica"
+    >
       <article className="lowerPanel annualSection">
-        <div className="annualHeader">
-          <div className="lowerTitle">
-            <span className="lowerIcon" aria-hidden="true">⌁</span>
-            <div>
-              <h2>Grafico annuale</h2>
-              <p>
-                Andamento dei principali parametri meteorologici per il {selectedYear || "—"}.
-              </p>
-            </div>
-          </div>
-
-          <div className="annualControl">
-            <span>Parametro</span>
-            <CustomSelect
-              value={annualParameter}
-              options={annualParameterOptions}
-              onChange={setAnnualParameter}
-              ariaLabel="Seleziona parametro del grafico annuale"
-            />
-          </div>
+        <div className="annualHeader annualHeaderCentered">
+          <h2>Dati Annuali</h2>
+          <p>
+            Consulta e confronta i dati meteorologici degli anni passati.
+          </p>
         </div>
 
-        {selectedStats && (
-          <div className="annualHighlights">
-            <div className="annualHighlight maxTemp">
-              <span className="highlightIcon" aria-hidden="true">↑</span>
-              <div><strong>{fmt(selectedStats.tmax, 1)} °C</strong><span>Massima assoluta</span></div>
+        <div className="annualToolbar">
+          {annualIsMobile ? (
+            <div className="parameterMobileControl">
+              <span>Parametro</span>
+              <CustomSelect
+                value={annualParameter}
+                options={parameterSelectOptions}
+                onChange={setAnnualParameter}
+                ariaLabel="Seleziona parametro annuale"
+              />
             </div>
-            <div className="annualHighlight minTemp">
-              <span className="highlightIcon" aria-hidden="true">↓</span>
-              <div><strong>{fmt(selectedStats.tmin, 1)} °C</strong><span>Minima assoluta</span></div>
-            </div>
-            <div className="annualHighlight meanTemp">
-              <span className="highlightIcon" aria-hidden="true">↕</span>
-              <div><strong>{fmt(selectedStats.tmean, 1)} °C</strong><span>Media annuale</span></div>
-            </div>
-            <div className="annualHighlight rainTotal">
-              <span className="highlightIcon" aria-hidden="true">◆</span>
-              <div><strong>{fmt(selectedStats.rain, 1)} mm</strong><span>Precipitazioni totali</span></div>
-            </div>
-          </div>
-        )}
-
-        <div className="annualChartWrap">
-          {annualChartOption ? (
-            <ReactECharts
-              option={annualChartOption}
-              style={{ height: 330, width: "100%" }}
-              notMerge={true}
-              lazyUpdate={true}
-            />
           ) : (
-            <div className="annualChartMessage">
-              Dati annuali non disponibili per l&apos;anno selezionato.
+            <div
+              className="parameterTabs"
+              role="tablist"
+              aria-label="Parametro dei dati annuali"
+            >
+              {parameterConfigs.map((parameter) => {
+                const available = parameterHasData(parameter);
+                const active = parameter.key === annualParameter;
+
+                return (
+                  <button
+                    key={parameter.key}
+                    type="button"
+                    className={`parameterTab ${active ? "active" : ""}`}
+                    onClick={() => available && setAnnualParameter(parameter.key)}
+                    disabled={!available}
+                    aria-pressed={active}
+                    title={
+                      available
+                        ? parameter.label
+                        : `${parameter.label}: dati annuali non ancora disponibili`
+                    }
+                  >
+                    <span className="parameterTabIcon">
+                      <SummaryParameterIcon type={parameter.icon} />
+                    </span>
+                    <span>{parameter.label}</span>
+                  </button>
+                );
+              })}
             </div>
           )}
+
+          <div className="indicatorControl">
+            <span>Indicatore</span>
+            <CustomSelect
+              value={annualIndicator}
+              options={indicatorOptions}
+              onChange={setAnnualIndicator}
+              ariaLabel="Seleziona indicatore annuale"
+            />
+          </div>
+        </div>
+
+        <div className="annualChartCard annualChartCardMerged">
+          <div className="annualChartWrap">
+            {annualChartOption ? (
+              <ResponsivePeriodEChart
+                option={annualChartOption}
+                height={annualChartHeight}
+                chartKey={`annual-${annualParameter}-${annualIndicator}-${annualIsMobile ? "mobile" : "desktop"}`}
+              />
+            ) : (
+              <div className="annualChartMessage">
+                Dati annuali non ancora disponibili per questo indicatore.
+              </div>
+            )}
+          </div>
+
+          <div className="yearCards annualYearCardsEmbedded" aria-label="Anni disponibili">
+            {years.map((item) => (
+              <div className="yearCard" key={item.year}>
+                <div className="yearCardTop">
+                  <div className="yearTitleRow">
+                    <strong>{item.year}</strong>
+                    <button
+                      type="button"
+                      className="yearPageLink"
+                      onClick={() => router.push(`/anni/${item.year}`)}
+                      aria-label={`Apri i dati annuali del ${item.year}`}
+                      title={`Vai alla pagina annuale ${item.year}`}
+                    >
+                      →
+                    </button>
+                  </div>
+
+                  <span>
+                    {Number.isFinite(n(item.ndays))
+                      ? `${item.ndays} giorni`
+                      : "—"}
+                  </span>
+                </div>
+
+                <div className="yearMetric temperatureMetric">
+                  <i aria-hidden="true">↕</i>
+                  <span>
+                    <b>{fmt(item.tmean, 1)} °C</b>
+                    <small>Temp. media</small>
+                  </span>
+                </div>
+
+                <div className="yearMetric rainMetric">
+                  <i aria-hidden="true">◆</i>
+                  <span>
+                    <b>{fmt(item.rain, 1)} mm</b>
+                    <small>Prec. totale</small>
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       </article>
 
@@ -1482,45 +2944,79 @@ function HomeLowerSection({ yearStats = [], annualDataByYear = {} }) {
         .lowerPanel {
           min-width: 0;
           border: 1px solid #e1e8f0;
-          border-radius: 21px;
+          border-radius: 22px;
           background: rgba(255, 255, 255, 0.98);
           box-shadow: 0 8px 28px rgba(15, 23, 42, 0.045);
         }
 
-        .archiveSection {
-          padding: 17px 18px 18px;
+        .archiveSection,
+        .annualSection {
+          padding: 18px;
         }
 
-        .lowerPanelHead,
-        .annualHeader {
+        .lowerPanelHead {
           display: flex;
           align-items: center;
           justify-content: space-between;
           gap: 16px;
         }
 
+        .annualHeaderCentered {
+          display: grid;
+          justify-items: center;
+          gap: 4px;
+          text-align: center;
+        }
+
+        .annualHeaderCentered h2,
+        .annualHeaderCentered p {
+          margin: 0;
+        }
+
+        .annualHeaderCentered h2 {
+          color: #0b1f45;
+          font-size: 25px;
+          line-height: 1.05;
+          font-weight: 950;
+          letter-spacing: -0.03em;
+        }
+
+        .annualHeaderCentered p {
+          max-width: 760px;
+          color: #64748b;
+          font-size: 9.5px;
+          line-height: 1.35;
+          font-weight: 650;
+        }
+
         .lowerTitle {
           min-width: 0;
           display: flex;
           align-items: center;
-          gap: 12px;
+          gap: 13px;
         }
 
         .lowerIcon {
           flex: 0 0 auto;
-          width: 46px;
-          height: 46px;
+          width: 50px;
+          height: 50px;
           display: grid;
           place-items: center;
-          border-radius: 15px;
+          border-radius: 16px;
           background: #eaf3ff;
           color: #126be8;
-          font-size: 22px;
+          font-size: 23px;
           font-weight: 950;
+        }
+
+        .trendIcon {
+          font-size: 27px;
         }
 
         .lowerTitle h2,
         .lowerTitle p,
+        .annualChartHead h3,
+        .annualChartHead p,
         .stationIntro h2,
         .stationIntro h3,
         .stationIntro p,
@@ -1530,10 +3026,10 @@ function HomeLowerSection({ yearStats = [], annualDataByYear = {} }) {
 
         .lowerTitle h2,
         .stationIntro h2 {
-          font-size: 22px;
+          font-size: 24px;
           line-height: 1.05;
           font-weight: 950;
-          letter-spacing: -0.025em;
+          letter-spacing: -0.03em;
           color: #0f172a;
         }
 
@@ -1543,73 +3039,101 @@ function HomeLowerSection({ yearStats = [], annualDataByYear = {} }) {
           color: #64748b;
         }
 
-        .archiveLink {
-          appearance: none;
-          border: 0;
-          background: transparent;
-          color: #1169e8;
-          font: inherit;
-          font-size: 10.5px;
-          font-weight: 900;
-          cursor: pointer;
-          white-space: nowrap;
-        }
-
-        .archiveLink:disabled {
-          opacity: 0.45;
-          cursor: default;
-        }
-
         .yearCards {
-          margin-top: 14px;
+          margin-top: 15px;
           display: grid;
           grid-template-columns: repeat(6, minmax(0, 1fr));
-          gap: 9px;
+          gap: 10px;
+        }
+
+        .annualYearCardsEmbedded {
+          margin-top: 0;
+          padding: 14px;
+          border-top: 1px solid #e6edf5;
+          background: linear-gradient(
+            180deg,
+            rgba(248, 250, 252, 0.45) 0%,
+            #ffffff 100%
+          );
         }
 
         .yearCard {
           position: relative;
           min-width: 0;
-          min-height: 112px;
+          min-height: 116px;
           padding: 12px 13px;
-          border: 1px solid #e2e8f0;
-          border-radius: 14px;
-          background: #ffffff;
+          border: 1px solid #dce6f1;
+          border-radius: 15px;
+          background: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
           color: #0f172a;
-          font-family: inherit;
-          text-align: left;
-          cursor: pointer;
-          transition: transform 120ms ease, border-color 120ms ease, box-shadow 120ms ease, background 120ms ease;
+          transition:
+            transform 120ms ease,
+            border-color 120ms ease,
+            box-shadow 120ms ease;
+        }
+
+        .yearCard:first-child {
+          border-color: #82b6ff;
+          box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.05);
         }
 
         .yearCard:hover {
           transform: translateY(-2px);
-          border-color: #b9cce6;
-          box-shadow: 0 8px 18px rgba(15, 23, 42, 0.06);
-        }
-
-        .yearCard.active {
-          border-color: #6ba9ff;
-          background: linear-gradient(180deg, #ffffff 0%, #f6faff 100%);
-          box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.06);
+          border-color: #b5cce9;
+          box-shadow: 0 8px 18px rgba(15, 23, 42, 0.055);
         }
 
         .yearCardTop {
           display: flex;
           align-items: center;
           justify-content: space-between;
-          gap: 6px;
-          margin-bottom: 9px;
+          gap: 8px;
+          margin-bottom: 10px;
         }
 
-        .yearCardTop strong {
+        .yearTitleRow {
+          min-width: 0;
+          display: flex;
+          align-items: center;
+          gap: 7px;
+        }
+
+        .yearTitleRow strong {
           font-size: 21px;
           line-height: 1;
           font-weight: 950;
-          letter-spacing: -0.02em;
+          letter-spacing: -0.025em;
         }
 
-        .yearCardTop span {
+        .yearPageLink {
+          width: 28px;
+          height: 28px;
+          padding: 0;
+          display: inline-grid;
+          place-items: center;
+          border: 0;
+          border-radius: 8px;
+          background: transparent;
+          color: #1677ff;
+          font: inherit;
+          font-size: 20px;
+          font-weight: 950;
+          line-height: 1;
+          cursor: pointer;
+          transition: background 120ms ease, transform 120ms ease;
+        }
+
+        .yearPageLink:hover {
+          background: #edf5ff;
+          transform: translateX(2px);
+        }
+
+        .yearPageLink:focus-visible {
+          outline: 2px solid rgba(22, 119, 255, 0.28);
+          outline-offset: 2px;
+        }
+
+        .yearCardTop > span {
           padding: 4px 7px;
           border: 1px solid #e5eaf0;
           border-radius: 999px;
@@ -1622,9 +3146,9 @@ function HomeLowerSection({ yearStats = [], annualDataByYear = {} }) {
 
         .yearMetric {
           display: grid;
-          grid-template-columns: 19px minmax(0, 1fr);
+          grid-template-columns: 20px minmax(0, 1fr);
           align-items: center;
-          gap: 6px;
+          gap: 7px;
           margin-top: 5px;
         }
 
@@ -1635,8 +3159,13 @@ function HomeLowerSection({ yearStats = [], annualDataByYear = {} }) {
           text-align: center;
         }
 
-        .temperatureMetric i { color: #2563eb; }
-        .rainMetric i { color: #0b77df; }
+        .temperatureMetric i {
+          color: #2563eb;
+        }
+
+        .rainMetric i {
+          color: #0b77df;
+        }
 
         .yearMetric > span {
           min-width: 0;
@@ -1657,22 +3186,85 @@ function HomeLowerSection({ yearStats = [], annualDataByYear = {} }) {
           color: #64748b;
         }
 
-        .yearChevron {
-          position: absolute;
-          right: 10px;
-          top: 50%;
-          transform: translateY(-50%);
-          color: #64748b;
-          font-size: 19px;
-        }
-
         .annualSection {
           overflow: visible;
-          padding: 17px 18px 8px;
         }
 
-        .annualControl {
-          width: 290px;
+        .annualToolbar {
+          margin-top: 16px;
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) 330px;
+          align-items: center;
+          gap: 18px;
+        }
+
+        .parameterTabs {
+          min-width: 0;
+          display: flex;
+          align-items: center;
+          flex-wrap: wrap;
+          gap: 8px;
+        }
+
+        .parameterTab {
+          min-height: 40px;
+          padding: 0 20px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          gap: 9px;
+          border: 1px solid #e1e8f0;
+          border-radius: 999px;
+          background: #f8fafc;
+          color: #334155;
+          font-family: inherit;
+          font-size: 10.5px;
+          font-weight: 850;
+          cursor: pointer;
+          transition:
+            border-color 120ms ease,
+            background 120ms ease,
+            color 120ms ease,
+            transform 120ms ease;
+        }
+
+        .parameterTab:hover:not(:disabled) {
+          transform: translateY(-1px);
+          border-color: #bfd2e8;
+          background: #f3f8ff;
+        }
+
+        .parameterTab.active {
+          border-color: #1677ff;
+          background: #1677ff;
+          color: #ffffff;
+          box-shadow: 0 6px 15px rgba(22, 119, 255, 0.18);
+        }
+
+        .parameterTab:disabled {
+          opacity: 0.42;
+          cursor: not-allowed;
+        }
+
+        .parameterTabIcon {
+          width: 18px;
+          height: 18px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+        }
+
+        .parameterTabIcon :global(svg) {
+          width: 17px;
+          height: 17px;
+          fill: none;
+          stroke: currentColor;
+          stroke-width: 1.8;
+          stroke-linecap: round;
+          stroke-linejoin: round;
+        }
+
+        .indicatorControl {
           min-width: 0;
           display: grid;
           grid-template-columns: auto minmax(0, 1fr);
@@ -1680,14 +3272,14 @@ function HomeLowerSection({ yearStats = [], annualDataByYear = {} }) {
           gap: 10px;
         }
 
-        .annualControl > span {
+        .indicatorControl > span {
           font-size: 9.5px;
-          font-weight: 850;
+          font-weight: 900;
           color: #64748b;
         }
 
-        .annualControl :global(.customSelect .selectButton) {
-          min-height: 38px;
+        .indicatorControl :global(.customSelect .selectButton) {
+          min-height: 40px;
           border-radius: 11px;
           padding: 8px 34px 8px 12px;
           justify-content: flex-start;
@@ -1695,75 +3287,30 @@ function HomeLowerSection({ yearStats = [], annualDataByYear = {} }) {
           text-align: left;
         }
 
-        .annualControl :global(.customSelect .selectedValue) {
+        .indicatorControl :global(.customSelect .selectedValue) {
           text-align: left;
         }
 
-        .annualHighlights {
+        .annualChartCard {
+          position: relative;
           margin-top: 14px;
-          display: grid;
-          grid-template-columns: repeat(4, minmax(0, 1fr));
-          border: 1px solid #e8edf3;
-          border-radius: 15px;
-          background: #fbfcfe;
           overflow: hidden;
-        }
-
-        .annualHighlight {
-          min-width: 0;
-          min-height: 70px;
-          padding: 10px 14px;
-          display: grid;
-          grid-template-columns: 38px minmax(0, 1fr);
-          align-items: center;
-          gap: 9px;
-          border-right: 1px solid #e8edf3;
-        }
-
-        .annualHighlight:last-child {
-          border-right: 0;
-        }
-
-        .highlightIcon {
-          width: 36px;
-          height: 36px;
-          display: grid;
-          place-items: center;
-          border-radius: 50%;
-          background: #edf5ff;
-          color: #2563eb;
-          font-size: 18px;
-          font-weight: 950;
-        }
-
-        .maxTemp .highlightIcon { background: #fff0ef; color: #ef4444; }
-        .minTemp .highlightIcon { background: #eef5ff; color: #2563eb; }
-        .meanTemp .highlightIcon { background: #f1f5f9; color: #64748b; }
-        .rainTotal .highlightIcon { background: #eaf7ff; color: #0284c7; }
-
-        .annualHighlight div {
-          min-width: 0;
-          display: grid;
-          gap: 2px;
-        }
-
-        .annualHighlight strong {
-          overflow: hidden;
-          font-size: 15px;
-          font-weight: 950;
-          color: #0f172a;
-          text-overflow: ellipsis;
-          white-space: nowrap;
-        }
-
-        .annualHighlight div span {
-          font-size: 9px;
-          color: #64748b;
+          border: 1px solid #dce5ef;
+          border-radius: 18px;
+          background: #ffffff;
+          box-shadow: 0 8px 24px rgba(15, 23, 42, 0.045);
         }
 
         .annualChartWrap {
-          min-height: 330px;
-          margin-top: 6px;
+          position: relative;
+          z-index: 1;
+          width: 100%;
+          min-width: 0;
+          min-height: 0;
+          padding: 0;
+          box-sizing: border-box;
+          overflow: hidden;
+          background: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
         }
 
         .annualChartMessage {
@@ -1771,6 +3318,7 @@ function HomeLowerSection({ yearStats = [], annualDataByYear = {} }) {
           display: flex;
           align-items: center;
           justify-content: center;
+          padding: 20px;
           color: #64748b;
           font-size: 11px;
           font-weight: 800;
@@ -1847,7 +3395,7 @@ function HomeLowerSection({ yearStats = [], annualDataByYear = {} }) {
           height: 8px;
           border-radius: 50%;
           background: #16a34a;
-          box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.10);
+          box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.1);
         }
 
         .stationSensors {
@@ -1902,6 +3450,24 @@ function HomeLowerSection({ yearStats = [], annualDataByYear = {} }) {
             grid-template-columns: repeat(3, minmax(0, 1fr));
           }
 
+          .annualYearCardsEmbedded {
+            padding: 12px;
+          }
+
+          .annualToolbar {
+            grid-template-columns: 1fr;
+          }
+
+          .annualYearRail {
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 10px;
+          }
+
+          .indicatorControl {
+            width: min(430px, 100%);
+            justify-self: end;
+          }
+
           .stationSection {
             grid-template-columns: 1fr;
           }
@@ -1924,95 +3490,142 @@ function HomeLowerSection({ yearStats = [], annualDataByYear = {} }) {
           .annualSection,
           .stationSection {
             padding: 14px;
-            border-radius: 17px;
+            border-radius: 18px;
           }
 
-          .lowerPanelHead,
-          .annualHeader {
+          .lowerTitle {
             align-items: flex-start;
-            flex-direction: column;
           }
 
-          .archiveLink {
-            align-self: flex-end;
+          .lowerTitle h2,
+          .stationIntro h2 {
+            font-size: 19px;
           }
 
-          .annualControl {
+          .annualHeaderCentered h2 {
+            font-size: 24px;
+          }
+
+          .annualHeaderCentered p {
+            max-width: 360px;
+            font-size: 9px;
+          }
+
+          .annualHeaderCentered p {
+            max-width: 330px;
+            font-size: 8.5px;
+          }
+
+          .lowerIcon {
+            width: 42px;
+            height: 42px;
+            border-radius: 13px;
+            font-size: 20px;
+          }
+
+          .annualToolbar {
+            margin-top: 14px;
+            gap: 12px;
+          }
+
+          .parameterTabs {
+            width: 100%;
+            display: flex;
+            flex-wrap: nowrap;
+            gap: 7px;
+            overflow-x: auto;
+            padding-bottom: 3px;
+            scrollbar-width: none;
+          }
+
+          .parameterTabs::-webkit-scrollbar {
+            display: none;
+          }
+
+          .parameterTab {
+            flex: 0 0 auto;
+            min-width: max-content;
+            padding: 0 13px;
+          }
+
+          .indicatorControl {
             width: 100%;
             grid-template-columns: 1fr;
+            justify-self: stretch;
             gap: 4px;
           }
 
-          .annualHighlights {
-            grid-template-columns: repeat(2, minmax(0, 1fr));
+          .annualChartCard {
+            width: auto;
+            max-width: 100%;
+            margin-top: 12px;
+            border-radius: 13px;
           }
 
-          .annualHighlight:nth-child(2) {
-            border-right: 0;
-          }
-
-          .annualHighlight:nth-child(-n + 2) {
-            border-bottom: 1px solid #e8edf3;
+          .annualChartWrap {
+            min-height: 0;
+            padding: 0;
+            overflow: hidden;
           }
         }
 
         @media (max-width: 560px) {
-          .lowerTitle h2,
-          .stationIntro h2 {
-            font-size: 18px;
-          }
-
-          .lowerIcon {
-            width: 40px;
-            height: 40px;
-            border-radius: 13px;
-            font-size: 19px;
-          }
-
-          .yearCards {
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 7px;
-          }
-
-          .yearCard {
-            min-height: 104px;
+          .annualYearCardsEmbedded {
             padding: 10px;
           }
 
-          .yearCardTop strong {
+          .annualYearRail {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 8px;
+            padding: 10px;
+          }
+
+          .annualYearMiniCard {
+            padding: 10px;
+            border-radius: 14px;
+            gap: 7px;
+          }
+
+          .annualYearMiniTop strong {
             font-size: 18px;
           }
 
-          .yearCardTop span {
+          .annualYearMiniArrow {
+            font-size: 18px;
+          }
+
+          .annualYearMiniBadge {
+            min-height: 22px;
+            padding: 0 8px;
+            font-size: 9px;
+          }
+
+          .annualYearMiniStats {
+            grid-template-columns: 1fr;
+            gap: 6px;
+          }
+
+          .annualYearMiniStat b {
+            font-size: 11px;
+          }
+
+          .yearCard {
+            min-height: 108px;
+            padding: 10px;
+          }
+
+          .yearTitleRow strong {
+            font-size: 18px;
+          }
+
+          .yearPageLink {
+            width: 24px;
+            height: 24px;
+            font-size: 18px;
+          }
+
+          .yearCardTop > span {
             font-size: 7px;
-          }
-
-          .annualHighlights {
-            gap: 0;
-          }
-
-          .annualHighlight {
-            min-height: 62px;
-            padding: 8px 9px;
-            grid-template-columns: 31px minmax(0, 1fr);
-          }
-
-          .highlightIcon {
-            width: 30px;
-            height: 30px;
-            font-size: 15px;
-          }
-
-          .annualHighlight strong {
-            font-size: 12px;
-          }
-
-          .annualChartWrap {
-            min-height: 280px;
-          }
-
-          .annualChartWrap :global(.echarts-for-react) {
-            min-height: 280px;
           }
 
           .stationIntro {
@@ -3191,7 +4804,6 @@ function buildShortForecast(iconDeterministic, aromeDeterministic, ensemble) {
         ? Math.round(deterministicProbability)
         : Math.max(...periods.map((period) => period.rainProbability), 0);
 
-
     const deterministicMaximums = deterministicDays
       .map((summary) => summary.temperatureMax)
       .filter(Number.isFinite);
@@ -3263,7 +4875,6 @@ function buildShortForecast(iconDeterministic, aromeDeterministic, ensemble) {
     };
   });
 }
-
 
 const FORECAST_ICON_MODEL = "italia_meteo_arpae_icon_2i";
 const FORECAST_AROME_MODEL = "meteofrance_arome_france_hd";
@@ -3392,7 +5003,6 @@ function readForecastCache() {
     const updatedAt = Number(parsed?.updatedAt);
 
     if (!forecast.length || !Number.isFinite(updatedAt)) return null;
-
 
     return {
       forecast,
@@ -3659,7 +5269,6 @@ function ForecastSection() {
     ? overviewWeatherForDay(selectedDay)
     : null;
 
-
   return (
     <section className="forecastSection" aria-label="Previsioni per Collinas">
       <div className="forecastHeader">
@@ -3853,7 +5462,6 @@ function ForecastSection() {
                           {period.windDirection || "—"} {fmt(period.windSpeed, 0)} / {fmt(period.windGust, 0)} km/h
                         </strong>
                       </div>
-
 
                       <div className="periodMetricRow">
                         <span className="rowGlyph cloudGlyph">☁</span>
@@ -4519,7 +6127,6 @@ function ForecastSection() {
           white-space: nowrap;
         }
 
-
         .mobilePeriodTemperature,
         .mobileMetricLabel,
         .mobileHumidexInfo {
@@ -4575,7 +6182,6 @@ function ForecastSection() {
           text-overflow: ellipsis;
           white-space: nowrap;
         }
-
 
         .forecastFooterLink {
           min-height: 42px;
@@ -4786,7 +6392,6 @@ function ForecastSection() {
             border-radius: 0;
           }
 
-
           .overviewLegend {
             display: none;
           }
@@ -4826,7 +6431,6 @@ function ForecastSection() {
             box-sizing: border-box;
           }
 
-
           .periodTimeCorner {
             position: absolute;
             top: 7px;
@@ -4844,7 +6448,6 @@ function ForecastSection() {
             text-align: center;
             white-space: nowrap;
           }
-
 
           .periodSummaryCenter {
             position: absolute;
@@ -4902,7 +6505,6 @@ function ForecastSection() {
             line-height: 1;
             white-space: nowrap;
           }
-
 
           .periodMetricGrid > .temperatureMetricRow,
           .temperatureMetricRow {
@@ -5063,7 +6665,6 @@ function ForecastSection() {
     </section>
   );
 }
-
 
 function CustomSelect({ value, options = [], onChange, ariaLabel, variant = "light" }) {
   const [open, setOpen] = useState(false);
@@ -5350,7 +6951,6 @@ function relativeTimeKey(timestamp, startISO, mode) {
   return `${pad2(d.getDate())}|${hh}:${mm}`;
 }
 
-
 function seriesValues(pairs) {
   return (Array.isArray(pairs) ? pairs : [])
     .map((point) => ({
@@ -5404,7 +7004,6 @@ function formatSummaryTimestamp(timestamp, mode) {
   if (mode === "day") return `${hh}:${mm}`;
   return `${pad2(d.getDate())}/${pad2(d.getMonth() + 1)} ${hh}:${mm}`;
 }
-
 
 function deltaMetaForGroup(groupKey) {
   if (groupKey === "rain") {
@@ -5575,7 +7174,6 @@ function movingAveragePairs(pairs, windowMinutes) {
     return [timestamp, count ? round1(sum / count) : null];
   });
 }
-
 
 function anomalyWindowBounds(currentData, currentBounds, mode) {
   const rollingStart = n(currentData?.windowStartTimestamp);
@@ -5874,7 +7472,6 @@ function rollingWindowDurationMs(mode) {
   return null;
 }
 
-
 async function loadIntradayPeriod({
   startISO,
   endISO,
@@ -5899,8 +7496,6 @@ async function loadIntradayPeriod({
     buckets.set(timestamp, {
       temp_sum: 0,
       temp_cnt: 0,
-      dew_sum: 0,
-      dew_cnt: 0,
       rh_sum: 0,
       rh_cnt: 0,
       press_sum: 0,
@@ -6000,7 +7595,6 @@ async function loadIntradayPeriod({
           };
 
           addMean("temp", r?.temp_c);
-          addMean("dew", r?.dewpoint_c);
           addMean("rh", r?.rh_pct);
           addMean("press", r?.press_hpa);
           addMean("wind", r?.wind_kmh);
@@ -6066,7 +7660,6 @@ async function loadIntradayPeriod({
     countValue > 0 ? sumValue / countValue : null;
 
   const temp = [];
-  const dew = [];
   const rh = [];
   const press = [];
   const wind = [];
@@ -6084,7 +7677,6 @@ async function loadIntradayPeriod({
     const observed = Boolean(bucket?.observed);
 
     const tempValue = mean(bucket.temp_sum, bucket.temp_cnt);
-    const dewValue = mean(bucket.dew_sum, bucket.dew_cnt);
     const rhValue = mean(bucket.rh_sum, bucket.rh_cnt);
     const pressValue = mean(bucket.press_sum, bucket.press_cnt);
     const windValue = mean(bucket.wind_sum, bucket.wind_cnt);
@@ -6108,7 +7700,6 @@ async function loadIntradayPeriod({
     if (observed) cumulativeRain += rainValue;
 
     temp.push([timestamp, tempValue === null ? null : round1(tempValue)]);
-    dew.push([timestamp, dewValue === null ? null : round1(dewValue)]);
     rh.push([timestamp, rhValue === null ? null : round1(rhValue)]);
     press.push([timestamp, pressValue === null ? null : round1(pressValue)]);
     wind.push([timestamp, windValue === null ? null : round1(windValue)]);
@@ -6163,7 +7754,6 @@ async function loadIntradayPeriod({
 
   return {
     temp: trimPairs(temp),
-    dew: trimPairs(dew),
     rh: trimPairs(rh),
     press: trimPairs(press),
     wind: trimPairs(wind),
@@ -6181,59 +7771,551 @@ async function loadIntradayPeriod({
   };
 }
 
-async function loadFixedTemperatureClimatologyPeriod(currentPairs) {
+// -----------------------------------------------------------------------------
+// Climatologia pluviometrica 1991–2020 di Collinas.
+//
+// Per il grafico "Oggi" NON viene mostrato alcun riferimento climatologico,
+// perché la ricostruzione storica è giornaliera e non intragiornaliera.
+//
+// Per "Ultimi 7 giorni" e "Ultimi 30 giorni" vengono invece costruite,
+// usando i 30 anni giornalieri ricostruiti:
+//   - media climatologica cumulata;
+//   - fascia centrale 50% (P25–P75);
+//   - fascia centrale 80% (P10–P90).
+//
+// Il file atteso è:
+// /public/climatologia/precipitazioni/daily-history.json
+// -----------------------------------------------------------------------------
+
+let precipitationHistoryCache = null;
+let precipitationHistoryPromise = null;
+
+async function loadFixedPrecipitationHistory() {
+  if (precipitationHistoryCache) {
+    return precipitationHistoryCache;
+  }
+
+  if (precipitationHistoryPromise) {
+    return precipitationHistoryPromise;
+  }
+
+  precipitationHistoryPromise = fetch(
+    "/climatologia/precipitazioni/daily-history.json",
+    { cache: "force-cache" },
+  )
+    .then(async (response) => {
+      if (!response.ok) {
+        throw new Error(
+          "Serie pluviometrica climatica 1991–2020 non disponibile sul sito.",
+        );
+      }
+
+      const payload = await response.json();
+      const years = payload?.years;
+
+      if (!years || typeof years !== "object" || Array.isArray(years)) {
+        throw new Error(
+          "Formato non valido della serie pluviometrica climatica.",
+        );
+      }
+
+      precipitationHistoryCache = payload;
+      return payload;
+    })
+    .finally(() => {
+      precipitationHistoryPromise = null;
+    });
+
+  return precipitationHistoryPromise;
+}
+
+function historicalPrecipitationValue(
+  years,
+  syntheticYear,
+  monthDay,
+) {
+  const yearData = years?.[String(syntheticYear)];
+  if (!yearData) return null;
+
+  const direct = n(yearData?.[monthDay]);
+  if (Number.isFinite(direct)) return direct;
+
+  // Gestione del 29 febbraio quando il corrispondente anno storico
+  // non è bisestile: media semplice tra 28/02 e 01/03.
+  if (monthDay === "02-29") {
+    const feb28 = n(yearData?.["02-28"]);
+    const mar01 = n(yearData?.["03-01"]);
+
+    if (Number.isFinite(feb28) && Number.isFinite(mar01)) {
+      return (feb28 + mar01) / 2;
+    }
+  }
+
+  return null;
+}
+
+function historicalPrecipitationBetween({
+  years,
+  baseYear,
+  actualPeriodStart,
+  startTimestamp,
+  endTimestamp,
+}) {
+  let cursor = Number(startTimestamp);
+  const end = Number(endTimestamp);
+  const periodStart = new Date(Number(actualPeriodStart));
+
+  if (
+    !Number.isFinite(cursor) ||
+    !Number.isFinite(end) ||
+    !Number.isFinite(periodStart.getTime()) ||
+    end <= cursor
+  ) {
+    return null;
+  }
+
+  let total = 0;
+  let safety = 0;
+
+  while (cursor < end && safety < 64) {
+    const d = new Date(cursor);
+
+    const dayStart = new Date(
+      d.getFullYear(),
+      d.getMonth(),
+      d.getDate(),
+      0,
+      0,
+      0,
+      0,
+    );
+
+    const nextDay = new Date(
+      d.getFullYear(),
+      d.getMonth(),
+      d.getDate() + 1,
+      0,
+      0,
+      0,
+      0,
+    );
+
+    const segmentEnd = Math.min(end, nextDay.getTime());
+    const dayDuration = nextDay.getTime() - dayStart.getTime();
+
+    const yearOffset =
+      d.getFullYear() - periodStart.getFullYear();
+
+    const syntheticYear =
+      Number(baseYear) + yearOffset;
+
+    const monthDay =
+      `${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+
+    const dailyRain = historicalPrecipitationValue(
+      years,
+      syntheticYear,
+      monthDay,
+    );
+
+    if (!Number.isFinite(dailyRain) || dayDuration <= 0) {
+      return null;
+    }
+
+    // La ricostruzione storica è giornaliera.
+    // Per il SOLO disegno della cumulata il totale del giorno viene
+    // distribuito linearmente nelle 24 ore: così la curva è progressiva
+    // e non presenta scalini artificiali.
+    const fraction = Math.max(
+      0,
+      Math.min(
+        1,
+        (segmentEnd - cursor) / dayDuration,
+      ),
+    );
+
+    total += dailyRain * fraction;
+    cursor = segmentEnd;
+    safety += 1;
+  }
+
+  return total;
+}
+
+function makePrecipitationPeriodClimatology({
+  historyPayload,
+  currentPairs,
+  mode,
+}) {
+  if (!["week", "month"].includes(mode)) return null;
+
+  const years = historyPayload?.years;
+  if (!years || typeof years !== "object") return null;
+
+  const points = (Array.isArray(currentPairs) ? currentPairs : [])
+    .map((point) => [Number(point?.[0]), n(point?.[1])])
+    .filter((point) => Number.isFinite(point[0]))
+    .sort((a, b) => a[0] - b[0]);
+
+  if (points.length < 2) return null;
+
+  const actualPeriodStart = points[0][0];
+
+  const baseYears = Object.keys(years)
+    .map((year) => Number(year))
+    .filter(Number.isFinite)
+    .sort((a, b) => a - b);
+
+  if (!baseYears.length) return null;
+
+  const trajectories = [];
+
+  for (const baseYear of baseYears) {
+    const series = [];
+    let cumulative = 0;
+    let valid = true;
+    let previousTimestamp = points[0][0];
+
+    series.push([previousTimestamp, 0]);
+
+    for (let i = 1; i < points.length; i += 1) {
+      const timestamp = points[i][0];
+
+      const increment = historicalPrecipitationBetween({
+        years,
+        baseYear,
+        actualPeriodStart,
+        startTimestamp: previousTimestamp,
+        endTimestamp: timestamp,
+      });
+
+      if (!Number.isFinite(increment)) {
+        valid = false;
+        break;
+      }
+
+      cumulative += increment;
+      series.push([timestamp, cumulative]);
+      previousTimestamp = timestamp;
+    }
+
+    if (valid && series.length === points.length) {
+      trajectories.push(series);
+    }
+  }
+
+  if (!trajectories.length) return null;
+
+  const mean = [];
+  const median = [];
+  const p10 = [];
+  const p25 = [];
+  const p75 = [];
+  const p90 = [];
+
+  for (let i = 0; i < points.length; i += 1) {
+    const timestamp = points[i][0];
+
+    const values = trajectories
+      .map((series) => n(series?.[i]?.[1]))
+      .filter(Number.isFinite);
+
+    if (!values.length) {
+      mean.push([timestamp, null]);
+      median.push([timestamp, null]);
+      p10.push([timestamp, null]);
+      p25.push([timestamp, null]);
+      p75.push([timestamp, null]);
+      p90.push([timestamp, null]);
+      continue;
+    }
+
+    mean.push([
+      timestamp,
+      round1(avgFinite(values)),
+    ]);
+
+    median.push([
+      timestamp,
+      round1(percentileFinite(values, 0.50)),
+    ]);
+
+    p10.push([
+      timestamp,
+      round1(percentileFinite(values, 0.10)),
+    ]);
+
+    p25.push([
+      timestamp,
+      round1(percentileFinite(values, 0.25)),
+    ]);
+
+    p75.push([
+      timestamp,
+      round1(percentileFinite(values, 0.75)),
+    ]);
+
+    p90.push([
+      timestamp,
+      round1(percentileFinite(values, 0.90)),
+    ]);
+  }
+
+  const finalTotals = trajectories
+    .map((series) =>
+      n(series?.[series.length - 1]?.[1]),
+    )
+    .filter(Number.isFinite);
+
+  return {
+    // rainCum resta la MEDIA: viene usata dal grafico Anomalia.
+    rainCum: mean,
+
+    // Nel grafico principale della pioggia usiamo invece la MEDIANA,
+    // coerente con le fasce percentile.
+    rainCumMedian: median,
+
+    rainCumP10: p10,
+    rainCumP25: p25,
+    rainCumP75: p75,
+    rainCumP90: p90,
+    finalTotals,
+    periodCount: trajectories.length,
+    years: baseYears,
+    referencePeriod:
+      String(historyPayload?.referencePeriod || "1991-2020"),
+    source: "fixed-precipitation-history",
+  };
+}
+
+const FIXED_CLIMATOLOGY_CONFIG = {
+  temp: {
+    folder: "temperatura",
+    field: "temp",
+    label: "termica",
+    source: "fixed-temperature-climatology",
+  },
+  rh: {
+    folder: "umidita",
+    field: "rh",
+    label: "dell’umidità",
+    source: "fixed-humidity-climatology",
+  },
+  wind: {
+    folder: "vento",
+    field: "wind",
+    label: "del vento",
+    source: "fixed-wind-climatology",
+  },
+};
+
+async function loadFixedScalarClimatologyPeriod(groupKey, currentPairs) {
+  const config = FIXED_CLIMATOLOGY_CONFIG[groupKey];
   const points = Array.isArray(currentPairs) ? currentPairs : [];
 
+  if (!config) {
+    throw new Error("Parametro climatologico non supportato.");
+  }
+
   if (!points.length) {
-    throw new Error("Nessun dato termico disponibile per il confronto climatico.");
+    throw new Error(
+      `Nessun dato disponibile per il confronto con la climatologia ${config.label}.`,
+    );
   }
 
   const response = await fetch(
-    "/climatologia/temperatura/intraday-climatology.json",
+    `/climatologia/${config.folder}/intraday-climatology.json`,
     { cache: "force-cache" },
   );
 
   if (!response.ok) {
     throw new Error(
-      "Climatologia termica 1991–2020 non disponibile sul sito.",
+      `Climatologia ${config.label} 1991–2020 non disponibile sul sito.`,
     );
   }
 
   const payload = await response.json();
 
-  const valueAt = (timestamp, field) => {
+  const valueAt = (timestamp, key) => {
     const d = new Date(Number(timestamp));
     if (!Number.isFinite(d.getTime())) return null;
 
     const mmdd = `${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
     const slot = d.getHours() * 4 + Math.floor(d.getMinutes() / 15);
-    const values = payload?.[mmdd]?.[field];
+    const values = payload?.[mmdd]?.[key];
     const value = n(Array.isArray(values) ? values[slot] : null);
 
     return Number.isFinite(value) ? value : null;
   };
 
-  const toPairs = (field) =>
+  const toPairs = (key) =>
     points.map((point) => {
       const timestamp = Number(point?.[0]);
-      return [timestamp, valueAt(timestamp, field)];
+      return [timestamp, valueAt(timestamp, key)];
     });
 
   return {
-    temp: toPairs("n"),
-    tempP10: toPairs("p10"),
-    tempP25: toPairs("p25"),
-    tempP75: toPairs("p75"),
-    tempP90: toPairs("p90"),
+    [config.field]: toPairs("n"),
+    [`${config.field}P10`]: toPairs("p10"),
+    [`${config.field}P25`]: toPairs("p25"),
+    [`${config.field}P75`]: toPairs("p75"),
+    [`${config.field}P90`]: toPairs("p90"),
     sampleCounts: {
-      temp: points.map((point) => [Number(point?.[0]), 30]),
+      [config.field]: points.map((point) => [Number(point?.[0]), 30]),
     },
     periodCount: 30,
     years: ["1991–2020"],
     referencePeriod: "1991-2020",
-    source: "fixed-temperature-climatology",
+    source: config.source,
   };
 }
+
+function fixedClimateSeries(climatologyData, field) {
+  const read = (suffix = "") => {
+    const values = climatologyData?.[`${field}${suffix}`];
+    return Array.isArray(values) ? values : [];
+  };
+
+  const mean = read();
+  const p10 = read("P10");
+  const p25 = read("P25");
+  const p75 = read("P75");
+  const p90 = read("P90");
+
+  const hasFinite = (pairs) =>
+    pairs.some((point) => Number.isFinite(n(point?.[1])));
+
+  const bandDelta = (lowerPairs, upperPairs) =>
+    lowerPairs.map((point, index) => {
+      const timestamp = Number(point?.[0]);
+      const lower = n(point?.[1]);
+      const upper = n(upperPairs?.[index]?.[1]);
+
+      if (
+        !Number.isFinite(timestamp) ||
+        !Number.isFinite(lower) ||
+        !Number.isFinite(upper)
+      ) {
+        return [timestamp, null];
+      }
+
+      return [timestamp, Math.max(0, upper - lower)];
+    });
+
+  const meanAvailable = hasFinite(mean);
+  const band50Available = hasFinite(p25) && hasFinite(p75);
+  const band80Available = hasFinite(p10) && hasFinite(p90);
+
+  return {
+    mean,
+    p10,
+    p25,
+    p75,
+    p90,
+    meanAvailable,
+    band50Available,
+    band80Available,
+    band50Delta: band50Available ? bandDelta(p25, p75) : [],
+    band80Delta: band80Available ? bandDelta(p10, p90) : [],
+  };
+}
+
+function fixedClimateBandSeries({
+  climate,
+  stackPrefix,
+  yAxisIndex = 0,
+  band50Label = "Fascia 50%",
+  band80Label = "Fascia 80%",
+}) {
+  const series = [];
+
+  if (climate.band80Available) {
+    series.push(
+      {
+        name: `__${stackPrefix}-p10-base`,
+        type: "line",
+        data: trimTrailingNullPoints(climate.p10),
+        yAxisIndex,
+        stack: `${stackPrefix}-band-80`,
+        showSymbol: false,
+        connectNulls: false,
+        smooth: false,
+        silent: true,
+        tooltip: { show: false },
+        lineStyle: { width: 0, opacity: 0 },
+        areaStyle: { opacity: 0 },
+        itemStyle: { opacity: 0 },
+        emphasis: { disabled: true },
+        z: 0,
+      },
+      {
+        name: band80Label,
+        type: "line",
+        data: trimTrailingNullPoints(climate.band80Delta),
+        yAxisIndex,
+        stack: `${stackPrefix}-band-80`,
+        showSymbol: false,
+        connectNulls: false,
+        smooth: false,
+        silent: true,
+        tooltip: { show: false },
+        lineStyle: { width: 0, opacity: 0 },
+        areaStyle: {
+          color: "rgba(148, 163, 184, 0.16)",
+          opacity: 1,
+        },
+        itemStyle: { color: "rgba(148, 163, 184, 0.20)" },
+        emphasis: { disabled: true },
+        z: 0,
+      },
+    );
+  }
+
+  if (climate.band50Available) {
+    series.push(
+      {
+        name: `__${stackPrefix}-p25-base`,
+        type: "line",
+        data: trimTrailingNullPoints(climate.p25),
+        yAxisIndex,
+        stack: `${stackPrefix}-band-50`,
+        showSymbol: false,
+        connectNulls: false,
+        smooth: false,
+        silent: true,
+        tooltip: { show: false },
+        lineStyle: { width: 0, opacity: 0 },
+        areaStyle: { opacity: 0 },
+        itemStyle: { opacity: 0 },
+        emphasis: { disabled: true },
+        z: 1,
+      },
+      {
+        name: band50Label,
+        type: "line",
+        data: trimTrailingNullPoints(climate.band50Delta),
+        yAxisIndex,
+        stack: `${stackPrefix}-band-50`,
+        showSymbol: false,
+        connectNulls: false,
+        smooth: false,
+        silent: true,
+        tooltip: { show: false },
+        lineStyle: { width: 0, opacity: 0 },
+        areaStyle: {
+          color: "rgba(71, 85, 105, 0.24)",
+          opacity: 1,
+        },
+        itemStyle: { color: "rgba(71, 85, 105, 0.30)" },
+        emphasis: { disabled: true },
+        z: 1,
+      },
+    );
+  }
+
+  return series;
+}
+
 
 function SummaryParameterIcon({ type }) {
   if (type === "temperature") {
@@ -6746,6 +8828,97 @@ function PeriodSummary({ data, mode }) {
   );
 }
 
+function ResponsivePeriodEChart({ option, height, chartKey }) {
+  const chartRef = useRef(null);
+  const shellRef = useRef(null);
+
+  useEffect(() => {
+    let frame = null;
+    const timers = [];
+
+    const resizeChart = () => {
+      if (frame !== null) cancelAnimationFrame(frame);
+
+      frame = requestAnimationFrame(() => {
+        const shell = shellRef.current;
+        const chart = chartRef.current?.getEchartsInstance?.();
+
+        if (!shell || !chart) return;
+
+        const width = Math.floor(shell.getBoundingClientRect().width);
+        if (!Number.isFinite(width) || width <= 0) return;
+
+        chart.resize({
+          width,
+          height,
+          silent: true,
+        });
+      });
+    };
+
+    resizeChart();
+
+    if (typeof ResizeObserver !== "undefined") {
+      const observer = new ResizeObserver(resizeChart);
+      if (shellRef.current) observer.observe(shellRef.current);
+
+      timers.push(
+        window.setTimeout(resizeChart, 60),
+        window.setTimeout(resizeChart, 220),
+        window.setTimeout(resizeChart, 600),
+      );
+
+      window.addEventListener("resize", resizeChart, { passive: true });
+      window.addEventListener("orientationchange", resizeChart, { passive: true });
+
+      return () => {
+        observer.disconnect();
+        timers.forEach((timer) => window.clearTimeout(timer));
+        window.removeEventListener("resize", resizeChart);
+        window.removeEventListener("orientationchange", resizeChart);
+        if (frame !== null) cancelAnimationFrame(frame);
+      };
+    }
+
+    timers.push(
+      window.setTimeout(resizeChart, 60),
+      window.setTimeout(resizeChart, 220),
+      window.setTimeout(resizeChart, 600),
+    );
+
+    window.addEventListener("resize", resizeChart, { passive: true });
+    window.addEventListener("orientationchange", resizeChart, { passive: true });
+
+    return () => {
+      timers.forEach((timer) => window.clearTimeout(timer));
+      window.removeEventListener("resize", resizeChart);
+      window.removeEventListener("orientationchange", resizeChart);
+      if (frame !== null) cancelAnimationFrame(frame);
+    };
+  }, [chartKey, height, option]);
+
+  return (
+    <div
+      ref={shellRef}
+      className="responsiveEChartShell"
+      style={{ width: "100%", minWidth: 0, overflow: "hidden" }}
+    >
+      <ReactECharts
+        key={chartKey}
+        ref={chartRef}
+        option={option}
+        style={{
+          height,
+          width: "100%",
+          minWidth: 0,
+          maxWidth: "100%",
+        }}
+        notMerge={true}
+        lazyUpdate={true}
+      />
+    </div>
+  );
+}
 
 function ClimatologyChart({
   mode,
@@ -6756,6 +8929,7 @@ function ClimatologyChart({
   loading,
   error,
   isMobile,
+  isVeryNarrow,
   chartHeight,
 }) {
   const meta = useMemo(() => deltaMetaForGroup(groupKey), [groupKey]);
@@ -6848,15 +9022,11 @@ function ClimatologyChart({
       dataZoom: makePeriodDataZoom(),
       grid: isMobile
         ? {
-            left: 50,
-            right: 22,
-            top: 78,
-            bottom:
-              groupKey === "wind"
-                ? 78
-                : ["temp", "rain"].includes(groupKey)
-                  ? 62
-                  : 38,
+            // Stesse dimensioni interne del grafico temperatura su mobile.
+            left: isVeryNarrow ? 46 : 50,
+            right: 12,
+            top: 88,
+            bottom: 78,
             containLabel: false,
             show: true,
             borderWidth: 0,
@@ -7083,6 +9253,7 @@ function ClimatologyChart({
     chartReferenceStart,
     groupKey,
     isMobile,
+    isVeryNarrow,
     meta.negativeColor,
     meta.positiveColor,
     meta.unit,
@@ -7103,11 +9274,10 @@ function ClimatologyChart({
         </div>
       )}
       {!loading && !error && option && (
-        <ReactECharts
+        <ResponsivePeriodEChart
           option={option}
-          style={{ height: chartHeight, width: "100%" }}
-          notMerge={true}
-          lazyUpdate={true}
+          height={chartHeight}
+          chartKey={`anomaly-${mode}-${groupKey}-${isMobile ? "mobile" : "desktop"}`}
         />
       )}
 
@@ -7116,11 +9286,20 @@ function ClimatologyChart({
           position: relative;
           z-index: 1;
           width: 100%;
+          max-width: 100%;
           min-width: 0;
           min-height: 0;
           padding: 0;
           box-sizing: border-box;
+          overflow: hidden;
           background: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
+        }
+
+        .responsiveEChartShell {
+          width: 100%;
+          max-width: 100%;
+          min-width: 0;
+          overflow: hidden;
         }
 
         .msg {
@@ -7143,7 +9322,7 @@ function ClimatologyChart({
           }
 
           .msg {
-            min-height: 280px;
+            min-height: 225px;
           }
         }
       `}</style>
@@ -7158,30 +9337,528 @@ function AnomalySummaryPanel({
   climatologyData,
   currentBounds,
 }) {
-  const meta = useMemo(() => deltaMetaForGroup(groupKey), [groupKey]);
+  const referenceLabel = climatologyReferenceLabel(climatologyData);
+  const iconType = anomalyIconType(groupKey);
 
-  const prepared = useMemo(
-    () =>
-      makePeriodAnomalySeries({
-        currentData,
-        climatologyData,
-        currentBounds,
-        mode,
-        field: meta.field,
-      }),
-    [
-      climatologyData,
-      currentBounds,
-      currentData,
-      meta.field,
-      mode,
-    ],
-  );
+  if (groupKey === "rain") {
+    const lastValue = (pairs) => {
+      const values = seriesValues(pairs);
+      return values.length ? n(values[values.length - 1]?.value) : NaN;
+    };
 
-  const stats = useMemo(
-    () => deltaStatsFromSeries(prepared.series),
-    [prepared.series],
-  );
+    const observed = lastValue(currentData?.rainCum);
+    const climateMean = lastValue(climatologyData?.rainCum);
+    const climateMedian = lastValue(climatologyData?.rainCumMedian);
+    const climateP10 = lastValue(climatologyData?.rainCumP10);
+    const climateP90 = lastValue(climatologyData?.rainCumP90);
+
+    if (!Number.isFinite(observed) || !Number.isFinite(climateMean)) {
+      return null;
+    }
+
+    const anomaly = observed - climateMean;
+    const anomalyPct =
+      climateMean > 0 ? (anomaly / climateMean) * 100 : null;
+
+    const totals = (Array.isArray(climatologyData?.finalTotals)
+      ? climatologyData.finalTotals
+      : []
+    )
+      .map(n)
+      .filter(Number.isFinite)
+      .sort((a, b) => a - b);
+
+    let percentile = null;
+
+    if (totals.length) {
+      const below = totals.filter((value) => value < observed).length;
+      const equal = totals.filter((value) => value === observed).length;
+
+      percentile =
+        ((below + equal * 0.5) / totals.length) * 100;
+    }
+
+    const percentileRounded = Number.isFinite(percentile)
+      ? Math.max(0, Math.min(100, Math.round(percentile)))
+      : null;
+
+    const markerPosition = Number.isFinite(percentileRounded)
+      ? Math.max(2, Math.min(98, percentileRounded))
+      : 50;
+
+    const percentileText =
+      !Number.isFinite(percentileRounded)
+        ? "—"
+        : percentileRounded <= 20
+          ? "Molto secco"
+          : percentileRounded <= 40
+            ? "Più secco del normale"
+            : percentileRounded < 60
+              ? "Nella norma"
+              : percentileRounded < 80
+                ? "Più piovoso del normale"
+                : "Molto piovoso";
+
+    const percentileExplanation =
+      !Number.isFinite(percentileRounded)
+        ? "—"
+        : percentileRounded < 50
+          ? `Più secco del ${100 - percentileRounded}% degli anni`
+          : percentileRounded > 50
+            ? `Più piovoso del ${percentileRounded}% degli anni`
+            : "In linea con la climatologia";
+
+    const tone =
+      Number.isFinite(percentileRounded) && percentileRounded < 40
+        ? "dry"
+        : Number.isFinite(percentileRounded) && percentileRounded >= 60
+          ? "wet"
+          : "normal";
+
+    return (
+      <section
+        className={`rainClimateSummary ${tone}`}
+        aria-label="Riepilogo climatologico precipitazioni"
+        style={{ "--rain-position": `${markerPosition}%` }}
+      >
+        <div className="rainTop">
+          <div className="rainTitle">
+            <span className="rainIcon" aria-hidden="true">
+              <SummaryParameterIcon type={iconType} />
+            </span>
+            <span>Precipitazioni cumulate</span>
+            <i aria-hidden="true">·</i>
+            <strong>{referenceLabel}</strong>
+          </div>
+
+          <div className="rainPercentile">
+            <strong>{percentileText}</strong>
+            <span>{percentileExplanation}</span>
+            <small>
+              {Number.isFinite(percentileRounded)
+                ? `${percentileRounded}° percentile`
+                : "Percentile —"}
+            </small>
+          </div>
+        </div>
+
+        <div className="rainBody">
+          <div className="rainDistribution">
+            <div className="rainTrack">
+              <span className="tick p10" aria-hidden="true" />
+              <span className="tick p50" aria-hidden="true" />
+              <span className="tick p90" aria-hidden="true" />
+              <span className="current" aria-hidden="true" />
+            </div>
+
+            <div className="rainLabels">
+              <div>
+                <strong>
+                  {Number.isFinite(climateP10)
+                    ? `${climateP10.toFixed(1)} mm`
+                    : "—"}
+                </strong>
+                <span>P10</span>
+              </div>
+
+              <div>
+                <strong>
+                  {Number.isFinite(climateMedian)
+                    ? `${climateMedian.toFixed(1)} mm`
+                    : "—"}
+                </strong>
+                <span>Mediana</span>
+              </div>
+
+              <div>
+                <strong>
+                  {Number.isFinite(climateP90)
+                    ? `${climateP90.toFixed(1)} mm`
+                    : "—"}
+                </strong>
+                <span>P90</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="rainMetrics">
+            <div>
+              <strong>{observed.toFixed(1)} mm</strong>
+              <span>Osservata</span>
+            </div>
+
+            <div>
+              <strong>{climateMean.toFixed(1)} mm</strong>
+              <span>Media climatica</span>
+            </div>
+
+            <div className={`rainAnomalyMetric ${anomaly < 0 ? "dryMetric" : "wetMetric"}`}>
+              <strong>{formatSignedDelta(anomaly, "mm")}</strong>
+              <small>
+                {Number.isFinite(anomalyPct)
+                  ? `${anomalyPct > 0 ? "+" : ""}${anomalyPct.toFixed(0)}%`
+                  : "—"}
+              </small>
+              <span>Rispetto alla media</span>
+            </div>
+          </div>
+        </div>
+
+        <style jsx>{`
+          .rainClimateSummary {
+            margin: -7px 20px 14px;
+            padding: 9px 13px 10px;
+            border: 1px solid #dce5ef;
+            border-left: 4px solid #64748b;
+            border-radius: 15px;
+            background: linear-gradient(180deg, #fff, #fbfdff);
+            box-shadow: 0 6px 18px rgba(15, 23, 42, 0.035);
+          }
+
+          .rainClimateSummary.dry {
+            border-left-color: #d97706;
+          }
+
+          .rainClimateSummary.wet {
+            border-left-color: #0284c7;
+          }
+
+          .rainTop {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 14px;
+            min-width: 0;
+          }
+
+          .rainTitle {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            min-width: 0;
+            color: #52637d;
+            font-size: 8px;
+            font-weight: 950;
+            letter-spacing: .04em;
+            text-transform: uppercase;
+            white-space: nowrap;
+          }
+
+          .rainTitle strong {
+            color: #0f172a;
+            font-size: 10px;
+            text-transform: none;
+          }
+
+          .rainTitle i {
+            color: #94a3b8;
+            font-style: normal;
+          }
+
+          .rainIcon {
+            width: 21px;
+            height: 21px;
+            flex: 0 0 21px;
+            display: grid;
+            place-items: center;
+            border-radius: 7px;
+            background: #eff6ff;
+            color: #0284c7;
+          }
+
+          .dry .rainIcon {
+            background: #fff7ed;
+            color: #d97706;
+          }
+
+          .rainIcon :global(svg) {
+            width: 13px;
+            height: 13px;
+            fill: none;
+            stroke: currentColor;
+            stroke-width: 1.8;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+          }
+
+          .rainPercentile {
+            min-width: 0;
+            display: grid;
+            justify-items: end;
+            gap: 1px;
+            white-space: nowrap;
+            text-align: right;
+          }
+
+          .rainPercentile strong {
+            color: #334155;
+            font-size: 14px;
+            line-height: 1;
+            font-weight: 950;
+          }
+
+          .rainPercentile span {
+            color: #475569;
+            font-size: 8px;
+            font-weight: 900;
+          }
+
+          .rainPercentile small {
+            color: #94a3b8;
+            font-size: 6.5px;
+            font-weight: 850;
+            text-transform: uppercase;
+            letter-spacing: .03em;
+          }
+
+          .dry .rainPercentile strong {
+            color: #d97706;
+          }
+
+          .wet .rainPercentile strong {
+            color: #0284c7;
+          }
+
+          .rainBody {
+            margin-top: 8px;
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) 300px;
+            align-items: center;
+            gap: 18px;
+          }
+
+          .rainDistribution {
+            min-width: 0;
+          }
+
+          .rainTrack {
+            position: relative;
+            height: 10px;
+            border-radius: 999px;
+            background: linear-gradient(
+              90deg,
+              #f59e0b 0%,
+              #f8c471 20%,
+              #e2e8f0 50%,
+              #93c5fd 80%,
+              #0284c7 100%
+            );
+            box-shadow: inset 0 0 0 1px rgba(148, 163, 184, .2);
+          }
+
+          .tick,
+          .current {
+            position: absolute;
+            top: 50%;
+            transform: translate(-50%, -50%);
+            border-radius: 999px;
+          }
+
+          .tick {
+            width: 2px;
+            height: 16px;
+            background: #475569;
+            opacity: .62;
+          }
+
+          .p10 { left: 10%; }
+          .p50 { left: 50%; }
+          .p90 { left: 90%; }
+
+          .current {
+            left: var(--rain-position);
+            width: 15px;
+            height: 15px;
+            background: #fff;
+            border: 4px solid #64748b;
+            box-shadow: 0 0 0 2px rgba(255,255,255,.9);
+          }
+
+          .dry .current { border-color: #d97706; }
+          .wet .current { border-color: #0284c7; }
+
+          .rainLabels {
+            margin-top: 5px;
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+          }
+
+          .rainLabels div {
+            display: grid;
+            gap: 0;
+            text-align: center;
+          }
+
+          .rainLabels div:first-child {
+            text-align: left;
+          }
+
+          .rainLabels div:last-child {
+            text-align: right;
+          }
+
+          .rainLabels strong {
+            color: #334155;
+            font-size: 8px;
+            font-weight: 950;
+            white-space: nowrap;
+          }
+
+          .rainLabels span {
+            color: #64748b;
+            font-size: 6.5px;
+            font-weight: 900;
+            text-transform: uppercase;
+          }
+
+          .rainMetrics {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 7px;
+          }
+
+          .rainMetrics div {
+            min-width: 0;
+            padding: 6px 8px;
+            border: 1px solid #e2e8f0;
+            border-radius: 9px;
+            background: rgba(255,255,255,.82);
+            display: grid;
+            gap: 2px;
+          }
+
+          .rainMetrics strong {
+            color: #0f172a;
+            font-size: 13px;
+            font-weight: 950;
+            white-space: nowrap;
+          }
+
+          .rainMetrics span {
+            color: #64748b;
+            font-size: 6.5px;
+            font-weight: 900;
+            text-transform: uppercase;
+          }
+
+          .rainAnomalyMetric small {
+            font-size: 10px;
+            line-height: 1;
+            font-weight: 950;
+          }
+
+          .dryMetric strong,
+          .dryMetric small { color: #d97706; }
+
+          .wetMetric strong,
+          .wetMetric small { color: #0284c7; }
+
+          @media (max-width: 700px) {
+            .rainClimateSummary {
+              margin: -5px 8px 10px;
+              padding: 8px;
+              border-radius: 12px;
+            }
+
+            .rainTop {
+              align-items: flex-start;
+              gap: 8px;
+            }
+
+            .rainTitle {
+              flex-wrap: wrap;
+              gap: 4px;
+              font-size: 6.5px;
+              white-space: normal;
+            }
+
+            .rainTitle strong {
+              font-size: 8px;
+            }
+
+            .rainPercentile {
+              display: grid;
+              justify-items: end;
+              gap: 1px;
+            }
+
+            .rainPercentile strong {
+              font-size: 11px;
+            }
+
+            .rainPercentile span {
+              max-width: 150px;
+              font-size: 6.8px;
+              white-space: normal;
+              text-align: right;
+              line-height: 1.1;
+            }
+
+            .rainPercentile small {
+              font-size: 5.8px;
+            }
+
+            .rainBody {
+              margin-top: 9px;
+              grid-template-columns: 1fr;
+              gap: 8px;
+            }
+
+            .rainLabels strong {
+              font-size: 7px;
+            }
+
+            .rainMetrics {
+              gap: 5px;
+            }
+
+            .rainMetrics div {
+              padding: 5px 4px;
+              text-align: center;
+            }
+
+            .rainMetrics strong {
+              font-size: 10.5px;
+            }
+
+            .rainAnomalyMetric small {
+              font-size: 9px;
+            }
+
+            .rainMetrics span {
+              font-size: 5.8px;
+            }
+          }
+
+          @media (max-width: 430px) {
+            .rainTitle span {
+              display: none;
+            }
+
+            .rainMetrics {
+              grid-template-columns: 1fr 1fr;
+            }
+
+            .rainMetrics div:last-child {
+              grid-column: 1 / -1;
+            }
+          }
+        `}</style>
+      </section>
+    );
+  }
+
+  const meta = deltaMetaForGroup(groupKey);
+
+  const prepared = makePeriodAnomalySeries({
+    currentData,
+    climatologyData,
+    currentBounds,
+    mode,
+    field: meta.field,
+  });
+
+  const stats = deltaStatsFromSeries(prepared.series);
 
   if (!stats.count) return null;
 
@@ -7193,11 +9870,46 @@ function AnomalySummaryPanel({
 
   const zeroPosition = clampPercent(0);
   const meanPosition = clampPercent(n(stats.mean));
+  const minPosition = clampPercent(n(stats.min));
+  const maxPosition = clampPercent(n(stats.max));
+  const allPositive = n(stats.min) >= 0 && n(stats.max) > 0;
+  const allNegative = n(stats.max) <= 0 && n(stats.min) < 0;
+  const oneSided = allPositive || allNegative;
+  const zeroLabelTooClose =
+    oneSided ||
+    Math.abs(zeroPosition - minPosition) < 14 ||
+    Math.abs(maxPosition - zeroPosition) < 14;
+  const staggerExtremeLabels =
+    oneSided && Math.abs(maxPosition - minPosition) < 22;
+
+  const labelStyleForPosition = (position) => {
+    const safePosition = Math.max(0, Math.min(100, Number(position) || 0));
+
+    if (safePosition <= 8) {
+      return {
+        left: `${safePosition}%`,
+        transform: "translateX(0)",
+        justifyItems: "start",
+      };
+    }
+
+    if (safePosition >= 92) {
+      return {
+        left: `${safePosition}%`,
+        transform: "translateX(-100%)",
+        justifyItems: "end",
+      };
+    }
+
+    return {
+      left: `${safePosition}%`,
+      transform: "translateX(-50%)",
+      justifyItems: "center",
+    };
+  };
+
   const above = Math.round(n(stats.abovePercent));
   const below = Math.round(n(stats.belowPercent));
-  const referenceLabel = climatologyReferenceLabel(climatologyData);
-  const iconType = anomalyIconType(groupKey);
-
   return (
     <section
       className={`anomalySummary ${deltaTone(stats.mean)}`}
@@ -7207,6 +9919,8 @@ function AnomalySummaryPanel({
         "--negative": meta.negativeColor,
         "--zero-position": `${zeroPosition}%`,
         "--mean-position": `${meanPosition}%`,
+        "--min-position": `${minPosition}%`,
+        "--max-position": `${maxPosition}%`,
         "--above": `${Number.isFinite(above) ? above : 0}%`,
         "--below": `${Number.isFinite(below) ? below : 0}%`,
       }}
@@ -7237,16 +9951,31 @@ function AnomalySummaryPanel({
             <span className="maxDot" aria-hidden="true" />
           </div>
 
-          <div className="scaleLabels">
-            <div className="minLabel">
+          <div
+            className={`scaleLabels ${staggerExtremeLabels ? "staggered" : ""}`}
+          >
+            <div
+              className="minLabel"
+              style={labelStyleForPosition(minPosition)}
+            >
               <strong>{formatSignedDelta(stats.min, meta.unit)}</strong>
               <span>Scarto minimo</span>
             </div>
-            <div className="zeroLabel" style={{ left: `${zeroPosition}%` }}>
-              <strong>0 {meta.unit}</strong>
-              <span>Media climatica</span>
-            </div>
-            <div className="maxLabel">
+
+            {!zeroLabelTooClose && (
+              <div
+                className="zeroLabel"
+                style={labelStyleForPosition(zeroPosition)}
+              >
+                <strong>0 {meta.unit}</strong>
+                <span>Media climatica</span>
+              </div>
+            )}
+
+            <div
+              className="maxLabel"
+              style={labelStyleForPosition(maxPosition)}
+            >
               <strong>{formatSignedDelta(stats.max, meta.unit)}</strong>
               <span>Scarto massimo</span>
             </div>
@@ -7471,13 +10200,13 @@ function AnomalySummaryPanel({
         }
 
         .minDot {
-          left: 0;
+          left: var(--min-position);
           border: 2px solid color-mix(in srgb, var(--negative) 30%, white);
           background: var(--negative);
         }
 
         .maxDot {
-          left: 100%;
+          left: var(--max-position);
           border: 2px solid color-mix(in srgb, var(--positive) 30%, white);
           background: var(--positive);
         }
@@ -7493,6 +10222,15 @@ function AnomalySummaryPanel({
           top: 0;
           display: grid;
           gap: 0;
+          max-width: 92px;
+        }
+
+        .scaleLabels.staggered {
+          min-height: 36px;
+        }
+
+        .scaleLabels.staggered .maxLabel {
+          top: 16px;
         }
 
         .scaleLabels strong {
@@ -7512,19 +10250,10 @@ function AnomalySummaryPanel({
           white-space: nowrap;
         }
 
-        .minLabel {
-          left: 0;
-          justify-items: start;
-        }
-
-        .maxLabel {
-          right: 0;
-          justify-items: end;
-        }
-
+        .minLabel,
+        .maxLabel,
         .zeroLabel {
-          justify-items: center;
-          transform: translateX(-50%);
+          min-width: max-content;
         }
 
         .anomalyTime {
@@ -7677,12 +10406,24 @@ function AnomalySummaryPanel({
             font-size: 10.5px;
           }
 
+          .scaleLabels > div {
+            max-width: 72px;
+          }
+
           .scaleLabels strong {
-            font-size: 8.5px;
+            font-size: 8.2px;
           }
 
           .scaleLabels span {
-            font-size: 6px;
+            font-size: 5.7px;
+          }
+
+          .scaleLabels.staggered {
+            min-height: 34px;
+          }
+
+          .scaleLabels.staggered .maxLabel {
+            top: 15px;
           }
 
           .zeroLabel span {
@@ -7694,11 +10435,10 @@ function AnomalySummaryPanel({
   );
 }
 
-
 function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
   const GROUPS = useMemo(
     () => [
-      { key: "temp", label: "Temperatura e Punto di rugiada" },
+      { key: "temp", label: "Temperatura" },
       { key: "rain", label: "Precipitazioni" },
       { key: "rh", label: "Umidità" },
       { key: "wind", label: "Vento" },
@@ -7743,6 +10483,9 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
   const [climatologyError, setClimatologyError] = useState("");
   const [data, setData] = useState(null);
   const [climatologyData, setClimatologyData] = useState(null);
+  const [precipHistoryData, setPrecipHistoryData] = useState(null);
+  const [precipHistoryLoading, setPrecipHistoryLoading] = useState(false);
+  const [precipHistoryError, setPrecipHistoryError] = useState("");
   const [viewportWidth, setViewportWidth] = useState(1280);
   const currentPeriodKeyRef = useRef("");
   const latestDataTimestampRef = useRef(null);
@@ -7871,8 +10614,20 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
   const showRealtimePulse =
     mode === "day" && selectedDate === latestAvailableDate;
 
+  const fixedClimatologyConfig =
+    FIXED_CLIMATOLOGY_CONFIG[groupKey] || null;
+
+  const supportsFixedClimatology =
+    !!fixedClimatologyConfig &&
+    ["day", "week", "month"].includes(mode);
+
+  const supportsRainClimatology =
+    groupKey === "rain" &&
+    ["week", "month"].includes(mode);
+
   const supportsClimatology =
-    groupKey === "temp" && ["day", "week", "month"].includes(mode);
+    supportsFixedClimatology ||
+    supportsRainClimatology;
 
   useEffect(() => {
     if (!supportsClimatology && chartView !== "observed") {
@@ -7961,21 +10716,25 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
     selectedDate,
   ]);
 
-
   useEffect(() => {
     let alive = true;
 
+    const config = fixedClimatologyConfig;
+    const currentPairs = config ? data?.[config.field] : null;
+
     if (
-      !supportsClimatology ||
+      !supportsFixedClimatology ||
+      !config ||
       !selectedDate ||
       !bounds.startISO ||
       !bounds.endISO ||
-      !Array.isArray(data?.temp) ||
-      !data.temp.length
+      !Array.isArray(currentPairs) ||
+      !currentPairs.length
     ) {
       setClimatologyError("");
       setClimatologyData(null);
       setClimatologyLoading(false);
+
       return () => {
         alive = false;
       };
@@ -7987,17 +10746,25 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
       setClimatologyLoading(true);
 
       try {
-        const result = await loadFixedTemperatureClimatologyPeriod(data.temp);
-        if (alive) setClimatologyData(result);
+        const result = await loadFixedScalarClimatologyPeriod(
+          groupKey,
+          currentPairs,
+        );
+
+        if (alive) {
+          setClimatologyData(result);
+        }
       } catch (error) {
         if (alive) {
           setClimatologyError(
             error?.message ||
-              "Non è stato possibile caricare la climatologia termica.",
+              `Non è stato possibile caricare la climatologia ${config.label}.`,
           );
         }
       } finally {
-        if (alive) setClimatologyLoading(false);
+        if (alive) {
+          setClimatologyLoading(false);
+        }
       }
     }
 
@@ -8010,11 +10777,88 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
     bounds.endISO,
     bounds.startISO,
     data,
+    fixedClimatologyConfig,
+    groupKey,
     mode,
     selectedDate,
-    supportsClimatology,
+    supportsFixedClimatology,
   ]);
 
+  useEffect(() => {
+    let alive = true;
+
+    if (!supportsRainClimatology) {
+      setPrecipHistoryError("");
+      setPrecipHistoryLoading(false);
+
+      return () => {
+        alive = false;
+      };
+    }
+
+    async function runPrecipitationHistory() {
+      setPrecipHistoryError("");
+      setPrecipHistoryLoading(true);
+
+      try {
+        const result = await loadFixedPrecipitationHistory();
+
+        if (alive) {
+          setPrecipHistoryData(result);
+        }
+      } catch (error) {
+        if (alive) {
+          setPrecipHistoryData(null);
+          setPrecipHistoryError(
+            error?.message ||
+              "Non è stato possibile caricare la climatologia pluviometrica.",
+          );
+        }
+      } finally {
+        if (alive) {
+          setPrecipHistoryLoading(false);
+        }
+      }
+    }
+
+    runPrecipitationHistory();
+
+    return () => {
+      alive = false;
+    };
+  }, [supportsRainClimatology]);
+
+  const rainClimatologyData = useMemo(
+    () =>
+      supportsRainClimatology
+        ? makePrecipitationPeriodClimatology({
+            historyPayload: precipHistoryData,
+            currentPairs: data?.rainCum,
+            mode,
+          })
+        : null,
+    [
+      data?.rainCum,
+      mode,
+      precipHistoryData,
+      supportsRainClimatology,
+    ],
+  );
+
+  const activeClimatologyData =
+    groupKey === "rain"
+      ? rainClimatologyData
+      : climatologyData;
+
+  const activeClimatologyLoading =
+    groupKey === "rain"
+      ? precipHistoryLoading
+      : climatologyLoading;
+
+  const activeClimatologyError =
+    groupKey === "rain"
+      ? precipHistoryError
+      : climatologyError;
 
   const parameterOptions = GROUPS;
 
@@ -8060,21 +10904,22 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
       backgroundColor: "rgba(248, 250, 252, 0.52)",
     };
 
+    // Tutti i parametri usano la stessa area grafica:
+    // stessa altezza, stessi margini e stessa posizione su mobile.
+    const mobileStandardGrid = {
+      left: isVeryNarrowChart ? 46 : 50,
+      right: 12,
+      top: 88,
+      bottom: 78,
+      containLabel: false,
+    };
+
     const gridNoLegend = isMobileChart
-      ? { left: 50, right: 22, top: 78, bottom: 38, containLabel: false }
-      : {
-          ...desktopGridBase,
-          bottom: 42,
-        };
+      ? mobileStandardGrid
+      : desktopGridBase;
 
     const gridWithLegend = isMobileChart
-      ? {
-          left: 50,
-          right: 22,
-          top: 78,
-          bottom: groupKey === "wind" ? 78 : 62,
-          containLabel: false,
-        }
+      ? mobileStandardGrid
       : desktopGridBase;
 
     const toolboxZoom = makeChartToolbox({
@@ -8269,13 +11114,79 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
       animationDuration: 250,
       animationDurationUpdate: 250,
       toolbox: toolboxZoom,
-      dataZoom: makePeriodDataZoom(),
+      dataZoom: isMobileChart ? [] : makePeriodDataZoom(),
       xAxis,
     };
 
     if (groupKey === "temp") {
+      const climateMean = Array.isArray(climatologyData?.temp)
+        ? climatologyData.temp
+        : [];
+      const climateP10 = Array.isArray(climatologyData?.tempP10)
+        ? climatologyData.tempP10
+        : [];
+      const climateP25 = Array.isArray(climatologyData?.tempP25)
+        ? climatologyData.tempP25
+        : [];
+      const climateP75 = Array.isArray(climatologyData?.tempP75)
+        ? climatologyData.tempP75
+        : [];
+      const climateP90 = Array.isArray(climatologyData?.tempP90)
+        ? climatologyData.tempP90
+        : [];
 
-      const mm = minMaxFrom([...data.temp, ...data.dew]) || { min: 0, max: 1 };
+      const climateMeanAvailable = climateMean.some((point) =>
+        Number.isFinite(n(point?.[1])),
+      );
+
+      const climateBand50Available =
+        climateP25.some((point) => Number.isFinite(n(point?.[1]))) &&
+        climateP75.some((point) => Number.isFinite(n(point?.[1])));
+
+      const climateBand80Available =
+        climateP10.some((point) => Number.isFinite(n(point?.[1]))) &&
+        climateP90.some((point) => Number.isFinite(n(point?.[1])));
+
+      const climateBand50Delta = climateP25.map((point, index) => {
+        const timestamp = Number(point?.[0]);
+        const lower = n(point?.[1]);
+        const upper = n(climateP75?.[index]?.[1]);
+
+        if (
+          !Number.isFinite(timestamp) ||
+          !Number.isFinite(lower) ||
+          !Number.isFinite(upper)
+        ) {
+          return [timestamp, null];
+        }
+
+        return [timestamp, Math.max(0, upper - lower)];
+      });
+
+      const climateBand80Delta = climateP10.map((point, index) => {
+        const timestamp = Number(point?.[0]);
+        const lower = n(point?.[1]);
+        const upper = n(climateP90?.[index]?.[1]);
+
+        if (
+          !Number.isFinite(timestamp) ||
+          !Number.isFinite(lower) ||
+          !Number.isFinite(upper)
+        ) {
+          return [timestamp, null];
+        }
+
+        return [timestamp, Math.max(0, upper - lower)];
+      });
+
+      const axisPairs = [
+        ...(Array.isArray(data.temp) ? data.temp : []),
+        ...(climateMeanAvailable ? climateMean : []),
+        ...(climateBand80Available ? climateP10 : []),
+        ...(climateBand80Available ? climateP90 : []),
+      ];
+
+      const mm = minMaxFrom(axisPairs) || { min: 0, max: 1 };
       const axis = axisNice(mm.min - 1, mm.max + 1, 6);
 
       const pulseTemp = showRealtimePulse
@@ -8283,72 +11194,415 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
             data.temp,
             data.latestTimestamp,
             0,
-            "Temperatura (°C)",
-          )
-        : null;
-      const pulseDew = showRealtimePulse
-        ? makeRealtimePulseSeries(
-            data.dew,
-            data.latestTimestamp,
-            0,
-            "Punto di rugiada (°C)",
+            "Temperatura osservata",
           )
         : null;
 
+      const meanLegendLabel = "Media climatica 1991–2020";
+      const band50LegendLabel = "Fascia 50%";
+      const band80LegendLabel = "Fascia 80%";
+
+      const tempLegend = isMobileChart
+        ? [
+            {
+              ...baseLegend,
+              left: "center",
+              right: "auto",
+              bottom: 29,
+              width: isVeryNarrowChart ? 308 : 338,
+              itemGap: 11,
+              itemWidth: 14,
+              itemHeight: 8,
+              textStyle: {
+                ...baseLegend.textStyle,
+                fontSize: isVeryNarrowChart ? 8.7 : 9.2,
+              },
+              formatter: (name) => {
+                if (name === "Temperatura osservata") return "Temperatura";
+                if (name === meanLegendLabel) return "Media";
+                return name;
+              },
+              data: [
+                "Temperatura osservata",
+                ...(climateMeanAvailable ? [meanLegendLabel] : []),
+              ],
+            },
+            {
+              ...baseLegend,
+              left: "center",
+              right: "auto",
+              bottom: 8,
+              width: isVeryNarrowChart ? 318 : 348,
+              itemGap: 11,
+              itemWidth: 14,
+              itemHeight: 8,
+              textStyle: {
+                ...baseLegend.textStyle,
+                fontSize: isVeryNarrowChart ? 8.7 : 9.2,
+              },
+              formatter: (name) => {
+                if (name === band50LegendLabel) return "Fascia 50%";
+                if (name === band80LegendLabel) return "Fascia 80%";
+                return name;
+              },
+              data: [
+                ...(climateBand50Available
+                  ? [{ name: band50LegendLabel, icon: "roundRect" }]
+                  : []),
+                ...(climateBand80Available
+                  ? [{ name: band80LegendLabel, icon: "roundRect" }]
+                  : []),
+              ],
+            },
+          ]
+        : {
+            ...baseLegend,
+            itemGap: 18,
+            data: [
+              "Temperatura osservata",
+              ...(climateMeanAvailable ? [meanLegendLabel] : []),
+              ...(climateBand50Available
+                ? [{ name: band50LegendLabel, icon: "roundRect" }]
+                : []),
+              ...(climateBand80Available
+                ? [{ name: band80LegendLabel, icon: "roundRect" }]
+                : []),
+            ],
+          };
+
+      const tempGrid = isMobileChart
+        ? mobileStandardGrid
+        : { ...gridWithLegend, bottom: 88 };
+
       return {
         ...common,
-        title: chartTitle("Temperatura e Punto di rugiada"),
-        grid: gridWithLegend,
-        tooltip: tooltipCommon,
-        legend: {
-          ...baseLegend,
-          data: ["Temperatura (°C)", "Punto di rugiada (°C)"],
+        title: chartTitle("Temperatura"),
+        grid: tempGrid,
+        tooltip: {
+          ...tooltipCommon,
+          formatter: (params) => {
+            const validParams = (Array.isArray(params) ? params : []).filter(
+              (item) => {
+                const name = String(item?.seriesName || "");
+
+                return (
+                  !name.startsWith("__") &&
+                  name !== band50LegendLabel &&
+                  name !== band80LegendLabel &&
+                  Number.isFinite(n(item?.data?.[1]))
+                );
+              },
+            );
+
+            const timestamp = Number(
+              (Array.isArray(params) ? params : [])
+                .map((item) => Number(item?.data?.[0]))
+                .find(Number.isFinite),
+            );
+
+            if (!validParams.length && !Number.isFinite(timestamp)) return "";
+
+            const time = Number.isFinite(timestamp)
+              ? formatSummaryTimestamp(timestamp, mode)
+              : "";
+
+            const lines = time ? [time] : [];
+
+            const findParam = (seriesName) =>
+              validParams.find(
+                (item) => item?.seriesName === seriesName,
+              );
+
+            // Ordine intenzionale del tooltip:
+            // 1. dato osservato
+            // 2. riferimento climatico
+            // 3. fasce climatiche
+            const observedItem = findParam("Temperatura osservata");
+            const meanItem = findParam(meanLegendLabel);
+
+            for (const item of [observedItem, meanItem]) {
+              if (!item) continue;
+
+              const value = n(item?.data?.[1]);
+              if (!Number.isFinite(value)) continue;
+
+              lines.push(
+                `${item.marker}${item.seriesName}: ${value.toFixed(1)} °C`,
+              );
+            }
+
+            const findBandValues = (lowerPairs, upperPairs) => {
+              if (!Number.isFinite(timestamp)) return null;
+
+              const index = lowerPairs.findIndex(
+                (point) => Number(point?.[0]) === timestamp,
+              );
+
+              if (index < 0) return null;
+
+              const lower = n(lowerPairs?.[index]?.[1]);
+              const upper = n(upperPairs?.[index]?.[1]);
+
+              if (!Number.isFinite(lower) || !Number.isFinite(upper)) {
+                return null;
+              }
+
+              return { lower, upper };
+            };
+
+            if (climateBand50Available) {
+              const band = findBandValues(climateP25, climateP75);
+
+              if (band) {
+                lines.push(
+                  `<span style="display:inline-block;margin-right:6px;border-radius:2px;width:10px;height:7px;background:rgba(71,85,105,.28);"></span>` +
+                    `Fascia 50% (P25–P75): ${band.lower.toFixed(1)}–${band.upper.toFixed(1)} °C`,
+                );
+              }
+            }
+
+            if (climateBand80Available) {
+              const band = findBandValues(climateP10, climateP90);
+
+              if (band) {
+                lines.push(
+                  `<span style="display:inline-block;margin-right:6px;border-radius:2px;width:10px;height:7px;background:rgba(148,163,184,.18);"></span>` +
+                    `Fascia 80% (P10–P90): ${band.lower.toFixed(1)}–${band.upper.toFixed(1)} °C`,
+                );
+              }
+            }
+
+            return lines.join("<br/>");
+          },
         },
+        legend: tempLegend,
         yAxis: leftAxis("°C", {
           min: axis.min,
           max: axis.max,
           interval: axis.interval,
         }),
         series: [
+          ...(climateBand80Available
+            ? [
+                {
+                  name: "__Fascia P10 base",
+                  type: "line",
+                  data: chartPairs(climateP10),
+                  stack: "climatology-band-80",
+                  showSymbol: false,
+                  connectNulls: false,
+                  smooth: false,
+                  silent: true,
+                  tooltip: { show: false },
+                  lineStyle: { width: 0, opacity: 0 },
+                  areaStyle: { opacity: 0 },
+                  itemStyle: { opacity: 0 },
+                  emphasis: { disabled: true },
+                  z: 0,
+                },
+                {
+                  name: band80LegendLabel,
+                  type: "line",
+                  data: chartPairs(climateBand80Delta),
+                  stack: "climatology-band-80",
+                  showSymbol: false,
+                  connectNulls: false,
+                  smooth: false,
+                  silent: true,
+                  tooltip: { show: false },
+                  lineStyle: { width: 0, opacity: 0 },
+                  areaStyle: {
+                    color: "rgba(148, 163, 184, 0.16)",
+                    opacity: 1,
+                  },
+                  itemStyle: { color: "rgba(148, 163, 184, 0.20)" },
+                  emphasis: { disabled: true },
+                  z: 0,
+                },
+              ]
+            : []),
+
+          ...(climateBand50Available
+            ? [
+                {
+                  name: "__Fascia P25 base",
+                  type: "line",
+                  data: chartPairs(climateP25),
+                  stack: "climatology-band-50",
+                  showSymbol: false,
+                  connectNulls: false,
+                  smooth: false,
+                  silent: true,
+                  tooltip: { show: false },
+                  lineStyle: { width: 0, opacity: 0 },
+                  areaStyle: { opacity: 0 },
+                  itemStyle: { opacity: 0 },
+                  emphasis: { disabled: true },
+                  z: 1,
+                },
+                {
+                  name: band50LegendLabel,
+                  type: "line",
+                  data: chartPairs(climateBand50Delta),
+                  stack: "climatology-band-50",
+                  showSymbol: false,
+                  connectNulls: false,
+                  smooth: false,
+                  silent: true,
+                  tooltip: { show: false },
+                  lineStyle: { width: 0, opacity: 0 },
+                  areaStyle: {
+                    color: "rgba(71, 85, 105, 0.24)",
+                    opacity: 1,
+                  },
+                  itemStyle: { color: "rgba(71, 85, 105, 0.30)" },
+                  emphasis: { disabled: true },
+                  z: 1,
+                },
+              ]
+            : []),
+
+          ...(climateMeanAvailable
+            ? [
+                {
+                  name: meanLegendLabel,
+                  type: "line",
+                  data: chartPairs(climateMean),
+                  showSymbol: false,
+                  connectNulls: false,
+                  smooth: false,
+                  sampling: "lttb",
+                  lineStyle: {
+                    width: 2.0,
+                    color: "#64748b",
+                    type: "dashed",
+                    opacity: 0.95,
+                  },
+                  itemStyle: { color: "#64748b" },
+                  emphasis: { focus: "series" },
+                  z: 3,
+                },
+              ]
+            : []),
+
           {
-            name: "Temperatura (°C)",
+            name: "Temperatura osservata",
             type: "line",
             data: chartPairs(data.temp),
             showSymbol: false,
             connectNulls: false,
             smooth: false,
             sampling: "lttb",
-            lineStyle: { width: 2.3, color: "#f97316" },
+            lineStyle: { width: 2.5, color: "#f97316" },
             itemStyle: { color: "#f97316" },
             emphasis: { focus: "series" },
+            z: 5,
             ...(dayBoundaryMarkLine ? { markLine: dayBoundaryMarkLine } : {}),
           },
-          {
-            name: "Punto di rugiada (°C)",
-            type: "line",
-            data: chartPairs(data.dew),
-            showSymbol: false,
-            connectNulls: false,
-            smooth: false,
-            sampling: "lttb",
-            lineStyle: { width: 2.3, color: "#06b6d4" },
-            itemStyle: { color: "#06b6d4" },
-            emphasis: { focus: "series" },
-          },
+
           ...(pulseTemp ? [pulseTemp] : []),
-          ...(pulseDew ? [pulseDew] : []),
         ],
       };
     }
 
     if (groupKey === "rain") {
-
       const rainStepLabel =
         mode === "day" || mode === "week"
           ? "Pioggia 15 min (mm)"
           : "Pioggia oraria (mm)";
+
       const rainAxisLabel =
-        mode === "day" || mode === "week" ? "mm/15m" : "mm/h";
+        mode === "day" || mode === "week"
+          ? "mm/15m"
+          : "mm/h";
+
+      const climateMedian = Array.isArray(
+        rainClimatologyData?.rainCumMedian,
+      )
+        ? rainClimatologyData.rainCumMedian
+        : [];
+
+      const climateP10 = Array.isArray(rainClimatologyData?.rainCumP10)
+        ? rainClimatologyData.rainCumP10
+        : [];
+
+      const climateP25 = Array.isArray(rainClimatologyData?.rainCumP25)
+        ? rainClimatologyData.rainCumP25
+        : [];
+
+      const climateP75 = Array.isArray(rainClimatologyData?.rainCumP75)
+        ? rainClimatologyData.rainCumP75
+        : [];
+
+      const climateP90 = Array.isArray(rainClimatologyData?.rainCumP90)
+        ? rainClimatologyData.rainCumP90
+        : [];
+
+      const showRainClimate =
+        mode !== "day" &&
+        !!rainClimatologyData;
+
+      const climateMedianAvailable =
+        showRainClimate &&
+        climateMedian.some((point) =>
+          Number.isFinite(n(point?.[1])),
+        );
+
+      const climateBand50Available =
+        showRainClimate &&
+        climateP25.some((point) =>
+          Number.isFinite(n(point?.[1])),
+        ) &&
+        climateP75.some((point) =>
+          Number.isFinite(n(point?.[1])),
+        );
+
+      const climateBand80Available =
+        showRainClimate &&
+        climateP10.some((point) =>
+          Number.isFinite(n(point?.[1])),
+        ) &&
+        climateP90.some((point) =>
+          Number.isFinite(n(point?.[1])),
+        );
+
+      const climateBand50Delta =
+        climateBand50Available
+          ? climateP75.map((point, index) => {
+              const timestamp = Number(point?.[0]);
+              const upper = n(point?.[1]);
+              const lower = n(climateP25?.[index]?.[1]);
+
+              return [
+                timestamp,
+                Number.isFinite(upper) &&
+                Number.isFinite(lower)
+                  ? Math.max(0, upper - lower)
+                  : null,
+              ];
+            })
+          : [];
+
+      const climateBand80Delta =
+        climateBand80Available
+          ? climateP90.map((point, index) => {
+              const timestamp = Number(point?.[0]);
+              const upper = n(point?.[1]);
+              const lower = n(climateP10?.[index]?.[1]);
+
+              return [
+                timestamp,
+                Number.isFinite(upper) &&
+                Number.isFinite(lower)
+                  ? Math.max(0, upper - lower)
+                  : null,
+              ];
+            })
+          : [];
+
+      const medianLegendLabel = "Mediana climatica 1991–2020";
+      const band50LegendLabel = "Fascia 50%";
+      const band80LegendLabel = "Fascia 80%";
 
       const pulseRain = showRealtimePulse
         ? makeRealtimePulseSeries(
@@ -8358,24 +11612,174 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
             rainStepLabel,
           )
         : null;
+
       const pulseCum = showRealtimePulse
         ? makeRealtimePulseSeries(
             data.rainCum,
             data.latestTimestamp,
             1,
-            "Cumulata (mm)",
+            "Cumulata osservata (mm)",
           )
         : null;
+
+      const legendData = [
+        rainStepLabel,
+        "Cumulata osservata (mm)",
+        ...(climateMedianAvailable
+          ? [medianLegendLabel]
+          : []),
+        ...(climateBand50Available
+          ? [band50LegendLabel]
+          : []),
+        ...(climateBand80Available
+          ? [band80LegendLabel]
+          : []),
+      ];
+
+      const rainLegend = isMobileChart
+        ? {
+            ...baseLegend,
+            bottom: 7,
+            width: isVeryNarrowChart ? 318 : 348,
+            itemGap: 10,
+            itemWidth: 14,
+            itemHeight: 8,
+            textStyle: {
+              ...baseLegend.textStyle,
+              fontSize: isVeryNarrowChart ? 8.5 : 9,
+            },
+            formatter: (name) => {
+              if (name === rainStepLabel) {
+                return mode === "month"
+                  ? "Pioggia oraria"
+                  : "Pioggia 15 min";
+              }
+
+              if (name === "Cumulata osservata (mm)") {
+                return "Cumulata";
+              }
+
+              if (name === medianLegendLabel) {
+                return "Mediana 1991–2020";
+              }
+
+              return name;
+            },
+            data: legendData,
+          }
+        : {
+            ...baseLegend,
+            data: legendData,
+          };
+
       return {
         ...common,
         title: chartTitle("Precipitazioni"),
         grid: gridWithLegend,
-        tooltip: tooltipCommon,
-        legend: {
-          ...baseLegend,
-          data: [rainStepLabel, "Cumulata (mm)"],
+
+        tooltip: {
+          ...tooltipCommon,
+          formatter: (params) => {
+            const validParams = (Array.isArray(params) ? params : [])
+              .filter(
+                (item) =>
+                  Number.isFinite(n(item?.data?.[1])) &&
+                  !String(item?.seriesName || "").startsWith("__"),
+              );
+
+            if (!validParams.length) return "";
+
+            const timestamp =
+              Number(validParams[0]?.data?.[0]);
+
+            const time = Number.isFinite(timestamp)
+              ? formatSummaryTimestamp(timestamp, mode)
+              : "";
+
+            const lines = time ? [time] : [];
+
+            const findParam = (seriesName) =>
+              validParams.find(
+                (item) => item?.seriesName === seriesName,
+              );
+
+            // Prima sempre i dati realmente rilevati.
+            const observedStepItem = findParam(rainStepLabel);
+            const observedCumItem = findParam(
+              "Cumulata osservata (mm)",
+            );
+            const climateMedianItem = findParam(
+              medianLegendLabel,
+            );
+
+            for (const item of [
+              observedStepItem,
+              observedCumItem,
+              climateMedianItem,
+            ]) {
+              if (!item) continue;
+
+              const value = n(item?.data?.[1]);
+              if (!Number.isFinite(value)) continue;
+
+              lines.push(
+                `${item.marker}${item.seriesName}: ${value.toFixed(1)} mm`,
+              );
+            }
+
+            // Nel giornaliero nessun dato climatologico:
+            // la climatologia disponibile è giornaliera, non intragiornaliera.
+            if (mode !== "day" && Number.isFinite(timestamp)) {
+              const findValue = (pairs) => {
+                const point = (Array.isArray(pairs) ? pairs : [])
+                  .find(
+                    (candidate) =>
+                      Number(candidate?.[0]) === timestamp,
+                  );
+
+                const value = n(point?.[1]);
+                return Number.isFinite(value) ? value : null;
+              };
+
+              const p25 = findValue(climateP25);
+              const p75 = findValue(climateP75);
+              const p10 = findValue(climateP10);
+              const p90 = findValue(climateP90);
+
+              if (
+                climateBand50Available &&
+                Number.isFinite(p25) &&
+                Number.isFinite(p75)
+              ) {
+                lines.push(
+                  `<span style="display:inline-block;margin-right:6px;border-radius:2px;width:10px;height:7px;background:rgba(71,85,105,.28);"></span>` +
+                    `Fascia 50% (P25–P75): ${p25.toFixed(1)}–${p75.toFixed(1)} mm`,
+                );
+              }
+
+              if (
+                climateBand80Available &&
+                Number.isFinite(p10) &&
+                Number.isFinite(p90)
+              ) {
+                lines.push(
+                  `<span style="display:inline-block;margin-right:6px;border-radius:2px;width:10px;height:7px;background:rgba(148,163,184,.18);"></span>` +
+                    `Fascia 80% (P10–P90): ${p10.toFixed(1)}–${p90.toFixed(1)} mm`,
+                );
+              }
+            }
+
+            return lines.join("<br/>");
+          },
         },
-        yAxis: [leftAxis(rainAxisLabel), rightAxis("mm cum.")],
+
+        legend: rainLegend,
+
+        yAxis: [
+          leftAxis(rainAxisLabel),
+          rightAxis("mm cum."),
+        ],
+
         series: [
           {
             name: rainStepLabel,
@@ -8387,10 +11791,158 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
               color: "#38bdf8",
               borderRadius: [3, 3, 0, 0],
             },
-            ...(dayBoundaryMarkLine ? { markLine: dayBoundaryMarkLine } : {}),
+            ...(dayBoundaryMarkLine
+              ? { markLine: dayBoundaryMarkLine }
+              : {}),
+            z: 5,
           },
+
+          ...(climateBand80Available
+            ? [
+                {
+                  name: "__Pioggia P10 base",
+                  type: "line",
+                  data: chartPairs(climateP10),
+                  yAxisIndex: 1,
+                  stack: "rain-band-80",
+                  showSymbol: false,
+                  connectNulls: false,
+                  smooth: false,
+                  silent: true,
+                  tooltip: { show: false },
+                  lineStyle: {
+                    width: 0,
+                    opacity: 0,
+                  },
+                  areaStyle: {
+                    opacity: 0,
+                  },
+                  itemStyle: {
+                    opacity: 0,
+                  },
+                  emphasis: {
+                    disabled: true,
+                  },
+                  z: 0,
+                },
+                {
+                  name: band80LegendLabel,
+                  type: "line",
+                  data: chartPairs(climateBand80Delta),
+                  yAxisIndex: 1,
+                  stack: "rain-band-80",
+                  showSymbol: false,
+                  connectNulls: false,
+                  smooth: false,
+                  silent: true,
+                  tooltip: { show: false },
+                  lineStyle: {
+                    width: 0,
+                    opacity: 0,
+                  },
+                  areaStyle: {
+                    color: "rgba(148, 163, 184, 0.16)",
+                    opacity: 1,
+                  },
+                  itemStyle: {
+                    color: "rgba(148, 163, 184, 0.20)",
+                  },
+                  emphasis: {
+                    disabled: true,
+                  },
+                  z: 0,
+                },
+              ]
+            : []),
+
+          ...(climateBand50Available
+            ? [
+                {
+                  name: "__Pioggia P25 base",
+                  type: "line",
+                  data: chartPairs(climateP25),
+                  yAxisIndex: 1,
+                  stack: "rain-band-50",
+                  showSymbol: false,
+                  connectNulls: false,
+                  smooth: false,
+                  silent: true,
+                  tooltip: { show: false },
+                  lineStyle: {
+                    width: 0,
+                    opacity: 0,
+                  },
+                  areaStyle: {
+                    opacity: 0,
+                  },
+                  itemStyle: {
+                    opacity: 0,
+                  },
+                  emphasis: {
+                    disabled: true,
+                  },
+                  z: 1,
+                },
+                {
+                  name: band50LegendLabel,
+                  type: "line",
+                  data: chartPairs(climateBand50Delta),
+                  yAxisIndex: 1,
+                  stack: "rain-band-50",
+                  showSymbol: false,
+                  connectNulls: false,
+                  smooth: false,
+                  silent: true,
+                  tooltip: { show: false },
+                  lineStyle: {
+                    width: 0,
+                    opacity: 0,
+                  },
+                  areaStyle: {
+                    color: "rgba(71, 85, 105, 0.24)",
+                    opacity: 1,
+                  },
+                  itemStyle: {
+                    color: "rgba(71, 85, 105, 0.30)",
+                  },
+                  emphasis: {
+                    disabled: true,
+                  },
+                  z: 1,
+                },
+              ]
+            : []),
+
+          ...(climateMedianAvailable
+            ? [
+                {
+                  name: medianLegendLabel,
+                  type: "line",
+                  data: chartPairs(climateMedian),
+                  yAxisIndex: 1,
+                  showSymbol: false,
+                  connectNulls: false,
+                  smooth: false,
+                  sampling: "lttb",
+                  lineStyle: {
+                    width: 2.1,
+                    color: "#64748b",
+                    type: "dashed",
+                    opacity: 0.95,
+                  },
+                  itemStyle: {
+                    color: "#64748b",
+                  },
+                  emphasis: {
+                    focus: "series",
+                  },
+                  z: 3,
+                },
+              ]
+            : []),
+
           {
-            name: "Cumulata (mm)",
+            name: "Cumulata osservata (mm)",
             type: "line",
             data: chartPairs(data.rainCum),
             yAxisIndex: 1,
@@ -8398,10 +11950,19 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
             connectNulls: false,
             smooth: false,
             sampling: "lttb",
-            lineStyle: { width: 2.3, color: "#2563eb" },
-            itemStyle: { color: "#2563eb" },
-            emphasis: { focus: "series" },
+            lineStyle: {
+              width: 2.4,
+              color: "#2563eb",
+            },
+            itemStyle: {
+              color: "#2563eb",
+            },
+            emphasis: {
+              focus: "series",
+            },
+            z: 6,
           },
+
           ...(pulseRain ? [pulseRain] : []),
           ...(pulseCum ? [pulseCum] : []),
         ],
@@ -8409,42 +11970,244 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
     }
 
     if (groupKey === "rh") {
+      const climate = fixedClimateSeries(
+        climatologyData,
+        "rh",
+      );
+
+      const meanLegendLabel = "Media climatica 1991–2020";
+      const band50LegendLabel = "Fascia 50%";
+      const band80LegendLabel = "Fascia 80%";
 
       const pulse = showRealtimePulse
         ? makeRealtimePulseSeries(
             data.rh,
             data.latestTimestamp,
             0,
-            "Umidità (%)",
+            "Umidità osservata",
           )
         : null;
+
+      const humidityLegend = isMobileChart
+        ? [
+            {
+              ...baseLegend,
+              left: "center",
+              right: "auto",
+              bottom: 29,
+              width: isVeryNarrowChart ? 308 : 338,
+              itemGap: 11,
+              itemWidth: 14,
+              itemHeight: 8,
+              textStyle: {
+                ...baseLegend.textStyle,
+                fontSize: isVeryNarrowChart ? 8.7 : 9.2,
+              },
+              formatter: (name) => {
+                if (name === "Umidità osservata") return "Umidità";
+                if (name === meanLegendLabel) return "Media";
+                return name;
+              },
+              data: [
+                "Umidità osservata",
+                ...(climate.meanAvailable ? [meanLegendLabel] : []),
+              ],
+            },
+            {
+              ...baseLegend,
+              left: "center",
+              right: "auto",
+              bottom: 8,
+              width: isVeryNarrowChart ? 318 : 348,
+              itemGap: 11,
+              itemWidth: 14,
+              itemHeight: 8,
+              textStyle: {
+                ...baseLegend.textStyle,
+                fontSize: isVeryNarrowChart ? 8.7 : 9.2,
+              },
+              data: [
+                ...(climate.band50Available
+                  ? [{ name: band50LegendLabel, icon: "roundRect" }]
+                  : []),
+                ...(climate.band80Available
+                  ? [{ name: band80LegendLabel, icon: "roundRect" }]
+                  : []),
+              ],
+            },
+          ]
+        : {
+            ...baseLegend,
+            itemGap: 18,
+            data: [
+              "Umidità osservata",
+              ...(climate.meanAvailable ? [meanLegendLabel] : []),
+              ...(climate.band50Available
+                ? [{ name: band50LegendLabel, icon: "roundRect" }]
+                : []),
+              ...(climate.band80Available
+                ? [{ name: band80LegendLabel, icon: "roundRect" }]
+                : []),
+            ],
+          };
+
+      const humidityGrid = isMobileChart
+        ? mobileStandardGrid
+        : { ...gridWithLegend, bottom: 88 };
 
       return {
         ...common,
         title: chartTitle("Umidità"),
-        grid: gridNoLegend,
-        tooltip: tooltipCommon,
+        grid: humidityGrid,
+        tooltip: {
+          ...tooltipCommon,
+          formatter: (params) => {
+            const allParams = Array.isArray(params) ? params : [];
+            const timestamp = Number(
+              allParams
+                .map((item) => Number(item?.data?.[0]))
+                .find(Number.isFinite),
+            );
+
+            if (!Number.isFinite(timestamp)) return "";
+
+            const time = formatSummaryTimestamp(timestamp, mode);
+            const lines = time ? [time] : [];
+
+            const findValue = (seriesName) => {
+              const item = allParams.find(
+                (candidate) =>
+                  candidate?.seriesName === seriesName &&
+                  Number.isFinite(n(candidate?.data?.[1])),
+              );
+
+              if (!item) return null;
+
+              return {
+                marker: item.marker,
+                value: n(item.data[1]),
+              };
+            };
+
+            const observed = findValue("Umidità osservata");
+            const mean = findValue(meanLegendLabel);
+
+            if (observed) {
+              lines.push(
+                `${observed.marker}Umidità osservata: ${observed.value.toFixed(1)}%`,
+              );
+            }
+
+            if (mean) {
+              lines.push(
+                `${mean.marker}Media climatica 1991–2020: ${mean.value.toFixed(1)}%`,
+              );
+            }
+
+            const bandAt = (lowerPairs, upperPairs) => {
+              const index = lowerPairs.findIndex(
+                (point) => Number(point?.[0]) === timestamp,
+              );
+
+              if (index < 0) return null;
+
+              const lower = n(lowerPairs?.[index]?.[1]);
+              const upper = n(upperPairs?.[index]?.[1]);
+
+              return Number.isFinite(lower) && Number.isFinite(upper)
+                ? { lower, upper }
+                : null;
+            };
+
+            if (climate.band50Available) {
+              const band = bandAt(climate.p25, climate.p75);
+
+              if (band) {
+                lines.push(
+                  `<span style="display:inline-block;margin-right:6px;border-radius:2px;width:10px;height:7px;background:rgba(71,85,105,.28);"></span>` +
+                    `Fascia 50% (P25–P75): ${band.lower.toFixed(1)}–${band.upper.toFixed(1)}%`,
+                );
+              }
+            }
+
+            if (climate.band80Available) {
+              const band = bandAt(climate.p10, climate.p90);
+
+              if (band) {
+                lines.push(
+                  `<span style="display:inline-block;margin-right:6px;border-radius:2px;width:10px;height:7px;background:rgba(148,163,184,.18);"></span>` +
+                    `Fascia 80% (P10–P90): ${band.lower.toFixed(1)}–${band.upper.toFixed(1)}%`,
+                );
+              }
+            }
+
+            return lines.join("<br/>");
+          },
+        },
+        legend: humidityLegend,
         yAxis: leftAxis("% RH", { min: 0, max: 100 }),
         series: [
+          ...fixedClimateBandSeries({
+            climate,
+            stackPrefix: "humidity-climatology",
+            band50Label: band50LegendLabel,
+            band80Label: band80LegendLabel,
+          }),
+
+          ...(climate.meanAvailable
+            ? [
+                {
+                  name: meanLegendLabel,
+                  type: "line",
+                  data: chartPairs(climate.mean),
+                  showSymbol: false,
+                  connectNulls: false,
+                  smooth: false,
+                  sampling: "lttb",
+                  lineStyle: {
+                    width: 2.0,
+                    color: "#64748b",
+                    type: "dashed",
+                    opacity: 0.95,
+                  },
+                  itemStyle: { color: "#64748b" },
+                  emphasis: { focus: "series" },
+                  z: 3,
+                },
+              ]
+            : []),
+
           {
-            name: "Umidità (%)",
+            name: "Umidità osservata",
             type: "line",
             data: chartPairs(data.rh),
             showSymbol: false,
             connectNulls: false,
             smooth: false,
             sampling: "lttb",
-            lineStyle: { width: 2.3, color: "#06b6d4" },
+            lineStyle: { width: 2.5, color: "#06b6d4" },
             itemStyle: { color: "#06b6d4" },
             emphasis: { focus: "series" },
-            ...(dayBoundaryMarkLine ? { markLine: dayBoundaryMarkLine } : {}),
+            z: 5,
+            ...(dayBoundaryMarkLine
+              ? { markLine: dayBoundaryMarkLine }
+              : {}),
           },
+
           ...(pulse ? [pulse] : []),
         ],
       };
     }
 
     if (groupKey === "wind") {
+      const climate = fixedClimateSeries(
+        climatologyData,
+        "wind",
+      );
+
+      const meanLegendLabel = "Media climatica 1991–2020";
+      const band50LegendLabel = "Fascia 50%";
+      const band80LegendLabel = "Fascia 80%";
 
       const pulseWind = showRealtimePulse
         ? makeRealtimePulseSeries(
@@ -8454,6 +12217,7 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
             "Vento medio (km/h)",
           )
         : null;
+
       const pulseGust = showRealtimePulse
         ? makeRealtimePulseSeries(
             data.gust,
@@ -8462,6 +12226,7 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
             "Raffiche (km/h)",
           )
         : null;
+
       const pulseDir = showRealtimePulse
         ? makeRealtimePulseSeries(
             data.dirMean,
@@ -8471,6 +12236,79 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
           )
         : null;
 
+      const windLegend = isMobileChart
+        ? [
+            {
+              ...baseLegend,
+              left: "center",
+              right: "auto",
+              bottom: 29,
+              width: isVeryNarrowChart ? 326 : 352,
+              itemGap: 8,
+              itemWidth: 12,
+              itemHeight: 7,
+              textStyle: {
+                ...baseLegend.textStyle,
+                fontSize: isVeryNarrowChart ? 7.4 : 8,
+              },
+              formatter: (name) => {
+                if (name === "Vento medio (km/h)") return "Vento";
+                if (name === "Raffiche (km/h)") return "Raffiche";
+                if (name === "Direzione") return "Dir.";
+                if (name === meanLegendLabel) return "Media";
+                return name;
+              },
+              data: [
+                "Vento medio (km/h)",
+                "Raffiche (km/h)",
+                "Direzione",
+                ...(climate.meanAvailable ? [meanLegendLabel] : []),
+              ],
+            },
+            {
+              ...baseLegend,
+              left: "center",
+              right: "auto",
+              bottom: 8,
+              width: isVeryNarrowChart ? 318 : 348,
+              itemGap: 11,
+              itemWidth: 14,
+              itemHeight: 8,
+              textStyle: {
+                ...baseLegend.textStyle,
+                fontSize: isVeryNarrowChart ? 8.7 : 9.2,
+              },
+              data: [
+                ...(climate.band50Available
+                  ? [{ name: band50LegendLabel, icon: "roundRect" }]
+                  : []),
+                ...(climate.band80Available
+                  ? [{ name: band80LegendLabel, icon: "roundRect" }]
+                  : []),
+              ],
+            },
+          ]
+        : {
+            ...baseLegend,
+            itemGap: 15,
+            data: [
+              "Vento medio (km/h)",
+              "Raffiche (km/h)",
+              "Direzione",
+              ...(climate.meanAvailable ? [meanLegendLabel] : []),
+              ...(climate.band50Available
+                ? [{ name: band50LegendLabel, icon: "roundRect" }]
+                : []),
+              ...(climate.band80Available
+                ? [{ name: band80LegendLabel, icon: "roundRect" }]
+                : []),
+            ],
+          };
+
+      const windGrid = isMobileChart
+        ? mobileStandardGrid
+        : { ...gridWithLegend, bottom: 88 };
+
       return {
         ...common,
         title: chartTitle(
@@ -8478,34 +12316,102 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
             ? "Vento, raffiche e direzione"
             : "Vento medio, raffiche e direzione",
         ),
-        grid: gridWithLegend,
+        grid: windGrid,
         tooltip: {
           trigger: "axis",
           triggerOn: "mousemove|click",
           confine: true,
           axisPointer: hoverAxisPointer,
           formatter: (params) => {
-            const validParams = (Array.isArray(params) ? params : []).filter(
-              (item) => Number.isFinite(n(item?.data?.[1])),
+            const allParams = Array.isArray(params) ? params : [];
+            const timestamp = Number(
+              allParams
+                .map((item) => Number(item?.data?.[0]))
+                .find(Number.isFinite),
             );
 
-            if (!validParams.length) return "";
+            if (!Number.isFinite(timestamp)) return "";
 
-            const timestamp = Number(validParams[0]?.data?.[0]);
-            const time = Number.isFinite(timestamp)
-              ? formatSummaryTimestamp(timestamp, mode)
-              : "";
-            const lines = [time];
+            const time = formatSummaryTimestamp(timestamp, mode);
+            const lines = time ? [time] : [];
 
-            for (const p of validParams) {
-              const value = p.data?.[1];
-              if (p.seriesName === "Direzione") {
+            const findValue = (seriesName) => {
+              const item = allParams.find(
+                (candidate) =>
+                  candidate?.seriesName === seriesName &&
+                  Number.isFinite(n(candidate?.data?.[1])),
+              );
+
+              if (!item) return null;
+
+              return {
+                marker: item.marker,
+                value: n(item.data[1]),
+              };
+            };
+
+            const observedWind = findValue("Vento medio (km/h)");
+            const gust = findValue("Raffiche (km/h)");
+            const direction = findValue("Direzione");
+            const mean = findValue(meanLegendLabel);
+
+            if (observedWind) {
+              lines.push(
+                `${observedWind.marker}Vento medio osservato: ${observedWind.value.toFixed(1)} km/h`,
+              );
+            }
+
+            if (gust) {
+              lines.push(
+                `${gust.marker}Raffiche: ${gust.value.toFixed(1)} km/h`,
+              );
+            }
+
+            if (direction) {
+              lines.push(
+                `${direction.marker}Direzione: ${degToCardinal8(direction.value)}`,
+              );
+            }
+
+            if (mean) {
+              lines.push(
+                `${mean.marker}Media climatica 1991–2020: ${mean.value.toFixed(1)} km/h`,
+              );
+            }
+
+            const bandAt = (lowerPairs, upperPairs) => {
+              const index = lowerPairs.findIndex(
+                (point) => Number(point?.[0]) === timestamp,
+              );
+
+              if (index < 0) return null;
+
+              const lower = n(lowerPairs?.[index]?.[1]);
+              const upper = n(upperPairs?.[index]?.[1]);
+
+              return Number.isFinite(lower) && Number.isFinite(upper)
+                ? { lower, upper }
+                : null;
+            };
+
+            if (climate.band50Available) {
+              const band = bandAt(climate.p25, climate.p75);
+
+              if (band) {
                 lines.push(
-                  `${p.marker}${p.seriesName}: ${degToCardinal8(value)}`,
+                  `<span style="display:inline-block;margin-right:6px;border-radius:2px;width:10px;height:7px;background:rgba(71,85,105,.28);"></span>` +
+                    `Fascia 50% (P25–P75): ${band.lower.toFixed(1)}–${band.upper.toFixed(1)} km/h`,
                 );
-              } else {
+              }
+            }
+
+            if (climate.band80Available) {
+              const band = bandAt(climate.p10, climate.p90);
+
+              if (band) {
                 lines.push(
-                  `${p.marker}${p.seriesName}: ${Number(value).toFixed(1)}`,
+                  `<span style="display:inline-block;margin-right:6px;border-radius:2px;width:10px;height:7px;background:rgba(148,163,184,.18);"></span>` +
+                    `Fascia 80% (P10–P90): ${band.lower.toFixed(1)}–${band.upper.toFixed(1)} km/h`,
                 );
               }
             }
@@ -8513,10 +12419,7 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
             return lines.join("<br/>");
           },
         },
-        legend: {
-          ...baseLegend,
-          data: ["Vento medio (km/h)", "Raffiche (km/h)", "Direzione"],
-        },
+        legend: windLegend,
         yAxis: [
           leftAxis("km/h"),
           {
@@ -8531,6 +12434,38 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
           },
         ],
         series: [
+          ...fixedClimateBandSeries({
+            climate,
+            stackPrefix: "wind-climatology",
+            yAxisIndex: 0,
+            band50Label: band50LegendLabel,
+            band80Label: band80LegendLabel,
+          }),
+
+          ...(climate.meanAvailable
+            ? [
+                {
+                  name: meanLegendLabel,
+                  type: "line",
+                  data: chartPairs(climate.mean),
+                  yAxisIndex: 0,
+                  showSymbol: false,
+                  connectNulls: false,
+                  smooth: false,
+                  sampling: "lttb",
+                  lineStyle: {
+                    width: 2.0,
+                    color: "#64748b",
+                    type: "dashed",
+                    opacity: 0.95,
+                  },
+                  itemStyle: { color: "#64748b" },
+                  emphasis: { focus: "series" },
+                  z: 3,
+                },
+              ]
+            : []),
+
           {
             name: "Vento medio (km/h)",
             type: "line",
@@ -8540,11 +12475,15 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
             smooth: false,
             sampling: "lttb",
             yAxisIndex: 0,
-            lineStyle: { width: 2.3, color: "#8b5cf6" },
+            lineStyle: { width: 2.5, color: "#8b5cf6" },
             itemStyle: { color: "#8b5cf6" },
             emphasis: { focus: "series" },
-            ...(dayBoundaryMarkLine ? { markLine: dayBoundaryMarkLine } : {}),
+            z: 5,
+            ...(dayBoundaryMarkLine
+              ? { markLine: dayBoundaryMarkLine }
+              : {}),
           },
+
           {
             name: "Raffiche (km/h)",
             type: "line",
@@ -8557,7 +12496,9 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
             lineStyle: { width: 2.1, color: "#f59e0b" },
             itemStyle: { color: "#f59e0b" },
             emphasis: { focus: "series" },
+            z: 5,
           },
+
           {
             name: "Direzione",
             type: "scatter",
@@ -8565,7 +12506,9 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
             yAxisIndex: 1,
             symbolSize: 5,
             itemStyle: { color: "#334155" },
+            z: 6,
           },
+
           ...(pulseWind ? [pulseWind] : []),
           ...(pulseGust ? [pulseGust] : []),
           ...(pulseDir ? [pulseDir] : []),
@@ -8651,7 +12594,6 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
       };
     }
 
-
     const pulse = showRealtimePulse
       ? makeRealtimePulseSeries(
           data.solar,
@@ -8687,20 +12629,20 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
   }, [
     bounds.endISO,
     bounds.startISO,
+    climatologyData,
     data,
     groupKey,
     isMobileChart,
     isVeryNarrowChart,
     mode,
+    rainClimatologyData,
     showRealtimePulse,
   ]);
 
+  // Altezza identica per qualunque parametro selezionato.
   const chartHeight = isMobileChart
-    ? groupKey === "wind"
-      ? 330
-      : 310
+    ? (isVeryNarrowChart ? 318 : 326)
     : 370;
-
 
   return (
     <div className="periodCard" aria-label={periodTitle}>
@@ -8754,7 +12696,7 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
               aria-pressed={chartView === "anomaly"}
               aria-label={
                 chartView === "anomaly"
-                  ? "Torna al grafico dell'andamento"
+                  ? "Torna al grafico con osservazioni e climatologia"
                   : "Mostra il grafico dell'anomalia climatica"
               }
               onClick={() =>
@@ -8773,11 +12715,12 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
             mode={mode}
             groupKey={groupKey}
             currentData={data}
-            climatologyData={climatologyData}
+            climatologyData={activeClimatologyData}
             currentBounds={bounds}
-            loading={loading || climatologyLoading}
-            error={climatologyError}
+            loading={loading || activeClimatologyLoading}
+            error={activeClimatologyError}
             isMobile={isMobileChart}
+            isVeryNarrow={isVeryNarrowChart}
             chartHeight={chartHeight}
           />
         ) : (
@@ -8785,28 +12728,50 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
             {loading && <div className="msg">Caricamento del grafico…</div>}
             {!loading && err && <div className="msg">{err}</div>}
             {!loading && !err && option && (
-              <ReactECharts
+              <ResponsivePeriodEChart
                 option={option}
-                style={{ height: chartHeight, width: "100%" }}
-                notMerge={true}
-                lazyUpdate={true}
+                height={chartHeight}
+                chartKey={`period-${mode}-${groupKey}-${isMobileChart ? "mobile" : "desktop"}-${activeClimatologyData ? "clim" : "base"}`}
               />
             )}
+            {!loading &&
+              !err &&
+              supportsClimatology &&
+              activeClimatologyLoading && (
+                <div className="climatologyStatus">Caricamento climatologia…</div>
+              )}
           </div>
         )}
       </section>
+
+      {supportsRainClimatology &&
+        !loading &&
+        !err &&
+        precipHistoryError && (
+          <div
+            style={{
+              margin: "-8px 20px 14px",
+              fontSize: "10px",
+              fontWeight: 750,
+              color: "#64748b",
+              textAlign: "center",
+            }}
+          >
+            {precipHistoryError}
+          </div>
+        )}
 
       {supportsClimatology &&
         !loading &&
         !err &&
         data &&
-        climatologyData &&
-        !climatologyError && (
+        activeClimatologyData &&
+        !activeClimatologyError && (
           <AnomalySummaryPanel
             mode={mode}
             groupKey={groupKey}
             currentData={data}
-            climatologyData={climatologyData}
+            climatologyData={activeClimatologyData}
             currentBounds={bounds}
           />
         )}
@@ -8832,7 +12797,6 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
           text-align: center;
         }
 
-
         .dataHeader h2 {
           margin: 0;
           font-size: 24px;
@@ -8841,7 +12805,6 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
           letter-spacing: -0.025em;
           color: #0b1f45;
         }
-
 
         .dateNavigator {
           position: relative;
@@ -8980,6 +12943,21 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
           background: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
         }
 
+        .climatologyStatus {
+          position: absolute;
+          right: 120px;
+          top: 14px;
+          z-index: 12;
+          padding: 5px 8px;
+          border: 1px solid #e2e8f0;
+          border-radius: 8px;
+          background: rgba(255, 255, 255, 0.92);
+          color: #64748b;
+          font-size: 8px;
+          font-weight: 850;
+          pointer-events: none;
+        }
+
         .msg {
           min-height: 390px;
           display: flex;
@@ -8991,7 +12969,6 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
           color: rgba(15, 23, 42, 0.66);
           font-weight: 850;
         }
-
 
         @media (max-width: 1050px) and (min-width: 721px) {
           .dateNavigator {
@@ -9078,6 +13055,8 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
           }
 
           .chartPanel {
+            width: auto;
+            max-width: calc(100% - 16px);
             margin: 0 8px 10px;
             border-radius: 13px;
           }
@@ -9095,6 +13074,12 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
             font-size: 8.5px;
           }
 
+          .climatologyStatus {
+            right: 8px;
+            top: 8px;
+            font-size: 7.5px;
+          }
+
           .chartArea {
             min-height: 0;
             padding: 0;
@@ -9102,7 +13087,7 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
           }
 
           .msg {
-            min-height: 280px;
+            min-height: 225px;
           }
         }
 
@@ -9122,6 +13107,7 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
             padding-right: 6px;
             font-size: 8px;
           }
+
         }
       `}</style>
     </div>

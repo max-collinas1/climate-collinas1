@@ -1,0 +1,62 @@
+name: Aggiorna allerte Protezione Civile
+
+on:
+  schedule:
+    # Ogni 3 ore.
+    - cron: "0 */3 * * *"
+
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: protezione-civile-auto-update
+  cancel-in-progress: true
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Installa solo il parser PDF necessario
+        run: npm install --no-save --no-package-lock pdf-parse@1.1.1
+
+      - name: Aggiorna Protezione Civile
+        run: node scripts/update-protezione-civile.mjs
+
+      - name: Verifica modifiche
+        id: changes
+        shell: bash
+        run: |
+          if git diff --quiet -- public/data/protezione-civile.json; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Commit e push
+        if: steps.changes.outputs.changed == 'true'
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Riallineamento obbligatorio prima del push:
+          # altri workflow possono aver aggiornato main nel frattempo.
+          git fetch origin main
+          git pull --rebase origin main
+
+          git add public/data/protezione-civile.json
+          git commit -m "Aggiorna allerte Protezione Civile"
+          git push origin main

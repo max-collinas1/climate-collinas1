@@ -1,0 +1,18 @@
+{
+  "location": "Collinas",
+  "period": "1991-2020",
+  "parameter": "precipitation",
+  "unit": "mm",
+  "reconstructed": true,
+  "wet_day_threshold_mm": 1.0,
+  "event_threshold_mm": 0.2,
+  "annual_mean_mm": 496.3,
+  "annual_median_mm": 485.3,
+  "mean_wet_days_ge_1mm": 83.6,
+  "notes": [
+    "1991-2020 values are statistically reconstructed for Collinas.",
+    "1997 uses ERA5-only fallback because the Sardara source is entirely missing.",
+    "September-December 2011 use ERA5-only fallback because Sardara is missing.",
+    "Daily reconstructed values should not be treated as direct historical gauge observations."
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "location": "Collinas",
+  "latitude": 39.638361,
+  "longitude": 8.843222,
+  "altitude_m": 290,
+  "parameter": "relative_humidity",
+  "unit": "%",
+  "climatological_period": "1991-2020",
+  "calibration_period": "2021-2025",
+  "base_data": "ERA5-Land T2m and Td2m",
+  "calibration": "additive median bias by calendar month and local hour",
+  "validation": {
+    "raw_rmse_pct": 10.873,
+    "corrected_rmse_pct": 8.024,
+    "raw_mae_pct": 8.507,
+    "corrected_mae_pct": 6.017,
+    "raw_bias_pct": -2.529,
+    "corrected_bias_pct": 0.349,
+    "corrected_corr": 0.8705
+  },
+  "percentiles": [
+    10,
+    25,
+    75,
+    90
+  ],
+  "daily_percentile_window": "±7 calendar days",
+  "intraday_resolution": "15 minutes climatological interpolation from calibrated hourly data",
+  "note": "Simple climatological reconstruction. Historical relative humidity is derived from ERA5-Land temperature/dew point and corrected against Davis observations."
+}
