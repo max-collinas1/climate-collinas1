@@ -1,32 +1,30 @@
 {
   "zoneCode": "SARD-C",
   "zoneName": "Bacini Montevecchio-Pischilappiu",
-  "updatedAt": "2026-09-21T08:41:06.696Z",
+  "updatedAt": "2026-09-21T17:01:34.101Z",
   "sourceUrl": "https://www.sardegnaambiente.it/protezionecivile/",
   "automatic": true,
   "method": "official-homepage-maps",
-  "sourceState": "waiting-new-bulletin",
+  "sourceState": "current",
   "sourceDates": {
-    "officialToday": "20-09-2026",
-    "officialTomorrow": "21-09-2026"
+    "officialToday": "21-09-2026",
+    "officialTomorrow": "22-09-2026"
   },
   "today": {
-    "remoteUrl": "https://www.sardegnaambiente.it/immagini/20_286_20260920130332.jpg",
+    "remoteUrl": "https://www.sardegnaambiente.it/immagini/20_286_20260921125349.jpg",
     "date": "21-09-2026",
     "pending": false,
-    "rolledFromPreviousBulletin": true,
-    "note": "Mappa odierna ricavata dalla previsione per il giorno successivo del bollettino precedente.",
+    "rolledFromPreviousBulletin": false,
     "mapUrl": "/data/protezione-civile-oggi.jpg",
-    "sourceImage": "https://www.sardegnaambiente.it/immagini/20_286_20260920130332.jpg"
+    "sourceImage": "https://www.sardegnaambiente.it/immagini/20_286_20260921125349.jpg"
   },
   "tomorrow": {
-    "remoteUrl": null,
+    "remoteUrl": "https://www.sardegnaambiente.it/immagini/20_286_20260921125351.jpg",
     "date": "22-09-2026",
-    "pending": true,
+    "pending": false,
     "rolledFromPreviousBulletin": false,
-    "note": "In attesa del bollettino odierno, normalmente pubblicato nel pomeriggio.",
-    "mapUrl": null,
-    "sourceImage": null
+    "mapUrl": "/data/protezione-civile-domani.jpg",
+    "sourceImage": "https://www.sardegnaambiente.it/immagini/20_286_20260921125351.jpg"
   },
   "advisory": {
     "title": "Avviso di Criticita' ordinaria del 20/09/2026",
