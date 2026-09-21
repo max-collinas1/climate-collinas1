@@ -1,0 +1,31 @@
+{
+  "location": "Collinas",
+  "latitude": 39.638361,
+  "longitude": 8.843222,
+  "altitude_m": 290,
+  "parameter": "mean_sea_level_pressure",
+  "unit": "hPa",
+  "climatological_period": "1991-2020",
+  "calibration_period": "2021-2025",
+  "base_data": "ERA5 mean sea level pressure",
+  "station_field": "press_hpa",
+  "calibration": "additive median bias by calendar month and local hour",
+  "validation": {
+    "raw_rmse_hpa": 1.3319,
+    "corrected_rmse_hpa": 0.5536,
+    "raw_mae_hpa": 1.0673,
+    "corrected_mae_hpa": 0.4359,
+    "raw_bias_hpa": -0.7666,
+    "corrected_bias_hpa": -0.0099,
+    "corrected_corr": 0.99558
+  },
+  "percentiles": [
+    10,
+    25,
+    75,
+    90
+  ],
+  "daily_percentile_window": "±7 calendar days",
+  "intraday_resolution": "15 minutes climatological interpolation from calibrated hourly ERA5 MSLP",
+  "note": "Climatology of mean sea level pressure. ERA5 MSLP is directly comparable with the station sea-level pressure field press_hpa and is corrected with a simple additive month-by-hour bias."
+}

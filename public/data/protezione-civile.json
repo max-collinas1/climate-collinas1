@@ -1,23 +1,48 @@
 {
   "zoneCode": "SARD-C",
   "zoneName": "Bacini Montevecchio-Pischilappiu",
-  "updatedAt": null,
+  "updatedAt": "2026-09-21T08:41:06.696Z",
   "sourceUrl": "https://www.sardegnaambiente.it/protezionecivile/",
   "automatic": true,
-  "current": {
-    "level": "unknown",
-    "label": "Da verificare",
-    "validFrom": null,
-    "validTo": null,
-    "risks": [],
-    "note": "In attesa del primo aggiornamento automatico."
+  "method": "official-homepage-maps",
+  "sourceState": "waiting-new-bulletin",
+  "sourceDates": {
+    "officialToday": "20-09-2026",
+    "officialTomorrow": "21-09-2026"
   },
-  "next": {
-    "level": "unknown",
-    "label": "Da verificare",
+  "today": {
+    "remoteUrl": "https://www.sardegnaambiente.it/immagini/20_286_20260920130332.jpg",
+    "date": "21-09-2026",
+    "pending": false,
+    "rolledFromPreviousBulletin": true,
+    "note": "Mappa odierna ricavata dalla previsione per il giorno successivo del bollettino precedente.",
+    "mapUrl": "/data/protezione-civile-oggi.jpg",
+    "sourceImage": "https://www.sardegnaambiente.it/immagini/20_286_20260920130332.jpg"
+  },
+  "tomorrow": {
+    "remoteUrl": null,
+    "date": "22-09-2026",
+    "pending": true,
+    "rolledFromPreviousBulletin": false,
+    "note": "In attesa del bollettino odierno, normalmente pubblicato nel pomeriggio.",
+    "mapUrl": null,
+    "sourceImage": null
+  },
+  "advisory": {
+    "title": "Avviso di Criticita' ordinaria del 20/09/2026",
+    "url": "https://www.sardegnaambiente.it/index.php?xsl=2282&s=472786&v=2&c=12428&t=1",
+    "date": "2026-09-20",
+    "level": "yellow",
+    "label": "Allerta gialla",
+    "risks": [
+      "Rischio idrogeologico"
+    ],
     "validFrom": null,
     "validTo": null,
-    "risks": [],
-    "note": "In attesa del primo aggiornamento automatico."
+    "riskHydrogeological": true,
+    "riskHydraulic": null,
+    "riskThunderstorms": null,
+    "appliesToZone": false,
+    "detailSourceUrl": "https://www.sardegnaambiente.it/index.php?xsl=2282&s=472787&v=2&c=12428&t=1"
   }
 }

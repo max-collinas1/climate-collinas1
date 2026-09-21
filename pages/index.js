@@ -603,22 +603,17 @@ async function loadCivilProtectionStatus() {
     zoneName: "Bacini Montevecchio-Pischilappiu",
     updatedAt: null,
     sourceUrl: "https://www.sardegnaambiente.it/protezionecivile/",
-    current: {
-      level: "unknown",
-      label: "Stato da verificare",
-      validFrom: null,
-      validTo: null,
-      risks: [],
-      note: "Consulta il bollettino ufficiale della Protezione Civile regionale.",
+    automatic: true,
+    method: "official-homepage-maps",
+    today: {
+      date: null,
+      mapUrl: null,
     },
-    next: {
-      level: "unknown",
-      label: "Prossimo stato da verificare",
-      validFrom: null,
-      validTo: null,
-      risks: [],
-      note: "Il prossimo livello verrà mostrato quando disponibile.",
+    tomorrow: {
+      date: null,
+      mapUrl: null,
     },
+    advisory: null,
   };
 
   try {
@@ -631,34 +626,21 @@ async function loadCivilProtectionStatus() {
       return fallback;
     }
 
-    const normalizePeriod = (period, fallbackLabel) => {
-      const source = period && typeof period === "object" ? period : {};
-
-      return {
-        level: String(source.level || "unknown").toLowerCase(),
-        label: String(source.label || fallbackLabel),
-        validFrom: source.validFrom || null,
-        validTo: source.validTo || null,
-        risks: Array.isArray(source.risks)
-          ? source.risks.map((item) => String(item)).filter(Boolean)
-          : [],
-        note: source.note ? String(source.note) : "",
-      };
-    };
-
     return {
-      zoneCode: String(payload.zoneCode || fallback.zoneCode),
-      zoneName: String(payload.zoneName || fallback.zoneName),
-      updatedAt: payload.updatedAt || null,
-      sourceUrl: String(payload.sourceUrl || fallback.sourceUrl),
-      current: normalizePeriod(
-        payload.current,
-        "Stato attuale da verificare",
-      ),
-      next: normalizePeriod(
-        payload.next,
-        "Prossimo stato da verificare",
-      ),
+      ...fallback,
+      ...payload,
+      today: {
+        ...fallback.today,
+        ...(payload.today || {}),
+      },
+      tomorrow: {
+        ...fallback.tomorrow,
+        ...(payload.tomorrow || {}),
+      },
+      advisory:
+        payload.advisory && typeof payload.advisory === "object"
+          ? payload.advisory
+          : null,
     };
   } catch {
     return fallback;
@@ -1164,827 +1146,1069 @@ function CivilProtectionInfoCard({ icon, title, children }) {
 }
 
 function CivilProtectionSection({ status = null }) {
-  const resolvedStatus = status || {
-    zoneCode: "SARD-C",
-    zoneName: "Bacini Montevecchio-Pischilappiu",
-    sourceUrl: "https://www.sardegnaambiente.it/protezionecivile/",
-    updatedAt: null,
-    current: {
-      levelLabel: "Dati non disponibili",
-      statusLabel: "Da verificare",
-      summary: "L’aggiornamento automatico non ha ancora prodotto un dato valido.",
-      validFrom: null,
-      validTo: null,
-      risks: [],
-    },
-    next: {
-      levelLabel: "Dati non disponibili",
-      statusLabel: "Da verificare",
-      summary: "Il prossimo stato verrà mostrato automaticamente quando pubblicato dalla Protezione Civile.",
-      validFrom: null,
-      validTo: null,
-      risks: [],
-    },
+  const data = status || {};
+  const sourceUrl =
+    data?.sourceUrl ||
+    "https://www.sardegnaambiente.it/protezionecivile/";
+
+  const advisory = data?.advisory || null;
+
+  const advisoryTone =
+    advisory?.level === "red"
+      ? "red"
+      : advisory?.level === "orange"
+        ? "orange"
+        : advisory?.level === "yellow"
+          ? "yellow"
+          : "neutral";
+
+  const advisoryLabel =
+    advisory?.label ||
+    "Nessun avviso rilevato";
+
+  const formatDate = (value) => {
+    if (!value) return "Data non disponibile";
+
+    const normalized = String(value).replace(
+      /^(\d{2})-(\d{2})-(\d{4})$/,
+      "$3-$2-$1",
+    );
+
+    const date = new Date(`${normalized}T12:00:00`);
+
+    if (!Number.isFinite(date.getTime())) {
+      return String(value);
+    }
+
+    return new Intl.DateTimeFormat("it-IT", {
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+    }).format(date);
   };
 
-  const zoneCode = resolvedStatus?.zoneCode || "SARD-C";
-  const zoneName = resolvedStatus?.zoneName || "Bacini Montevecchio-Pischilappiu";
-  const sourceUrl =
-    resolvedStatus?.sourceUrl ||
-    "https://www.sardegnaambiente.it/protezionecivile/";
-  const current = resolvedStatus?.current || {};
-  const next = resolvedStatus?.next || {};
+  const formatUpdated = (value) => {
+    if (!value) return "In attesa del primo aggiornamento";
 
-  const pickText = (...values) =>
-    values.find((value) => typeof value === "string" && value.trim()) || "";
+    const date = new Date(value);
 
-  const normalizeRisks = (entry) =>
-    Array.isArray(entry?.risks)
-      ? entry.risks.filter((value) => typeof value === "string" && value.trim())
-      : [];
+    if (!Number.isFinite(date.getTime())) {
+      return "Aggiornamento automatico";
+    }
 
-  const formatDateTime = (value) => {
-    if (!value) return "Da verificare";
-    const parsed = new Date(value);
-    if (Number.isNaN(parsed.getTime())) return String(value);
-    return parsed.toLocaleString("it-IT", {
+    return new Intl.DateTimeFormat("it-IT", {
+      day: "2-digit",
+      month: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(date);
+  };
+
+  const formatAlertDateTime = (value) => {
+    if (!value) return null;
+
+    const date = new Date(value);
+
+    if (!Number.isFinite(date.getTime())) {
+      return null;
+    }
+
+    return new Intl.DateTimeFormat("it-IT", {
       day: "2-digit",
       month: "2-digit",
       year: "numeric",
       hour: "2-digit",
       minute: "2-digit",
-    });
+    }).format(date);
   };
 
-  const toneFromText = (entry) => {
-    const textPool = [
-      pickText(entry?.levelLabel, entry?.statusLabel, entry?.title, entry?.summary),
-      ...normalizeRisks(entry),
-    ]
-      .join(" ")
-      .toLowerCase();
+  const risks =
+    Array.isArray(advisory?.risks) && advisory.risks.length
+      ? advisory.risks
+      : [];
 
-    if (!textPool || textPool.includes("da verificare")) {
-      return {
-        chipClass: "tone-neutral",
-        cardClass: "tone-neutral-card",
-        dot: "○",
-      };
-    }
+  const riskText = risks.join(" ").toLowerCase();
 
-    if (
-      textPool.includes("ross") ||
-      textPool.includes("allarme") ||
-      textPool.includes("elevata")
-    ) {
-      return {
-        chipClass: "tone-red",
-        cardClass: "tone-red-card",
-        dot: "●",
-      };
-    }
+  const hasHydrogeological =
+    advisory?.riskHydrogeological === true ||
+    riskText.includes("idrogeologic");
 
-    if (
-      textPool.includes("aranc") ||
-      textPool.includes("moderata") ||
-      textPool.includes("attenzione")
-    ) {
-      return {
-        chipClass: "tone-orange",
-        cardClass: "tone-orange-card",
-        dot: "●",
-      };
-    }
+  const hasHydraulic =
+    advisory?.riskHydraulic === true ||
+    riskText.includes("idraulic");
 
-    if (
-      textPool.includes("giall") ||
-      textPool.includes("ordinaria") ||
-      textPool.includes("criticità")
-    ) {
-      return {
-        chipClass: "tone-yellow",
-        cardClass: "tone-yellow-card",
-        dot: "●",
-      };
-    }
+  const hasThunderstorm =
+    advisory?.riskThunderstorms === true ||
+    riskText.includes("temporal");
 
-    if (
-      textPool.includes("verde") ||
-      textPool.includes("nessuna") ||
-      textPool.includes("assenza")
-    ) {
-      return {
-        chipClass: "tone-green",
-        cardClass: "tone-green-card",
-        dot: "●",
-      };
-    }
-
-    return {
-      chipClass: "tone-neutral",
-      cardClass: "tone-neutral-card",
-      dot: "○",
-    };
-  };
-
-  const currentLabel = pickText(
-    current?.levelLabel,
-    current?.statusLabel,
-    current?.title,
-    "Da verificare",
-  );
-  const nextLabel = pickText(
-    next?.levelLabel,
-    next?.statusLabel,
-    next?.title,
-    "Da verificare",
-  );
-
-  const currentSummary = pickText(
-    current?.summary,
-    current?.message,
-    "Consulta gli avvisi ufficiali per conoscere lo stato in vigore.",
-  );
-  const nextSummary = pickText(
-    next?.summary,
-    next?.message,
-    "Nessuna nuova criticità indicata per la prossima fase.",
-  );
-
-  const currentRisks = normalizeRisks(current);
-  const nextRisks = normalizeRisks(next);
-
-  const currentTone = toneFromText(current);
-  const nextTone = toneFromText(next);
-
-  const updatedAt = formatDateTime(resolvedStatus?.updatedAt);
-  const validityText = next?.validFrom
-    ? `Dal ${formatDateTime(next.validFrom)}`
-    : current?.validFrom
-      ? `Dal ${formatDateTime(current.validFrom)}`
-      : "Da verificare";
-  const expiryText = next?.validTo
-    ? `Fino al ${formatDateTime(next.validTo)}`
-    : current?.validTo
-      ? `Fino al ${formatDateTime(current.validTo)}`
-      : "Fino a nuova comunicazione";
-
-  const renderRiskPills = (risks, emptyText) =>
-    risks.length ? (
-      <div className="civilRiskPills">
-        {risks.map((risk) => (
-          <span className="civilRiskPill" key={risk}>
-            {risk}
-          </span>
-        ))}
-      </div>
-    ) : (
-      <p className="civilMuted">{emptyText}</p>
-    );
+  const validFrom = formatAlertDateTime(advisory?.validFrom);
+  const validTo = formatAlertDateTime(advisory?.validTo);
+  const hasValidity = Boolean(validFrom && validTo);
 
   return (
-    <article className="lowerPanel civilSection">
-      <div className="civilHeader">
-        <div className="civilHeading">
-          <span className="civilHeadingIcon" aria-hidden="true">◇</span>
-          <div className="civilHeadingCopy">
-            <h2>Protezione Civile e avvisi</h2>
-            <p>
-              Stato attuale e successivo per Collinas · zona di allerta{" "}
-              <strong>{zoneCode}</strong> · {zoneName}.
-            </p>
+    <article className="lowerPanel civilTimelineSection">
+      <header className="civilTimelineHeader">
+        <h2>Protezione Civile e avvisi</h2>
+
+        <span className="civilTimelineUpdated">
+          Agg. {formatUpdated(data?.updatedAt)}
+        </span>
+      </header>
+
+      <div className="civilTimelineMain">
+        <div className="civilTimelineMaps">
+          <div className="civilTimelineTrack">
+            <div className="civilTimelineDate today">
+              <strong>Oggi</strong>
+              <span>{formatDate(data?.today?.date)}</span>
+            </div>
+
+            <div className="civilTimelineLine">
+              <span className="civilTimelineLineActive" />
+              <i className="civilTimelineNode today" />
+              <i className={`civilTimelineNode tomorrow ${advisoryTone}`} />
+            </div>
+
+            <div className="civilTimelineDate tomorrow">
+              <strong>Domani</strong>
+              <span>{formatDate(data?.tomorrow?.date)}</span>
+            </div>
+          </div>
+
+          <div className="civilTimelineMapGrid">
+            <section className="civilTimelineMapCard">
+              <h3>Oggi</h3>
+
+              <div className="civilTimelineMapBody">
+                {data?.today?.mapUrl ? (
+                  <a
+                    className="civilTimelineMapLink"
+                    href={sourceUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    title="Apri la fonte ufficiale"
+                  >
+                    <img
+                      src={data.today.mapUrl}
+                      alt={`Mappa ufficiale di criticità per ${formatDate(
+                        data?.today?.date,
+                      )}`}
+                    />
+                  </a>
+                ) : (
+                  <div className="civilTimelineMapEmpty">
+                    {data?.today?.note || "Mappa non disponibile"}
+                  </div>
+                )}
+
+                <div
+                  className="civilMapLegend"
+                  aria-label="Legenda livelli di criticità"
+                >
+                  <div>
+                    <i className="green" />
+                    <span>Nessuna criticità</span>
+                  </div>
+                  <div>
+                    <i className="yellow" />
+                    <span>Ordinaria (gialla)</span>
+                  </div>
+                  <div>
+                    <i className="orange" />
+                    <span>Moderata</span>
+                  </div>
+                  <div>
+                    <i className="red" />
+                    <span>Elevata</span>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section className="civilTimelineMapCard">
+              <div className="civilTimelineMapTitleRow">
+                <h3>Domani</h3>
+
+                {data?.tomorrow?.pending ? (
+                  <span className="civilPendingBadge">
+                    In attesa del bollettino
+                  </span>
+                ) : null}
+              </div>
+
+              <div className="civilTimelineMapBody">
+                {data?.tomorrow?.mapUrl ? (
+                  <a
+                    className="civilTimelineMapLink"
+                    href={sourceUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    title="Apri la fonte ufficiale"
+                  >
+                    <img
+                      src={data.tomorrow.mapUrl}
+                      alt={`Mappa ufficiale di criticità per ${formatDate(
+                        data?.tomorrow?.date,
+                      )}`}
+                    />
+                  </a>
+                ) : (
+                  <div className="civilTimelineMapEmpty">
+                    {data?.tomorrow?.note || "Mappa non disponibile"}
+                  </div>
+                )}
+
+                <div
+                  className="civilMapLegend"
+                  aria-label="Legenda livelli di criticità"
+                >
+                  <div>
+                    <i className="green" />
+                    <span>Nessuna criticità</span>
+                  </div>
+                  <div>
+                    <i className="yellow" />
+                    <span>Ordinaria (gialla)</span>
+                  </div>
+                  <div>
+                    <i className="orange" />
+                    <span>Moderata</span>
+                  </div>
+                  <div>
+                    <i className="red" />
+                    <span>Elevata</span>
+                  </div>
+                </div>
+              </div>
+            </section>
           </div>
         </div>
-      </div>
 
-      <div className="civilGrid">
-        <section className={`civilStatusCard ${currentTone.cardClass}`}>
-          <div className="civilStatusTop">
-            <span className={`civilToneChip ${currentTone.chipClass}`}>
-              {currentTone.dot} Stato attuale
+        <aside className={`civilTimelineAlertCard ${advisoryTone}`}>
+          <div className="civilTimelineAlertHead">
+            <span className="civilTimelineAlertIcon" aria-hidden="true">
+              !
             </span>
-            <h3>{currentLabel}</h3>
-          </div>
-          <p className="civilStatusText">{currentSummary}</p>
-          <div className="civilStatusMeta">
-            <div>
-              <span>In vigore da</span>
-              <b>{formatDateTime(current?.validFrom)}</b>
-            </div>
-            <div>
-              <span>Valida fino a</span>
-              <b>{formatDateTime(current?.validTo)}</b>
-            </div>
-          </div>
-          <div className="civilRiskBlock">
-            <span className="civilBlockLabel">Rischi / fenomeni</span>
-            {renderRiskPills(currentRisks, "Nessun rischio specificato")}
-          </div>
-        </section>
 
-        <section className={`civilStatusCard ${nextTone.cardClass}`}>
-          <div className="civilStatusTop">
-            <span className={`civilToneChip ${nextTone.chipClass}`}>
-              {nextTone.dot} Stato successivo
+            <div>
+              <strong>{advisoryLabel}</strong>
+              <p>
+                {hasHydrogeological && hasThunderstorm
+                  ? "Rischio idrogeologico per temporali"
+                  : risks.length
+                    ? risks.join(" · ")
+                    : "Consulta l’avviso ufficiale per i dettagli"}
+              </p>
+            </div>
+          </div>
+
+          <div className="civilTimelineValidity">
+            <span className="civilTimelinePanelIcon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="4" y="5" width="16" height="15" rx="2" />
+                <path d="M8 3v4M16 3v4M4 9h16" />
+              </svg>
             </span>
-            <h3>{nextLabel}</h3>
-          </div>
-          <p className="civilStatusText">{nextSummary}</p>
-          <div className="civilStatusMeta">
-            <div>
-              <span>Entrerà in vigore</span>
-              <b>{formatDateTime(next?.validFrom)}</b>
-            </div>
-            <div>
-              <span>Valida fino a</span>
-              <b>{formatDateTime(next?.validTo)}</b>
-            </div>
-          </div>
-          <div className="civilRiskBlock">
-            <span className="civilBlockLabel">Rischi / fenomeni</span>
-            {renderRiskPills(nextRisks, "Nessun rischio specificato")}
-          </div>
-        </section>
 
-        <aside className="civilSideColumn">
-          <div className="civilInfoCard">
-            <span className="civilInfoIcon" aria-hidden="true">◫</span>
             <div>
               <strong>Validità</strong>
-              <p>{validityText}</p>
-              <p>{expiryText}</p>
-            </div>
-          </div>
 
-          <div className="civilInfoCard">
-            <span className="civilInfoIcon" aria-hidden="true">△</span>
-            <div>
-              <strong>Rischi previsti</strong>
-              {renderRiskPills(
-                nextRisks.length ? nextRisks : currentRisks,
-                "Nessun rischio specificato",
+              {hasValidity ? (
+                <p>
+                  Dalle {validFrom}
+                  <br />
+                  alle {validTo}
+                </p>
+              ) : (
+                <p>
+                  Orario non ancora acquisito automaticamente.
+                </p>
               )}
             </div>
           </div>
 
-          <div className="civilInfoCard">
-            <span className="civilInfoIcon" aria-hidden="true">◷</span>
-            <div>
-              <strong>Aggiornato</strong>
-              <p>{updatedAt}</p>
-              <p>Fonte: Protezione Civile Regione Sardegna</p>
+          <div className="civilTimelineRisks">
+            <h3>Fenomeni previsti</h3>
+
+            <div className="civilAlertRiskRow">
+              <span
+                className="civilAlertRiskIcon hydro"
+                aria-hidden="true"
+              >
+                <svg viewBox="0 0 24 24">
+                  <path d="M12 3 2.8 20h18.4L12 3Z" />
+                  <path d="m8.2 16.2 3.8-6.1 3.8 6.1" />
+                  <path d="M8.4 18.2h7.2" />
+                </svg>
+              </span>
+
+              <span>Rischio idrogeologico</span>
+
+              <b className={hasHydrogeological ? "active" : "unknown"}>
+                {hasHydrogeological ? "Sì" : "Non indicato"}
+              </b>
+            </div>
+
+            <div className="civilAlertRiskRow">
+              <span
+                className="civilAlertRiskIcon hydraulic"
+                aria-hidden="true"
+              >
+                <svg viewBox="0 0 24 24">
+                  <path d="M3 8c2 0 2 2 4 2s2-2 4-2 2 2 4 2 2-2 4-2 2 2 2 2" />
+                  <path d="M3 13c2 0 2 2 4 2s2-2 4-2 2 2 4 2 2-2 4-2 2 2 2 2" />
+                  <path d="M3 18c2 0 2 2 4 2s2-2 4-2 2 2 4 2 2-2 4-2 2 2 2 2" />
+                </svg>
+              </span>
+
+              <span>Rischio idraulico</span>
+
+              <b className={hasHydraulic ? "active" : "unknown"}>
+                {hasHydraulic ? "Sì" : "Non indicato"}
+              </b>
+            </div>
+
+            <div className="civilAlertRiskRow">
+              <span
+                className="civilAlertRiskIcon storm"
+                aria-hidden="true"
+              >
+                <svg viewBox="0 0 24 24">
+                  <path d="M7 17h9.5a4 4 0 0 0 .7-7.9A5.5 5.5 0 0 0 6.7 8 4.5 4.5 0 0 0 7 17Z" />
+                  <path d="m12 15-2 4h3l-1 3 4-5h-3l2-2" />
+                </svg>
+              </span>
+
+              <span>Temporali</span>
+
+              <b className={hasThunderstorm ? "active" : "unknown"}>
+                {hasThunderstorm ? "Sì" : "Non indicato"}
+              </b>
             </div>
           </div>
+
+          <a
+            className="civilTimelineAlertButton"
+            href={advisory?.detailSourceUrl || advisory?.url || sourceUrl}
+            target="_blank"
+            rel="noreferrer"
+          >
+            Apri l’avviso ufficiale
+            <span aria-hidden="true">→</span>
+          </a>
         </aside>
       </div>
 
-      <div className="civilActionRow">
+      <footer className="civilTimelineFooter">
+        <div className="civilTimelineZone">
+          <span className="civilTimelineLocationIcon" aria-hidden="true">
+            <svg viewBox="0 0 24 24">
+              <path d="M12 21s6-5.1 6-11a6 6 0 1 0-12 0c0 5.9 6 11 6 11Z" />
+              <circle cx="12" cy="10" r="2" />
+            </svg>
+          </span>
+
+          <div>
+            <strong>Zona di Collinas</strong>
+            <span>
+              {data?.zoneCode || "SARD-C"} ·{" "}
+              {data?.zoneName || "Bacini Montevecchio-Pischilappiu"}
+            </span>
+          </div>
+        </div>
+
         <a
-          className="civilActionButton"
           href={sourceUrl}
           target="_blank"
           rel="noreferrer"
+          className="civilTimelineMapButton"
         >
-          Bollettini e avvisi ↗
+          Verifica sulla mappa
+          <span aria-hidden="true">→</span>
         </a>
-        <a
-          className="civilActionButton"
-          href="https://www.regione.sardegna.it/"
-          target="_blank"
-          rel="noreferrer"
-        >
-          Portale ufficiale ↗
-        </a>
-      </div>
-
-      <p className="civilFootnote">
-        Dati informativi: fanno sempre fede gli avvisi ufficiali della Protezione
-        Civile della Regione Sardegna.
-      </p>
+      </footer>
 
       <style jsx>{`
-        .civilSection {
-          padding: 20px;
+        .civilTimelineSection {
+          padding: 22px;
         }
 
-        .civilHeader {
-          margin-bottom: 16px;
-        }
-
-        .civilHeading {
+        .civilTimelineHeader {
+          position: relative;
           display: flex;
-          align-items: flex-start;
-          gap: 14px;
-        }
-
-        .civilHeadingIcon {
-          width: 60px;
-          height: 60px;
-          border-radius: 18px;
-          display: inline-flex;
-          align-items: center;
           justify-content: center;
-          font-size: 30px;
-          color: #1f6fff;
-          background: #eef5ff;
-          flex: 0 0 auto;
+          align-items: center;
+          min-height: 54px;
+          margin-bottom: 16px;
+          text-align: center;
         }
 
-        .civilHeadingCopy h2 {
+        .civilTimelineHeader h2 {
           margin: 0;
-          font-size: 28px;
-          line-height: 1.05;
-          color: #0f172a;
+          color: #07152d;
+          font-size: 30px;
+          line-height: 1.06;
+          font-weight: 950;
+          letter-spacing: -0.03em;
         }
 
-        .civilHeadingCopy p {
-          margin: 7px 0 0;
-          color: #52637d;
-          font-size: 12px;
-          line-height: 1.5;
-        }
-
-        .civilGrid {
-          display: grid;
-          grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 320px;
-          gap: 14px;
-          align-items: stretch;
-        }
-
-        .civilStatusCard {
+        .civilTimelineUpdated {
+          position: absolute;
+          top: 0;
+          right: 0;
+          padding: 7px 10px;
           border: 1px solid #dce5ef;
-          border-radius: 20px;
-          padding: 16px;
-          background: #ffffff;
+          border-radius: 999px;
+          background: #f8fafc;
+          color: #64748b;
+          font-size: 9px;
+          font-weight: 800;
+          white-space: nowrap;
+        }
+
+        .civilTimelineMain {
+          display: grid;
+          grid-template-columns: minmax(0, 1.7fr) minmax(300px, 0.8fr);
+          gap: 16px;
+          padding: 14px;
+          border: 1px solid #e0e8f2;
+          border-radius: 20px 20px 0 0;
+          background:
+            linear-gradient(
+              180deg,
+              rgba(255,255,255,.98) 0%,
+              rgba(248,251,255,.98) 100%
+            );
+        }
+
+        .civilTimelineMaps {
           min-width: 0;
         }
 
-        .tone-green-card {
-          background: linear-gradient(180deg, #f4fbf6 0%, #ffffff 100%);
-          border-color: #cfe8d8;
-        }
-
-        .tone-yellow-card {
-          background: linear-gradient(180deg, #fffcf1 0%, #ffffff 100%);
-          border-color: #f1e2a9;
-        }
-
-        .tone-orange-card {
-          background: linear-gradient(180deg, #fff7ef 0%, #ffffff 100%);
-          border-color: #f4c99a;
-        }
-
-        .tone-red-card {
-          background: linear-gradient(180deg, #fff3f3 0%, #ffffff 100%);
-          border-color: #f2b9b9;
-        }
-
-        .tone-neutral-card {
-          background: linear-gradient(180deg, #f8fafc 0%, #ffffff 100%);
-          border-color: #dce5ef;
-        }
-
-        .civilStatusTop {
+        .civilTimelineTrack {
+          position: relative;
+          min-height: 78px;
           display: grid;
-          gap: 8px;
-          margin-bottom: 10px;
+          grid-template-columns: 1fr 1fr;
+          align-items: start;
+          padding: 0 34px;
         }
 
-        .civilToneChip {
-          display: inline-flex;
-          align-items: center;
-          gap: 6px;
-          padding: 6px 10px;
-          border-radius: 999px;
-          width: fit-content;
+        .civilTimelineDate {
+          position: relative;
+          z-index: 2;
+          text-align: center;
+        }
+
+        .civilTimelineDate strong {
+          display: block;
+          color: #0f2457;
+          font-size: 15px;
+          line-height: 1;
+        }
+
+        .civilTimelineDate span {
+          display: block;
+          margin-top: 4px;
+          color: #2f528c;
           font-size: 10px;
-          font-weight: 800;
-          letter-spacing: 0.05em;
-          text-transform: uppercase;
+          font-weight: 700;
         }
 
-        .tone-green {
-          background: #eaf8ee;
-          color: #15803d;
+        .civilTimelineLine {
+          position: absolute;
+          left: 9%;
+          right: 9%;
+          top: 47px;
+          height: 4px;
+          border-radius: 99px;
+          background: #d8e0eb;
         }
 
-        .tone-yellow {
-          background: #fff8da;
-          color: #a16207;
+        .civilTimelineLineActive {
+          position: absolute;
+          left: 0;
+          top: 0;
+          width: 50%;
+          height: 100%;
+          border-radius: 99px;
+          background: #f4c400;
         }
 
-        .tone-orange {
-          background: #ffeddc;
-          color: #c2410c;
+        .civilTimelineNode {
+          position: absolute;
+          top: 50%;
+          width: 17px;
+          height: 17px;
+          border: 4px solid #8ca0bc;
+          border-radius: 50%;
+          background: #ffffff;
+          transform: translate(-50%, -50%);
         }
 
-        .tone-red {
-          background: #ffe4e6;
-          color: #be123c;
+        .civilTimelineNode.today {
+          left: 50%;
+          border-color: #f4c400;
         }
 
-        .tone-neutral {
-          background: #eef2f7;
-          color: #52637d;
+        .civilTimelineNode.tomorrow {
+          left: 100%;
         }
 
-        .civilStatusTop h3 {
-          margin: 0;
-          font-size: 23px;
-          line-height: 1.1;
-          color: #0f172a;
+        .civilTimelineNode.tomorrow.yellow {
+          border-color: #f4c400;
         }
 
-        .civilStatusText {
-          margin: 0 0 12px;
-          color: #334155;
-          font-size: 12px;
-          line-height: 1.55;
+        .civilTimelineNode.tomorrow.orange {
+          border-color: #f97316;
         }
 
-        .civilStatusMeta {
+        .civilTimelineNode.tomorrow.red {
+          border-color: #dc2626;
+        }
+
+        .civilTimelineMapGrid {
           display: grid;
           grid-template-columns: repeat(2, minmax(0, 1fr));
-          gap: 10px;
-          margin-bottom: 12px;
-        }
-
-        .civilStatusMeta span,
-        .civilBlockLabel,
-        .civilInfoCard strong {
-          display: block;
-          font-size: 10px;
-          font-weight: 800;
-          letter-spacing: 0.05em;
-          text-transform: uppercase;
-          color: #64748b;
-          margin-bottom: 4px;
-        }
-
-        .civilStatusMeta b {
-          display: block;
-          font-size: 13px;
-          color: #0f172a;
-        }
-
-        .civilRiskBlock {
-          display: grid;
-          gap: 8px;
-        }
-
-        .civilRiskPills {
-          display: flex;
-          flex-wrap: wrap;
-          gap: 7px;
-        }
-
-        .civilRiskPill {
-          padding: 7px 10px;
-          border-radius: 999px;
-          background: #f3f7fb;
-          border: 1px solid #d9e4ef;
-          color: #334155;
-          font-size: 11px;
-          font-weight: 700;
-          line-height: 1.2;
-        }
-
-        .civilMuted {
-          margin: 0;
-          font-size: 11px;
-          color: #64748b;
-        }
-
-        .civilSideColumn {
-          display: grid;
-          gap: 12px;
-        }
-
-        .civilInfoCard {
-          display: grid;
-          grid-template-columns: 36px minmax(0, 1fr);
-          gap: 10px;
-          align-items: flex-start;
-          padding: 13px;
-          border-radius: 18px;
-          background: #f8fbff;
-          border: 1px solid #dce5ef;
-        }
-
-        .civilInfoIcon {
-          width: 36px;
-          height: 36px;
-          border-radius: 12px;
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          font-size: 18px;
-          background: #eef5ff;
-          color: #1f6fff;
-        }
-
-        .civilInfoCard p {
-          margin: 0;
-          font-size: 11.5px;
-          color: #334155;
-          line-height: 1.45;
-        }
-
-        .civilActionRow {
-          display: flex;
-          flex-wrap: wrap;
-          justify-content: flex-end;
-          gap: 10px;
-          margin-top: 14px;
-        }
-
-        .civilActionButton {
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          min-height: 44px;
-          padding: 0 16px;
-          border-radius: 14px;
-          border: 1px solid #b9d0f0;
-          background: #ffffff;
-          color: #1f6fff;
-          font-size: 11px;
-          font-weight: 800;
-          text-decoration: none;
-          white-space: nowrap;
-          transition:
-            background-color 0.16s ease,
-            border-color 0.16s ease,
-            color 0.16s ease;
-        }
-
-        .civilActionButton:hover {
-          background: #f5f9ff;
-          border-color: #8fb4ec;
-        }
-
-        .civilFootnote {
-          margin: 16px 0 0;
-          padding-top: 14px;
-          border-top: 1px solid #e6edf5;
-          font-size: 11px;
-          color: #64748b;
-          line-height: 1.45;
-        }
-
-
-        .archiveSection {
-          display: none;
-        }
-
-        .annualHeaderCentered {
-          display: grid;
-          justify-items: center;
-          text-align: center;
-          gap: 8px;
-          margin-bottom: 14px;
-        }
-
-        .annualHeaderCentered h2 {
-          margin: 0;
-          font-size: 34px;
-          line-height: 1.02;
-          color: #0f172a;
-        }
-
-        .annualHeaderCentered p {
-          margin: 0;
-          max-width: 620px;
-          color: #64748b;
-          font-size: 12px;
-          line-height: 1.5;
-        }
-
-        .annualToolbar {
-          display: grid;
-          grid-template-columns: minmax(0, 1fr) minmax(280px, 340px);
           gap: 14px;
-          align-items: start;
         }
 
-        .parameterMobileControl {
-          display: grid;
-          gap: 6px;
-          width: 100%;
-        }
-
-        .parameterMobileControl > span,
-        .indicatorControl > span {
-          font-size: 10px;
-          font-weight: 800;
-          letter-spacing: 0.05em;
-          text-transform: uppercase;
-          color: #64748b;
-        }
-
-        .annualChartCardMerged {
-          overflow: hidden;
-        }
-
-        .annualYearRail {
-          display: grid;
-          grid-template-columns: repeat(6, minmax(0, 1fr));
-          gap: 12px;
-          padding: 14px 14px 14px;
-          border-top: 1px solid #e6edf5;
-          background: linear-gradient(180deg, rgba(248,250,252,.45) 0%, rgba(255,255,255,1) 100%);
-        }
-
-        .annualYearMiniCard {
-          appearance: none;
-          -webkit-appearance: none;
-          width: 100%;
+        .civilTimelineMapCard {
           min-width: 0;
-          display: grid;
-          gap: 8px;
-          padding: 12px;
-          border-radius: 18px;
+          padding: 14px;
           border: 1px solid #dce5ef;
+          border-radius: 16px;
           background: #ffffff;
-          text-align: left;
-          cursor: pointer;
-          transition:
-            transform 0.16s ease,
-            box-shadow 0.16s ease,
-            border-color 0.16s ease,
-            background-color 0.16s ease;
         }
 
-        .annualYearMiniCard:hover {
-          transform: translateY(-1px);
-          box-shadow: 0 8px 20px rgba(15, 23, 42, 0.06);
-          border-color: #bfd1e8;
-          background: #fbfdff;
+        .civilTimelineMapCard h3 {
+          margin: 0 0 8px;
+          color: #0f2457;
+          font-size: 15px;
+          font-weight: 900;
         }
 
-        .annualYearMiniTop {
+        .civilTimelineMapTitleRow {
+          min-height: 28px;
           display: flex;
-          align-items: center;
+          align-items: flex-start;
           justify-content: space-between;
           gap: 8px;
         }
 
-        .annualYearMiniTop strong {
-          font-size: 24px;
-          line-height: 1;
-          color: #0f172a;
-          font-weight: 800;
+        .civilTimelineMapTitleRow h3 {
+          margin-bottom: 8px;
         }
 
-        .annualYearMiniArrow {
-          color: #1f6fff;
-          font-size: 22px;
-          line-height: 1;
-          font-weight: 700;
-        }
-
-        .annualYearMiniBadge {
+        .civilPendingBadge {
           display: inline-flex;
           align-items: center;
-          justify-content: center;
-          min-height: 26px;
-          width: fit-content;
-          padding: 0 10px;
+          padding: 4px 7px;
           border-radius: 999px;
-          border: 1px solid #dce5ef;
+          background: #eef3f9;
+          color: #64748b;
+          font-size: 7.5px;
+          font-weight: 850;
+          white-space: nowrap;
+        }
+
+        .civilTimelineMapBody {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) 110px;
+          gap: 10px;
+          align-items: center;
+        }
+
+        .civilTimelineMapLink {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          min-height: 210px;
+          overflow: hidden;
+          border-radius: 12px;
+          background: #ffffff;
+          text-decoration: none;
+        }
+
+        .civilTimelineMapLink img {
+          display: block;
+          width: auto;
+          max-width: 100%;
+          height: 200px;
+          max-height: 200px;
+          object-fit: contain;
+        }
+
+        .civilTimelineMapEmpty {
+          min-height: 210px;
+          display: grid;
+          place-items: center;
+          padding: 18px;
+          border: 1px dashed #cbd7e6;
+          border-radius: 12px;
           background: #f8fbff;
           color: #64748b;
           font-size: 10px;
+          line-height: 1.45;
+          font-weight: 750;
+          text-align: center;
+        }
+
+        .civilMapLegend {
+          display: grid;
+          gap: 8px;
+          align-content: center;
+        }
+
+        .civilMapLegend > div {
+          display: grid;
+          grid-template-columns: 10px minmax(0, 1fr);
+          gap: 6px;
+          align-items: center;
+        }
+
+        .civilMapLegend i {
+          width: 9px;
+          height: 9px;
+          display: block;
+          border-radius: 50%;
+        }
+
+        .civilMapLegend i.green {
+          background: #148a20;
+        }
+
+        .civilMapLegend i.yellow {
+          background: #ffd900;
+        }
+
+        .civilMapLegend i.orange {
+          background: #ff7a00;
+        }
+
+        .civilMapLegend i.red {
+          background: #ed2f2f;
+        }
+
+        .civilMapLegend span {
+          color: #35527e;
+          font-size: 8.5px;
+          line-height: 1.2;
+          font-weight: 700;
+        }
+
+        .civilTimelineAlertCard {
+          min-width: 0;
+          padding: 14px;
+          border: 1px solid #e5eaf0;
+          border-radius: 17px;
+          background: #ffffff;
+          box-shadow: 0 8px 24px rgba(15, 23, 42, 0.035);
+        }
+
+        .civilTimelineAlertCard.yellow {
+          border-color: #f2dda0;
+        }
+
+        .civilTimelineAlertCard.orange {
+          border-color: #f6c89b;
+        }
+
+        .civilTimelineAlertCard.red {
+          border-color: #efb4b4;
+        }
+
+        .civilTimelineAlertHead {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          padding: 12px;
+          margin: -4px -4px 12px;
+          border-radius: 13px;
+          background: #fffdf0;
+        }
+
+        .civilTimelineAlertIcon {
+          width: 46px;
+          height: 46px;
+          flex: 0 0 46px;
+          display: grid;
+          place-items: center;
+          border-radius: 12px;
+          background: #f7c814;
+          color: #101828;
+          font-size: 28px;
+          font-weight: 950;
+        }
+
+        .civilTimelineAlertHead strong {
+          display: block;
+          color: #0f2457;
+          font-size: 21px;
+          line-height: 1.05;
+          font-weight: 950;
+        }
+
+        .civilTimelineAlertHead p {
+          margin: 4px 0 0;
+          color: #35527e;
+          font-size: 10px;
+          line-height: 1.3;
+        }
+
+        .civilTimelineValidity {
+          display: grid;
+          grid-template-columns: 38px minmax(0, 1fr);
+          gap: 10px;
+          align-items: start;
+          padding: 0 4px 12px;
+          border-bottom: 1px solid #e5eaf0;
+        }
+
+        .civilTimelinePanelIcon {
+          width: 38px;
+          height: 38px;
+          display: grid;
+          place-items: center;
+          border-radius: 11px;
+          background: #eef5ff;
+          color: #1677ff;
+        }
+
+        .civilTimelinePanelIcon svg,
+        .civilAlertRiskIcon svg,
+        .civilTimelineLocationIcon svg {
+          width: 18px;
+          height: 18px;
+          fill: none;
+          stroke: currentColor;
+          stroke-width: 1.9;
+          stroke-linecap: round;
+          stroke-linejoin: round;
+        }
+
+        .civilTimelineValidity strong,
+        .civilTimelineRisks h3 {
+          color: #0f2457;
+          font-size: 11px;
+          font-weight: 900;
+        }
+
+        .civilTimelineValidity p {
+          margin: 4px 0 0;
+          color: #35527e;
+          font-size: 10px;
+          line-height: 1.45;
+        }
+
+        .civilTimelineRisks {
+          padding: 12px 4px 8px;
+        }
+
+        .civilTimelineRisks h3 {
+          margin: 0 0 5px;
+        }
+
+        .civilAlertRiskRow {
+          display: grid;
+          grid-template-columns: 34px minmax(0, 1fr) auto;
+          gap: 9px;
+          align-items: center;
+          min-height: 44px;
+          border-bottom: 1px solid #eef2f7;
+        }
+
+        .civilAlertRiskRow:last-child {
+          border-bottom: 0;
+        }
+
+        .civilAlertRiskIcon {
+          width: 32px;
+          height: 32px;
+          display: grid;
+          place-items: center;
+          border-radius: 10px;
+          background: #eef5ff;
+          color: #1677ff;
+        }
+
+        .civilAlertRiskIcon.hydro svg {
+          width: 20px;
+          height: 20px;
+        }
+
+        .civilAlertRiskIcon.hydraulic svg {
+          width: 21px;
+          height: 21px;
+        }
+
+        .civilAlertRiskIcon.storm svg {
+          width: 20px;
+          height: 20px;
+        }
+
+        .civilAlertRiskRow > span:nth-child(2) {
+          color: #35527e;
+          font-size: 9.5px;
           font-weight: 800;
+        }
+
+        .civilAlertRiskRow b {
+          padding: 5px 8px;
+          border-radius: 999px;
+          font-size: 8.5px;
           white-space: nowrap;
         }
 
-        .annualYearMiniStats {
-          display: grid;
-          grid-template-columns: repeat(2, minmax(0, 1fr));
-          gap: 8px;
+        .civilAlertRiskRow b.active {
+          background: #e8f8ec;
+          color: #16803a;
         }
 
-        .annualYearMiniStat {
-          display: grid;
-          gap: 3px;
+        .civilAlertRiskRow b.unknown {
+          background: #eef3f9;
+          color: #56708f;
+        }
+
+        .civilTimelineAlertButton {
+          min-height: 42px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 10px;
+          margin-top: 8px;
+          border-radius: 11px;
+          background: #1677ff;
+          color: #ffffff;
+          font-size: 10px;
+          font-weight: 900;
+          text-decoration: none;
+        }
+
+        .civilTimelineFooter {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 14px;
+          padding: 12px 16px;
+          border: 1px solid #e0e8f2;
+          border-top: 0;
+          border-radius: 0 0 20px 20px;
+          background: #f4f8fd;
+        }
+
+        .civilTimelineZone {
+          display: flex;
+          align-items: center;
+          gap: 10px;
           min-width: 0;
         }
 
-        .annualYearMiniStat small {
-          font-size: 9px;
-          line-height: 1.15;
-          text-transform: uppercase;
-          letter-spacing: 0.04em;
-          color: #64748b;
-          font-weight: 800;
+        .civilTimelineLocationIcon {
+          width: 32px;
+          height: 32px;
+          flex: 0 0 32px;
+          display: grid;
+          place-items: center;
+          border-radius: 50%;
+          background: #eaf3ff;
+          color: #1677ff;
         }
 
-        .annualYearMiniStat b {
-          font-size: 12px;
-          line-height: 1.15;
-          color: #0f172a;
-          font-weight: 800;
+        .civilTimelineZone strong {
+          display: block;
+          color: #0f2457;
+          font-size: 10px;
+          font-weight: 900;
+        }
+
+        .civilTimelineZone span {
+          display: block;
+          margin-top: 2px;
+          color: #56708f;
+          font-size: 9px;
+        }
+
+        .civilTimelineMapButton {
+          display: inline-flex;
+          align-items: center;
+          gap: 9px;
+          min-height: 36px;
+          padding: 0 13px;
+          border: 1px solid #d3e2f5;
+          border-radius: 11px;
+          background: #eef6ff;
+          color: #075ee8;
+          font-size: 9px;
+          font-weight: 900;
+          text-decoration: none;
           white-space: nowrap;
         }
 
-        @media (max-width: 1180px) {
-          .civilGrid {
+        @media (max-width: 1100px) {
+          .civilTimelineMain {
             grid-template-columns: 1fr;
           }
 
-          .civilSideColumn {
-            grid-template-columns: repeat(3, minmax(0, 1fr));
-          }
-        }
-
-        @media (max-width: 720px) {
-          .civilSection {
-            padding: 16px;
-          }
-
-          .civilHeadingIcon {
-            width: 48px;
-            height: 48px;
-            border-radius: 15px;
-            font-size: 24px;
-          }
-
-          .civilHeadingCopy h2 {
-            font-size: 22px;
-          }
-
-          .civilHeadingCopy p {
-            font-size: 11px;
-          }
-
-          .civilStatusTop h3 {
-            font-size: 18px;
-          }
-
-          .civilStatusMeta {
-            grid-template-columns: 1fr;
-          }
-
-          .civilActionRow {
-            justify-content: stretch;
-          }
-
-          .civilActionButton {
-            flex: 1 1 210px;
-          }
-
-          .civilSideColumn {
-            grid-template-columns: 1fr;
-          }
-        }
-
-        @media (max-width: 430px) {
-          .civilHeading {
-            gap: 10px;
-          }
-
-          .civilHeadingCopy h2 {
-            font-size: 18px;
-          }
-
-          .civilHeadingCopy p {
-            font-size: 10px;
-            line-height: 1.4;
-          }
-
-          .civilStatusCard {
-            padding: 13px;
-          }
-
-          .civilToneChip {
-            font-size: 9px;
-          }
-
-          .civilStatusTop h3 {
-            font-size: 16px;
-          }
-
-          .civilStatusText,
-          .civilInfoCard p,
-          .civilFootnote {
-            font-size: 10px;
-          }
-
-          .civilRiskPill {
-            font-size: 10px;
-            padding: 6px 8px;
-          }
-
-          .civilActionButton {
+          .civilTimelineAlertCard {
             width: 100%;
-            min-height: 42px;
+          }
+
+          .civilTimelineMapLink {
+            min-height: 190px;
+          }
+
+          .civilTimelineMapLink img {
+            height: 180px;
+            max-height: 180px;
+          }
+        }
+
+        @media (max-width: 760px) {
+          .civilTimelineSection {
+            padding: 14px;
+          }
+
+          .civilTimelineHeader {
+            min-height: 46px;
+          }
+
+          .civilTimelineHeader h2 {
+            font-size: 20px;
+          }
+
+          .civilTimelineUpdated {
+            position: static;
+            margin-left: 10px;
+            font-size: 8px;
+          }
+
+          .civilTimelineMain {
+            padding: 10px;
+          }
+
+          .civilTimelineTrack {
+            padding: 0 10px;
+            min-height: 72px;
+          }
+
+          .civilTimelineLine {
+            left: 13%;
+            right: 13%;
+            top: 45px;
+          }
+
+          .civilTimelineMapGrid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 8px;
+          }
+
+          .civilTimelineMapCard {
+            padding: 9px;
+          }
+
+          .civilTimelineMapBody {
+            grid-template-columns: 1fr;
+          }
+
+          .civilTimelineMapLink {
+            min-height: 145px;
+          }
+
+          .civilTimelineMapLink img {
+            height: 138px;
+            max-height: 138px;
+          }
+
+          .civilMapLegend {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 5px 7px;
+          }
+
+          .civilMapLegend span {
+            font-size: 7.5px;
+          }
+
+          .civilTimelineFooter {
+            align-items: stretch;
+          }
+
+          .civilTimelineMapButton {
+            flex: 0 0 auto;
+          }
+        }
+
+        @media (max-width: 520px) {
+          .civilTimelineHeader {
+            display: grid;
+            justify-items: center;
+            gap: 7px;
+          }
+
+          .civilTimelineHeader h2 {
+            font-size: 18px;
+          }
+
+          .civilTimelineUpdated {
+            margin-left: 0;
+          }
+
+          .civilTimelineTrack {
+            min-height: 68px;
+          }
+
+          .civilTimelineDate strong {
+            font-size: 12px;
+          }
+
+          .civilTimelineDate span {
+            font-size: 8px;
+          }
+
+          .civilTimelineMapGrid {
+            grid-template-columns: 1fr;
+          }
+
+          .civilTimelineMapCard h3 {
+            text-align: center;
+          }
+
+          .civilTimelineMapBody {
+            grid-template-columns: minmax(0, 1fr) 95px;
+          }
+
+          .civilTimelineMapLink {
+            min-height: 180px;
+          }
+
+          .civilTimelineMapLink img {
+            height: 170px;
+            max-height: 170px;
+          }
+
+          .civilMapLegend {
+            grid-template-columns: 1fr;
+          }
+
+          .civilTimelineAlertHead strong {
+            font-size: 18px;
+          }
+
+          .civilTimelineFooter {
+            display: grid;
+            grid-template-columns: 1fr;
+          }
+
+          .civilTimelineMapButton {
+            justify-content: center;
+            width: 100%;
           }
         }
       `}</style>
     </article>
   );
 }
+
 
 function HomeLowerSection({
   yearStats = [],
