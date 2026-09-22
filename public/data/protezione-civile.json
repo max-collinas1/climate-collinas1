@@ -1,37 +1,35 @@
 {
   "zoneCode": "SARD-C",
   "zoneName": "Bacini Montevecchio-Pischilappiu",
-  "updatedAt": "2026-09-22T13:24:03.550Z",
+  "updatedAt": "2026-09-22T18:04:43.154Z",
   "sourceUrl": "https://www.sardegnaambiente.it/protezionecivile/",
   "automatic": true,
   "method": "official-homepage-maps",
-  "sourceState": "waiting-new-bulletin",
+  "sourceState": "current",
   "sourceDates": {
-    "officialToday": "21-09-2026",
-    "officialTomorrow": "22-09-2026"
+    "officialToday": "22-09-2026",
+    "officialTomorrow": "23-09-2026"
   },
   "today": {
-    "remoteUrl": "https://www.sardegnaambiente.it/immagini/20_286_20260921125351.jpg",
+    "remoteUrl": "https://www.sardegnaambiente.it/immagini/20_286_20260922132219.jpg",
     "date": "22-09-2026",
     "pending": false,
-    "rolledFromPreviousBulletin": true,
-    "note": "Mappa odierna ricavata dalla previsione per il giorno successivo del bollettino precedente.",
+    "rolledFromPreviousBulletin": false,
     "mapUrl": "/data/protezione-civile-oggi.jpg",
-    "sourceImage": "https://www.sardegnaambiente.it/immagini/20_286_20260921125351.jpg"
+    "sourceImage": "https://www.sardegnaambiente.it/immagini/20_286_20260922132219.jpg"
   },
   "tomorrow": {
-    "remoteUrl": null,
+    "remoteUrl": "https://www.sardegnaambiente.it/immagini/20_286_20260922132235.jpg",
     "date": "23-09-2026",
-    "pending": true,
+    "pending": false,
     "rolledFromPreviousBulletin": false,
-    "note": "In attesa del bollettino odierno, normalmente pubblicato nel pomeriggio.",
-    "mapUrl": null,
-    "sourceImage": null
+    "mapUrl": "/data/protezione-civile-domani.jpg",
+    "sourceImage": "https://www.sardegnaambiente.it/immagini/20_286_20260922132235.jpg"
   },
   "advisory": {
-    "title": "Avviso di Criticita' ordinaria del 20/09/2026",
-    "url": "https://www.sardegnaambiente.it/index.php?xsl=2282&s=472786&v=2&c=12428&t=1",
-    "date": "2026-09-20",
+    "title": "Avviso di Criticita' ordinaria del 22/09/2026",
+    "url": "https://www.sardegnaambiente.it/index.php?xsl=2282&s=472834&v=2&c=12428&t=1",
+    "date": "2026-09-22",
     "level": "yellow",
     "label": "Allerta gialla",
     "risks": [
@@ -43,6 +41,6 @@
     "riskHydraulic": null,
     "riskThunderstorms": null,
     "appliesToZone": false,
-    "detailSourceUrl": "https://www.sardegnaambiente.it/index.php?xsl=2282&s=472787&v=2&c=12428&t=1"
+    "detailSourceUrl": "https://www.sardegnaambiente.it/documenti/CS_ALLERTA_BOLLETTINO_265.pdf"
   }
 }
