@@ -2,12 +2,7 @@ name: Aggiorna allerte Protezione Civile
 
 on:
   schedule:
-    # Ogni 3 ore.
-    # Questa sequenza intercetta bene anche il bollettino del pomeriggio:
-    # in ora legale italiana passa circa alle 04:15, 07:15, 10:15,
-    # 13:15, 16:15, 19:15, 22:15 e 01:15.
-    - cron: "15 2,5,8,11,14,17,20,23 * * *"
-
+    - cron: "15 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -27,7 +22,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Riallinea subito con origin/main
+      - name: Riallinea con origin/main
         shell: bash
         run: |
           git fetch origin main
@@ -39,42 +34,40 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Aggiorna dati Protezione Civile
+      - name: Installa Poppler
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y poppler-utils
+
+      - name: Aggiorna Protezione Civile
         run: node scripts/update-protezione-civile.mjs
 
       - name: Controlla modifiche
         id: changes
         shell: bash
         run: |
-          if git diff --quiet -- \
-            public/data/protezione-civile.json \
-            public/data/protezione-civile-oggi.jpg \
-            public/data/protezione-civile-domani.jpg; then
+          if git diff --quiet --             public/data/protezione-civile.json             public/data/protezione-civile-oggi.jpg             public/data/protezione-civile-domani.jpg; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Crea commit locale
+      - name: Commit
         if: steps.changes.outputs.changed == 'true'
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add \
-            public/data/protezione-civile.json \
-            public/data/protezione-civile-oggi.jpg \
-            public/data/protezione-civile-domani.jpg
+          git add             public/data/protezione-civile.json             public/data/protezione-civile-oggi.jpg             public/data/protezione-civile-domani.jpg
 
           git commit -m "Aggiorna Protezione Civile"
 
-      - name: Riallinea e push
+      - name: Push
         if: steps.changes.outputs.changed == 'true'
         shell: bash
         run: |
-          # A questo punto le modifiche sono già committate:
-          # possiamo riallinearci senza l'errore delle modifiche non salvate.
           git fetch origin main
           git rebase origin/main
           git push origin HEAD:main
