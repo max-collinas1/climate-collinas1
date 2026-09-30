@@ -1,10 +1,12 @@
 {
   "zoneCode": "SARD-C",
   "zoneName": "Bacini Montevecchio-Pischilappiu",
-  "updatedAt": "2026-09-30T16:49:39.363Z",
-  "sourceUrl": "https://www.sardegnaambiente.it/protezionecivile/",
+  "updatedAt": "2026-09-30T17:41:41.474Z",
+  "checkedAt": "2026-09-30T17:41:41.474Z",
+  "sourceUrl": "https://www.sardegnaambiente.it/index.php?xsl=2685&s=20&v=9&c=12428&nodesc=3&n=9&bx=2&idr=1&dx=2&rl=1",
+  "bulletinSourceUrl": "https://www.sardegnaambiente.it/index.php?xsl=2273&s=20&v=9&nodesc=1&c=7092",
   "automatic": true,
-  "method": "official-homepage-maps",
+  "method": "official-maps-and-criticality-bulletin",
   "sourceState": "current",
   "sourceDates": {
     "officialToday": "30-09-2026",
@@ -27,20 +29,27 @@
     "sourceImage": "https://www.sardegnaambiente.it/immagini/20_286_20260930134106.jpg"
   },
   "advisory": {
-    "title": "Avviso di Criticita' ordinaria del 23/09/2026",
-    "url": "https://www.sardegnaambiente.it/index.php?xsl=2282&s=472850&v=2&c=12428&t=1",
-    "date": "2026-09-23",
-    "level": "yellow",
-    "label": "Allerta gialla",
-    "risks": [
-      "Rischio idrogeologico"
-    ],
-    "validFrom": null,
-    "validTo": null,
-    "riskHydrogeological": true,
-    "riskHydraulic": null,
-    "riskThunderstorms": null,
-    "appliesToZone": false,
-    "detailSourceUrl": "https://www.sardegnaambiente.it/index.php?xsl=2282&s=472852&v=2&c=12428&t=1"
+    "title": "Nessun avviso di criticità attivo",
+    "url": "http://www.sardegnaambiente.it/documenti/BCR_273_2026_del_01-10-2026.pdf",
+    "date": "2026-09-30",
+    "level": "green",
+    "label": "Nessuna criticità",
+    "validFrom": "2026-09-30T12:00:00.000Z",
+    "validTo": "2026-10-01T21:59:00.000Z",
+    "bulletinValidFrom": "2026-09-30T12:00:00.000Z",
+    "bulletinValidTo": "2026-10-01T21:59:00.000Z",
+    "alertValidFrom": null,
+    "alertValidTo": null,
+    "riskLevels": {
+      "hydrogeological": "green",
+      "hydraulic": "green",
+      "thunderstorms": "green"
+    },
+    "risks": [],
+    "riskHydrogeological": false,
+    "riskHydraulic": false,
+    "riskThunderstorms": false,
+    "appliesToZone": true,
+    "detailSourceUrl": "http://www.sardegnaambiente.it/documenti/BCR_273_2026_del_01-10-2026.pdf"
   }
 }
