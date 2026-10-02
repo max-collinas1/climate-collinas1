@@ -872,6 +872,64 @@ export default function Home({
   intradayDates = [],
   dailyRainByDate = {},
 }) {
+  const [liveCivilProtectionStatus, setLiveCivilProtectionStatus] = useState(
+    civilProtectionStatus,
+  );
+
+  useEffect(() => {
+    setLiveCivilProtectionStatus(civilProtectionStatus);
+  }, [civilProtectionStatus]);
+
+  useEffect(() => {
+    let active = true;
+
+    const loadCivilProtection = async () => {
+      try {
+        const response = await fetch(
+          `https://raw.githubusercontent.com/max-collinas1/climate-collinas1/main/public/data/protezione-civile.json?t=${Date.now()}`,
+          {
+            cache: "no-store",
+            headers: {
+              Accept: "application/json",
+            },
+          },
+        );
+
+        if (!response.ok) return;
+
+        const next = await response.json();
+
+        if (active && next) {
+          setLiveCivilProtectionStatus(next);
+        }
+      } catch {}
+    };
+
+    loadCivilProtection();
+
+    const intervalId = window.setInterval(loadCivilProtection, 60000);
+
+    const refreshOnFocus = () => {
+      loadCivilProtection();
+    };
+
+    const refreshOnVisibility = () => {
+      if (document.visibilityState === "visible") {
+        loadCivilProtection();
+      }
+    };
+
+    window.addEventListener("focus", refreshOnFocus);
+    document.addEventListener("visibilitychange", refreshOnVisibility);
+
+    return () => {
+      active = false;
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", refreshOnFocus);
+      document.removeEventListener("visibilitychange", refreshOnVisibility);
+    };
+  }, []);
+
   return (
     <SiteLayout
       headerProps={{
@@ -883,7 +941,7 @@ export default function Home({
         currentPath: "/",
       }}
     >
-      <CivilProtectionSection status={civilProtectionStatus} />
+      <CivilProtectionSection status={liveCivilProtectionStatus} />
 
       <ForecastSection />
 
@@ -1274,13 +1332,22 @@ function CivilProtectionSection({ status = null }) {
   const todayParts = parseCivilDateParts(data?.today?.date);
   const startParts = formatRomeDateTimeParts(rawValidFrom);
   const endParts = formatRomeDateTimeParts(rawValidTo);
+  const timelineStartHour = 14;
   const baseMinute = todayParts
-    ? Date.UTC(todayParts.year, todayParts.month - 1, todayParts.day, 0, 0, 0, 0) /
-      60000
+    ? Date.UTC(
+        todayParts.year,
+        todayParts.month - 1,
+        todayParts.day,
+        timelineStartHour,
+        0,
+        0,
+        0,
+      ) / 60000
     : null;
   const startMinute = serialMinute(startParts);
   const endMinute = serialMinute(endParts);
-  const windowMinutes = 48 * 60;
+  const windowMinutes = 34 * 60;
+  const midnightPct = (10 / 34) * 100;
   const startPct =
     Number.isFinite(baseMinute) && Number.isFinite(startMinute)
       ? Math.max(0, Math.min(100, ((startMinute - baseMinute) / windowMinutes) * 100))
@@ -1298,8 +1365,11 @@ function CivilProtectionSection({ status = null }) {
     ? {
         "--civil-start": `${startPct}%`,
         "--civil-width": `${Math.max(0.75, endPct - startPct)}%`,
+        "--civil-mid": `${midnightPct}%`,
       }
-    : undefined;
+    : {
+        "--civil-mid": `${midnightPct}%`,
+      };
 
   const todayTime = hasValidity
     ? `${formatAlertClock(rawValidFrom)} - ${
@@ -1310,17 +1380,17 @@ function CivilProtectionSection({ status = null }) {
     ? `${startParts?.day === endParts?.day ? formatAlertClock(rawValidFrom) : "00:00"} - ${formatAlertClock(rawValidTo)}`
     : null;
 
-  const timelineHourTicks = Array.from({ length: 15 }, (_, index) => {
-    const hourOffset = (index + 1) * 3;
-    const clockHour = hourOffset % 24;
+  const timelineHourTicks = Array.from({ length: 33 }, (_, index) => {
+    const hourOffset = index + 1;
+    const clockHour = (timelineStartHour + hourOffset) % 24;
 
     return {
-      pct: (hourOffset / 48) * 100,
+      pct: (hourOffset / 34) * 100,
       label:
-        hourOffset % 6 === 0
+        clockHour % 3 === 0
           ? `${String(clockHour).padStart(2, "0")}:00`
           : "",
-      major: hourOffset === 24,
+      major: hourOffset === 10,
     };
   });
 
@@ -1372,7 +1442,7 @@ function CivilProtectionSection({ status = null }) {
       <section className="civilCompactTimelinePanel">
         <div className="civilCompactTimelineTitle">
           <strong>
-            Periodo di validità per Collinas (Bacino Montevecchio - Pischilappiu - zona SARD-C)
+            Periodo per Collinas (Bacino Montevecchio - Pischilappiu - zona SARD-C)
           </strong>
           {hasValidity ? (
             <div className="civilCompactValidityText">
@@ -1408,7 +1478,7 @@ function CivilProtectionSection({ status = null }) {
               <em className="civilCompactClock end">{formatAlertClock(rawValidTo)}</em>
             </>
           ) : (
-            <em className="civilCompactUnavailable">Validità non disponibile</em>
+            <em className="civilCompactUnavailable">Periodo non disponibile</em>
           )}
         </div>
 
@@ -1514,7 +1584,6 @@ function CivilProtectionSection({ status = null }) {
           </div>
 
           <div className="civilCompactValidity">
-            <strong>Validità</strong>
             {hasValidity ? (
               <p>
                 {validFrom}
@@ -1522,7 +1591,7 @@ function CivilProtectionSection({ status = null }) {
                 {validTo}
               </p>
             ) : (
-              <p>Validità non disponibile.</p>
+              <p>Non disponibile.</p>
             )}
           </div>
 
@@ -1672,7 +1741,7 @@ function CivilProtectionSection({ status = null }) {
 
         .civilCompactMid {
           position: absolute;
-          left: 50%;
+          left: var(--civil-mid, 50%);
           top: 18px;
           bottom: 16px;
           width: 2px;
@@ -3855,7 +3924,7 @@ const FORECAST_LATITUDE = 39.6413;
 const FORECAST_LONGITUDE = 8.8399;
 const FORECAST_TIMEZONE = "Europe/Rome";
 const FORECAST_REFRESH_MS = 60 * 60 * 1000;
-const FORECAST_CACHE_KEY = "meteo-collinas:forecast-cache-v20";
+const FORECAST_CACHE_KEY = "meteo-collinas:forecast-cache-v21";
 
 const FORECAST_BANDS = [
   { key: "night", label: "Notte", timeLabel: "00–06", start: 0, end: 6, night: true },
@@ -4552,6 +4621,7 @@ function deterministicHourlySeries(hourly, variable) {
 
 function summarizeDeterministicIndexes(hourly, indexes) {
   const temperatureValues = [];
+  const humidityValues = [];
   const codes = [];
   const cloudCover = [];
   const pressureValues = [];
@@ -4568,10 +4638,12 @@ function summarizeDeterministicIndexes(hourly, indexes) {
   let availableHourCount = 0;
 
   const temperatureSeries = deterministicHourlySeries(hourly, "temperature_2m");
+  const humiditySeries = deterministicHourlySeries(hourly, "relative_humidity_2m");
   const dewPointSeries = deterministicHourlySeries(hourly, "dew_point_2m");
 
   for (const index of Array.isArray(indexes) ? indexes : []) {
     const temperature = n(temperatureSeries[index]);
+    const humidity = n(humiditySeries[index]);
     const dewPoint = n(dewPointSeries[index]);
     const code = n(hourly?.weather_code?.[index]);
     const cloud = n(hourly?.cloud_cover?.[index]);
@@ -4584,6 +4656,7 @@ function summarizeDeterministicIndexes(hourly, indexes) {
 
     const hourAvailable = [
       temperature,
+      humidity,
       code,
       cloud,
       pressure,
@@ -4597,6 +4670,7 @@ function summarizeDeterministicIndexes(hourly, indexes) {
 
     if (hourAvailable) availableHourCount += 1;
     if (Number.isFinite(temperature)) temperatureValues.push(temperature);
+    if (Number.isFinite(humidity)) humidityValues.push(humidity);
     if (Number.isFinite(code)) codes.push(code);
     if (Number.isFinite(cloud)) cloudCover.push(cloud);
     if (Number.isFinite(pressure)) pressureValues.push(pressure);
@@ -4640,6 +4714,7 @@ function summarizeDeterministicIndexes(hourly, indexes) {
     available: availableHourCount > 0,
     availableHourCount,
     temperatureValues,
+    humidityValues,
     codes,
     cloudCover,
     pressureValues,
@@ -4656,6 +4731,7 @@ function summarizeDeterministicIndexes(hourly, indexes) {
     temperatureMax: temperatureValues.length
       ? Math.max(...temperatureValues)
       : null,
+    humidityMean: humidityValues.length ? avgFinite(humidityValues) : null,
     windSpeedMean: windSpeedValues.length ? avgFinite(windSpeedValues) : null,
     windSpeedMax: windSpeedValues.length ? Math.max(...windSpeedValues) : null,
     gustMax: gustValues.length ? Math.max(...gustValues) : null,
@@ -4824,6 +4900,154 @@ function isForecastBandPast(iso, band) {
   return now.getHours() >= band.end;
 }
 
+function formatForecastHourlyRain(value) {
+  const rain = n(value);
+  if (!Number.isFinite(rain) || rain < 0.05) return "0 mm";
+  if (rain < 1) return `${rain.toFixed(1)} mm`;
+  if (rain < 10) return `${rain.toFixed(1)} mm`;
+  return `${Math.round(rain)} mm`;
+}
+
+function buildHourlyForecastForDay({
+  iso,
+  iconHourly,
+  iconTimes,
+  aromeHourly,
+  aromeTimes,
+  hourlyEnsemble,
+  ensembleTimes,
+  temperatureKeys,
+  precipitationKeys,
+}) {
+  const indexes = hourlyIndexesForDate(iconTimes, iso);
+  const now = new Date();
+  const todayISO = dateToISO(now);
+
+  return indexes.map((iconIndex) => {
+    const time = String(iconTimes[iconIndex] || "");
+    const hour = Number(time.slice(11, 13));
+    const aromeIndex = aromeTimes.indexOf(time);
+    const ensembleIndex = ensembleTimes.indexOf(time);
+    const iconSummary = summarizeDeterministicIndexes(iconHourly, [iconIndex]);
+    const aromeSummary = aromeIndex >= 0
+      ? summarizeDeterministicIndexes(aromeHourly, [aromeIndex])
+      : null;
+    const modelSummaries = [iconSummary, aromeSummary].filter(
+      (summary) => summary?.available,
+    );
+
+    const ensembleTemperatures = ensembleIndex >= 0
+      ? temperatureKeys
+          .map((key) => n(hourlyEnsemble?.[key]?.[ensembleIndex]))
+          .filter(Number.isFinite)
+      : [];
+    const ensemblePrecipitation = ensembleIndex >= 0
+      ? precipitationKeys
+          .map((key) => n(hourlyEnsemble?.[key]?.[ensembleIndex]))
+          .filter(Number.isFinite)
+      : [];
+
+    const ensembleTemperatureMedian = percentileFinite(
+      ensembleTemperatures,
+      0.5,
+    );
+    const deterministicTemperatures = modelSummaries
+      .map((summary) => summary.temperatureValues?.[0])
+      .filter(Number.isFinite);
+    const temperature = consensusAverage([
+      ...deterministicTemperatures,
+      ...(Number.isFinite(ensembleTemperatureMedian)
+        ? [ensembleTemperatureMedian]
+        : []),
+    ]);
+
+    const ensembleRainProbability = ensemblePrecipitation.length
+      ? Math.round(
+          (ensemblePrecipitation.filter((value) => value >= 0.1).length /
+            ensemblePrecipitation.length) *
+            100,
+        )
+      : null;
+    const iconRainProbability = n(
+      iconHourly?.precipitation_probability?.[iconIndex],
+    );
+    const rainProbability = Number.isFinite(ensembleRainProbability)
+      ? ensembleRainProbability
+      : Number.isFinite(iconRainProbability)
+        ? Math.round(iconRainProbability)
+        : 0;
+
+    const deterministicRain = modelSummaries
+      .map((summary) => summary.precipitationTotal)
+      .filter(Number.isFinite);
+    const ensembleRainMedian = percentileFinite(ensemblePrecipitation, 0.5);
+    const precipitation = consensusAverage([
+      ...deterministicRain,
+      ...(Number.isFinite(ensembleRainMedian) ? [ensembleRainMedian] : []),
+    ]);
+
+    const windDirectionDegrees = consensusDirectionFromSummaries(modelSummaries);
+    const windSpeed = consensusAverage(
+      modelSummaries.map((summary) => summary.windSpeedMean),
+    );
+    const windGust = consensusAverage(
+      modelSummaries.map((summary) => summary.gustMax),
+    );
+    const humidity = consensusAverage(
+      modelSummaries.map((summary) => summary.humidityMean),
+    );
+    const cloudCover = consensusAverage(
+      modelSummaries.map((summary) => summary.cloudMean),
+    );
+    const pressureMsl = consensusAverage(
+      modelSummaries.map((summary) => summary.pressureMean),
+    );
+    const shortwaveRadiation = consensusAverage(
+      modelSummaries.map((summary) => summary.radiationMean),
+    );
+    const weather = consensusWeatherMeta(modelSummaries, rainProbability);
+    const isDayValue = n(iconHourly?.is_day?.[iconIndex]);
+    const night = Number.isFinite(isDayValue)
+      ? isDayValue < 0.5
+      : Number.isFinite(hour)
+        ? hour < 7 || hour >= 19
+        : false;
+    const past =
+      iso < todayISO ||
+      (iso === todayISO && Number.isFinite(hour) && hour < now.getHours());
+
+    return {
+      time,
+      hour,
+      timeLabel: Number.isFinite(hour) ? `${pad2(hour)}:00` : "—",
+      weather,
+      night,
+      temperature: Number.isFinite(n(temperature)) ? round1(temperature) : null,
+      precipitation: Number.isFinite(n(precipitation))
+        ? Math.max(0, round1(precipitation))
+        : null,
+      rainProbability,
+      windDirection: windCardinal16(windDirectionDegrees),
+      windDirectionDegrees: Number.isFinite(n(windDirectionDegrees))
+        ? n(windDirectionDegrees)
+        : null,
+      windSpeed: Number.isFinite(n(windSpeed)) ? round1(windSpeed) : null,
+      windGust: Number.isFinite(n(windGust)) ? round1(windGust) : null,
+      humidity: Number.isFinite(n(humidity)) ? Math.round(n(humidity)) : null,
+      cloudCover: Number.isFinite(n(cloudCover))
+        ? Math.round(n(cloudCover))
+        : null,
+      pressureMsl: Number.isFinite(n(pressureMsl))
+        ? Math.round(n(pressureMsl))
+        : null,
+      shortwaveRadiation: Number.isFinite(n(shortwaveRadiation))
+        ? Math.round(n(shortwaveRadiation))
+        : null,
+      past,
+    };
+  });
+}
+
 function buildShortForecast(iconDeterministic, aromeDeterministic, ensemble) {
   const daily = iconDeterministic?.daily;
   const iconHourly = iconDeterministic?.hourly;
@@ -4875,6 +5099,18 @@ function buildShortForecast(iconDeterministic, aromeDeterministic, ensemble) {
         memberRainTotals.push(values.reduce((sum, value) => sum + value, 0));
       }
     }
+
+    const hourly = buildHourlyForecastForDay({
+      iso,
+      iconHourly,
+      iconTimes,
+      aromeHourly,
+      aromeTimes,
+      hourlyEnsemble,
+      ensembleTimes,
+      temperatureKeys,
+      precipitationKeys,
+    });
 
     const periods = FORECAST_BANDS.map((band) => {
       const ensembleIndexes = bandIndexesFromTimes(ensembleTimes, iso, band);
@@ -5071,6 +5307,7 @@ function buildShortForecast(iconDeterministic, aromeDeterministic, ensemble) {
       rainProbability,
       rainRange: formatRainRange(memberRainTotals, deterministicRainTotal),
       periods,
+      hourly,
     };
   });
 }
@@ -5080,6 +5317,7 @@ const FORECAST_AROME_MODEL = "meteofrance_arome_france_hd";
 
 const DETERMINISTIC_HOURLY_FIELDS = [
   "temperature_2m",
+  "relative_humidity_2m",
   "precipitation",
   "weather_code",
   "cloud_cover",
@@ -5089,6 +5327,7 @@ const DETERMINISTIC_HOURLY_FIELDS = [
   "wind_speed_10m",
   "wind_direction_10m",
   "wind_gusts_10m",
+  "is_day",
 ];
 
 const DETERMINISTIC_DAILY_FIELDS = [
@@ -5233,6 +5472,7 @@ function ForecastSection() {
   const [error, setError] = useState("");
   const [updatedAt, setUpdatedAt] = useState(null);
   const [activeDayIndex, setActiveDayIndex] = useState(0);
+  const [forecastResolution, setForecastResolution] = useState("trihourly");
 
   useEffect(() => {
     let alive = true;
@@ -5464,9 +5704,83 @@ function ForecastSection() {
     Math.max(0, forecast.length - 1),
   );
   const selectedDay = forecast[safeActiveDayIndex] || null;
+  const selectedHourly = Array.isArray(selectedDay?.hourly)
+    ? selectedDay.hourly
+    : [];
   const selectedWeather = selectedDay
     ? overviewWeatherForDay(selectedDay)
     : null;
+
+
+  const detailedRows = useMemo(() => {
+    if (!selectedHourly.length) return [];
+
+    if (forecastResolution === "hourly") {
+      return selectedHourly.map((point) => ({
+        ...point,
+        slotLabel: point.timeLabel,
+      }));
+    }
+
+    const rows = [];
+
+    for (let index = 0; index < selectedHourly.length; index += 3) {
+      const slice = selectedHourly.slice(index, index + 3);
+      if (!slice.length) continue;
+
+      const first = slice[0];
+      const startHour = Number.isFinite(n(first.hour)) ? n(first.hour) : null;
+      const endHour = Number.isFinite(startHour)
+        ? Math.min(24, startHour + slice.length)
+        : null;
+
+      let directionSin = 0;
+      let directionCos = 0;
+      let directionWeight = 0;
+
+      for (const point of slice) {
+        const degrees = n(point.windDirectionDegrees);
+        const speed = n(point.windSpeed);
+        if (!Number.isFinite(degrees)) continue;
+        const radians = (degrees * Math.PI) / 180;
+        const weight = Number.isFinite(speed) && speed > 0 ? speed : 1;
+        directionSin += Math.sin(radians) * weight;
+        directionCos += Math.cos(radians) * weight;
+        directionWeight += weight;
+      }
+
+      const directionDegrees = directionWeight
+        ? ((Math.atan2(directionSin / directionWeight, directionCos / directionWeight) * 180) / Math.PI + 360) % 360
+        : null;
+
+      const representative =
+        slice.find((point) => n(point.precipitation) > 0 || n(point.rainProbability) > 0) ||
+        slice[Math.floor(slice.length / 2)] ||
+        first;
+
+      rows.push({
+        ...representative,
+        slotLabel:
+          Number.isFinite(startHour) && Number.isFinite(endHour)
+            ? `${pad2(startHour)}–${pad2(endHour)}`
+            : first.timeLabel,
+        temperature: avgFinite(slice.map((point) => point.temperature)),
+        precipitation: sumFinite(slice.map((point) => point.precipitation)),
+        rainProbability: maxFinite(slice.map((point) => point.rainProbability)),
+        windSpeed: avgFinite(slice.map((point) => point.windSpeed)),
+        windGust: maxFinite(slice.map((point) => point.windGust)),
+        windDirectionDegrees: directionDegrees,
+        windDirection: windCardinal16(directionDegrees),
+        humidity: avgFinite(slice.map((point) => point.humidity)),
+        pressureMsl: avgFinite(slice.map((point) => point.pressureMsl)),
+        cloudCover: avgFinite(slice.map((point) => point.cloudCover)),
+        shortwaveRadiation: avgFinite(slice.map((point) => point.shortwaveRadiation)),
+        past: slice.every((point) => point.past),
+      });
+    }
+
+    return rows;
+  }, [forecastResolution, selectedHourly]);
 
   return (
     <section className="forecastSection" aria-label="Previsioni per Collinas">
@@ -5496,6 +5810,19 @@ function ForecastSection() {
             {forecast.map((day, index) => {
               const overview = overviewWeatherForDay(day);
               const isActive = index === safeActiveDayIndex;
+              const dayHourly = Array.isArray(day?.hourly) ? day.hourly : [];
+              const windSpeed = avgFinite(dayHourly.map((point) => point.windSpeed));
+              const windGust = maxFinite(dayHourly.map((point) => point.windGust));
+              const humidity = avgFinite(dayHourly.map((point) => point.humidity));
+              const pressure = avgFinite(dayHourly.map((point) => point.pressureMsl));
+              const rainProbability = maxFinite(
+                dayHourly.map((point) => point.rainProbability),
+              );
+              const representativePeriod =
+                day?.periods?.find((period) => period.key === "afternoon") ||
+                day?.periods?.find((period) => !period.past) ||
+                day?.periods?.[0] ||
+                null;
 
               return (
                 <button
@@ -5506,242 +5833,188 @@ function ForecastSection() {
                   className={`dayTab ${isActive ? "active" : ""}`}
                   onClick={() => setActiveDayIndex(index)}
                 >
-                  <div className="dayTabDate">{day.dateLabel}</div>
+                  <span className="dayTabContent">
+                    <span className="dayTabTop">
+                      <span className="dayTabDate">{day.dateLabel}</span>
+                      <span className="dayTabIcon">
+                        <WeatherForecastIcon
+                          kind={overview.kind}
+                          night={overview.night}
+                        />
+                      </span>
+                    </span>
 
-                  <div className="dayTabTemps">
-                    <strong style={{ color: temperatureRangeTone(day.maxRange) }}>
-                      {formatForecastRange(day.maxRange)}
-                    </strong>
-                    <span>/</span>
-                    <strong style={{ color: FORECAST_MIN_TEMP_COLOR }}>
-                      {formatForecastRange(day.minRange)}
-                    </strong>
-                    <span className="dayTabRain">· {day.rainRange}</span>
-                  </div>
+                    <span className="dayTabPrimary">
+                      <span className="dayTabTemps">
+                        <strong style={{ color: temperatureRangeTone(day.maxRange) }}>
+                          {formatForecastRange(day.maxRange)}
+                        </strong>
+                        <span>/</span>
+                        <strong style={{ color: FORECAST_MIN_TEMP_COLOR }}>
+                          {formatForecastRange(day.minRange)}
+                        </strong>
+                      </span>
+                      <span className="dayTabRain">
+                        {day.rainRange}
+                        {Number.isFinite(rainProbability)
+                          ? ` · ${Math.round(rainProbability)}%`
+                          : ""}
+                      </span>
+                    </span>
 
-                  <div className="dayTabIcon">
-                    <WeatherForecastIcon
-                      kind={overview.kind}
-                      night={overview.night}
-                    />
-                  </div>
+                    <span className="dayTabMeta">
+                      <span>
+                        <b>Vento</b> {representativePeriod?.windDirection || "—"} {fmt(windSpeed, 0)}/{fmt(windGust, 0)} km/h
+                      </span>
+                      <span>
+                        <b>Umidità relativa</b> {Number.isFinite(humidity) ? `${Math.round(humidity)}%` : "—"}
+                      </span>
+                      <span>
+                        <b>Pressione</b> {Number.isFinite(pressure) ? `${Math.round(pressure)} hPa` : "—"}
+                      </span>
+                    </span>
+                  </span>
                 </button>
               );
             })}
           </div>
 
-          <article className="meteogramCard" role="tabpanel">
-            <div className="meteogramGrid">
-              <aside className="overviewLegend" aria-label="Dettaglio della previsione e legenda dei parametri">
-                <div className="legendTitle">
-                  <span className="legendEyebrow">Dettaglio previsione</span>
-                  <span className="legendClock" aria-hidden="true">
-                    <svg viewBox="0 0 24 24">
-                      <circle cx="12" cy="12" r="8.5" />
-                      <path d="M12 7.5v5l3.2 1.9" />
-                    </svg>
-                  </span>
-                  <strong>4 fasce · 6 ore</strong>
-                  <small>00 → 24</small>
-                </div>
+          <article className="detailedForecastCard" role="tabpanel">
+            <div className="detailedForecastHead">
+              <div className="detailedForecastTitleBlock">
+                <strong>Previsione oraria dettagliata</strong>
+                <span>{selectedDay.dateLabel}</span>
+              </div>
 
-                <div className="legendList" aria-hidden="true">
-                  <div className="legendRow">
-                    <span className="legendGlyph tempGlyph">↕</span>
-                    <strong>Temperatura</strong>
-                  </div>
-                  <div className="legendRow">
-                    <span className="legendGlyph rainGlyph">♦</span>
-                    <strong>Pioggia</strong>
-                  </div>
-                  <div className="legendRow">
-                    <span className="legendGlyph windGlyph">➤</span>
-                    <strong>Vento <small>(medio / raffica)</small></strong>
-                  </div>
-                  <div className="legendRow">
-                    <span className="legendGlyph cloudGlyph">☁</span>
-                    <strong>Nuvolosità</strong>
-                  </div>
-                  <div className="legendRow">
-                    <span className="legendGlyph pressureGlyph">P</span>
-                    <strong>Pressione</strong>
-                  </div>
-                  <div className="legendRow">
-                    <span className="legendGlyph radiationGlyph">☀</span>
-                    <strong>Radiazione <small>(media)</small></strong>
-                  </div>
-                  <div className="legendRow">
-                    <span className="legendGlyph humidexGlyph">H</span>
-                    <strong className="humidexLegendLabel">
-                      Humidex <small>(max)</small>
-                      <span
-                        className="humidexInfo"
-                        tabIndex={0}
-                        aria-label="Informazioni sull'indice Humidex"
-                      >
-                        !
-                        <span className="humidexInfoTooltip">
-                          Indice di disagio da caldo basato su temperatura e umidità.
-                        </span>
-                      </span>
-                    </strong>
-                  </div>
-                </div>
-              </aside>
-
-              <div className="periodColumns">
-                {selectedDay.periods.map((period) => {
-                  return (
-                  <section
-                    className={`periodColumn ${period.past ? "isPast" : ""}`}
-                    key={period.key}
-                    aria-label={`${period.label} ${period.timeLabel}`}
+              <div className="detailedForecastControls">
+                <div
+                  className="forecastResolutionToggle"
+                  role="tablist"
+                  aria-label="Seleziona il dettaglio temporale della previsione"
+                >
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={forecastResolution === "hourly"}
+                    className={`resolutionButton ${forecastResolution === "hourly" ? "active" : ""}`}
+                    onClick={() => setForecastResolution("hourly")}
                   >
-                    <div className="periodTopZone">
-                      <span className="periodTimeCorner">{period.timeLabel}</span>
-
-                      <div className="periodSummaryCenter">
-                        <div className="periodColumnHead">
-                          <strong>{period.label}</strong>
-                        </div>
-
-                        <div className="periodWeather">
-                          <div className="periodWeatherIcon">
-                            <WeatherForecastIcon
-                              kind={period.weather.kind}
-                              night={period.night}
-                            />
-                          </div>
-                          <span>{period.weather.label}</span>
-                          <strong
-                            className="mobilePeriodTemperature"
-                            style={{ color: temperatureRangeTone(period.temperatureRange) }}
-                          >
-                            {formatForecastRange(period.temperatureRange)}
-                          </strong>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="periodMetricGrid">
-                      <div className="periodMetricRow temperatureMetricRow">
-                        <span
-                          className="tempLine"
-                          style={{ background: temperatureRangeTone(period.temperatureRange) }}
-                        />
-                        <strong
-                          style={{ color: temperatureRangeTone(period.temperatureRange) }}
-                        >
-                          {formatForecastRange(period.temperatureRange)}
-                        </strong>
-                        <span
-                          className="tempLine"
-                          style={{ background: temperatureRangeTone(period.temperatureRange) }}
-                        />
-                      </div>
-
-                      <div className="periodMetricRow">
-                        <span className="rowGlyph rainGlyph">♦</span>
-                        <span className="mobileMetricLabel">Pioggia</span>
-                        <strong>{period.rainProbability}% · {period.rainRange}</strong>
-                      </div>
-
-                      <div className="periodMetricRow">
-                        <span
-                          className="rowGlyph windGlyph windDirectionGlyph"
-                          style={{
-                            transform: `rotate(${windArrowRotation(period.windDirectionDegrees)}deg)`,
-                          }}
-                          aria-hidden="true"
-                        >
-                          ➤
-                        </span>
-                        <span className="mobileMetricLabel">Vento</span>
-                        <strong className="windMetricValue">
-                          {period.windDirection || "—"} {fmt(period.windSpeed, 0)} / {fmt(period.windGust, 0)} km/h
-                        </strong>
-                      </div>
-
-                      <div className="periodMetricRow">
-                        <span className="rowGlyph cloudGlyph">☁</span>
-                        <span className="mobileMetricLabel">Nuvolosità</span>
-                        <strong>
-                          {Number.isFinite(n(period.cloudCover))
-                            ? `${Math.round(n(period.cloudCover))}%`
-                            : "—"}
-                        </strong>
-                      </div>
-
-                      <div className="periodMetricRow">
-                        <span className="rowGlyph pressureGlyph">P</span>
-                        <span className="mobileMetricLabel">Pressione</span>
-                        <strong>
-                          {Number.isFinite(n(period.pressureMsl))
-                            ? `${Math.round(n(period.pressureMsl))} hPa`
-                            : "—"}
-                        </strong>
-                      </div>
-
-                      <div className="periodMetricRow">
-                        <span className="rowGlyph radiationGlyph">☀</span>
-                        <span className="mobileMetricLabel">Radiazione</span>
-                        <strong>
-                          {Number.isFinite(n(period.shortwaveRadiation))
-                            ? `${Math.round(n(period.shortwaveRadiation))} W/m²`
-                            : "—"}
-                        </strong>
-                      </div>
-
-                      <div className="periodMetricRow humidexMetricRow">
-                        <span className="rowGlyph humidexGlyph">H</span>
-                        <span className="mobileMetricLabel mobileHumidexLabel">
-                          Humidex
-                          <span
-                            className="mobileHumidexInfo"
-                            tabIndex={0}
-                            aria-label="Informazioni sull'indice Humidex"
-                          >
-                            !
-                            <span className="mobileHumidexTooltip">
-                              Indice di disagio da caldo basato su temperatura e umidità.
-                            </span>
-                          </span>
-                        </span>
-                        <strong className={humidexAttention(period.humidex)?.tone || ""}>
-                          {Number.isFinite(n(period.humidex))
-                            ? Math.round(n(period.humidex))
-                            : "—"}
-                          {humidexAttention(period.humidex) ? (
-                            <span
-                              className="humidexAlert"
-                              title={humidexAttention(period.humidex).title}
-                              aria-label={humidexAttention(period.humidex).title}
-                            >
-                              {humidexAttention(period.humidex).label}
-                            </span>
-                          ) : null}
-                        </strong>
-                      </div>
-                    </div>
-                  </section>
-                  );
-                })}
+                    Orarie
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={forecastResolution === "trihourly"}
+                    className={`resolutionButton ${forecastResolution === "trihourly" ? "active" : ""}`}
+                    onClick={() => setForecastResolution("trihourly")}
+                  >
+                    Triorarie
+                  </button>
+                </div>
+                <small>
+                  {forecastResolution === "hourly"
+                    ? "Tutte le ore del giorno"
+                    : "Fasce aggregate di 3 ore"}
+                </small>
               </div>
             </div>
 
+            <div className="detailedForecastTableWrap">
+              <table className="detailedForecastTable">
+                <thead>
+                  <tr>
+                    <th>{forecastResolution === "hourly" ? "Ora" : "Fascia"}</th>
+                    <th>Meteo</th>
+                    <th>Temp.</th>
+                    <th>Pioggia</th>
+                    <th>Prob.</th>
+                    <th>Vento</th>
+                    <th>Raffica</th>
+                    <th>Direzione</th>
+                    <th>Umidità</th>
+                    <th>Pressione</th>
+                    <th>Nuvolosità</th>
+                    <th>Radiazione</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {detailedRows.map((point, index) => (
+                    <tr
+                      className={point.past ? "isPast" : ""}
+                      key={`detail-${point.time || `${selectedDay.iso}-${index}`}-${forecastResolution}`}
+                    >
+                      <td className="detailHour">{point.slotLabel}</td>
+                      <td className="detailWeather">
+                        <span className="detailWeatherIcon">
+                          <WeatherForecastIcon
+                            kind={point.weather?.kind || "sun"}
+                            night={point.night}
+                          />
+                        </span>
+                        <span>{point.weather?.label || "—"}</span>
+                      </td>
+                      <td>
+                        <strong style={{ color: temperatureTone(point.temperature) }}>
+                          {Number.isFinite(n(point.temperature))
+                            ? `${fmt(point.temperature, 1)} °C`
+                            : "—"}
+                        </strong>
+                      </td>
+                      <td>{formatForecastHourlyRain(point.precipitation)}</td>
+                      <td>
+                        {Number.isFinite(n(point.rainProbability))
+                          ? `${Math.round(n(point.rainProbability))}%`
+                          : "—"}
+                      </td>
+                      <td>
+                        {Number.isFinite(n(point.windSpeed))
+                          ? `${Math.round(n(point.windSpeed))} km/h`
+                          : "—"}
+                      </td>
+                      <td>
+                        {Number.isFinite(n(point.windGust))
+                          ? `${Math.round(n(point.windGust))} km/h`
+                          : "—"}
+                      </td>
+                      <td>{point.windDirection || "—"}</td>
+                      <td>
+                        {Number.isFinite(n(point.humidity))
+                          ? `${Math.round(n(point.humidity))}%`
+                          : "—"}
+                      </td>
+                      <td>
+                        {Number.isFinite(n(point.pressureMsl))
+                          ? `${Math.round(n(point.pressureMsl))} hPa`
+                          : "—"}
+                      </td>
+                      <td>
+                        {Number.isFinite(n(point.cloudCover))
+                          ? `${Math.round(n(point.cloudCover))}%`
+                          : "—"}
+                      </td>
+                      <td>
+                        {Number.isFinite(n(point.shortwaveRadiation))
+                          ? `${Math.round(n(point.shortwaveRadiation))} W/m²`
+                          : "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </article>
         </div>
       )}
 
       <a className="forecastFooterLink" href="/grafici-previsione">
-        <span>Previsioni grafiche oltre 3 giorni</span>
+        <span>Vedi previsioni grafiche oltre 3 giorni</span>
         <span aria-hidden="true">→</span>
       </a>
 
       <style jsx>{`
         .forecastSection {
           margin: 18px auto 0;
-          border: 1px solid #e5e7eb;
+          border: 1px solid #e1e8f0;
           border-radius: 22px;
           overflow: hidden;
           background: #ffffff;
@@ -5749,10 +6022,10 @@ function ForecastSection() {
         }
 
         .forecastHeader {
-          padding: 18px 18px 14px;
+          padding: 14px 18px 12px;
           display: grid;
           justify-items: center;
-          gap: 4px;
+          gap: 3px;
           border-bottom: 1px solid #eef2f6;
           background: linear-gradient(180deg, #ffffff, #fbfdff);
           text-align: center;
@@ -5760,17 +6033,17 @@ function ForecastSection() {
 
         .forecastHeader h2 {
           margin: 0;
+          color: #0b1f45;
           font-size: 27px;
           font-weight: 950;
-          color: #0f172a;
           letter-spacing: -0.035em;
         }
 
         .forecastHeader p {
           margin: 0;
+          color: #64748b;
           font-size: 11px;
           font-weight: 700;
-          color: rgba(15, 23, 42, 0.58);
         }
 
         .forecastHeader p strong {
@@ -5779,607 +6052,381 @@ function ForecastSection() {
         }
 
         .forecastUpdate {
-          margin-top: 3px;
+          margin-top: 2px;
+          color: #6d7f9d;
           font-size: 9px;
           font-weight: 850;
-          color: rgba(15, 23, 42, 0.48);
+          letter-spacing: 0.04em;
           text-transform: uppercase;
-          letter-spacing: 0.045em;
         }
 
         .forecastMessage {
-          min-height: 160px;
+          min-height: 150px;
           display: flex;
           align-items: center;
           justify-content: center;
           padding: 20px;
+          color: #64748b;
           font-size: 12px;
           font-weight: 800;
-          color: rgba(15, 23, 42, 0.62);
           text-align: center;
         }
 
         .forecastContent {
-          padding: 8px 8px 10px;
+          padding: 8px 10px 10px;
+          display: grid;
+          gap: 9px;
         }
 
         .dayTabs {
           display: grid;
           grid-template-columns: repeat(3, minmax(0, 1fr));
-          gap: 8px;
+          gap: 12px;
         }
 
         .dayTab {
+          position: relative;
           min-width: 0;
-          min-height: 46px;
-          padding: 6px 14px;
-          display: grid;
-          grid-template-columns: minmax(90px, 1fr) auto 34px;
-          align-items: center;
-          gap: 12px;
-          border: 1px solid #e2e7ed;
-          border-radius: 10px;
-          background: #ffffff;
+          min-height: 142px;
+          padding: 0;
+          border: 1px solid #dbe5f0;
+          border-radius: 20px;
+          background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
           color: #0f172a;
-          font-family: inherit;
-          text-align: left;
+          font: inherit;
           cursor: pointer;
-          transition:
-            border-color 120ms ease,
-            box-shadow 120ms ease,
-            background 120ms ease;
+          overflow: hidden;
+          box-shadow: 0 8px 24px rgba(15, 23, 42, 0.035);
+          transition: transform 140ms ease, border-color 140ms ease, box-shadow 140ms ease, background 140ms ease;
+        }
+
+        .dayTab::before {
+          content: "";
+          position: absolute;
+          inset: 0 auto auto 0;
+          width: 100%;
+          height: 4px;
+          background: linear-gradient(90deg, rgba(22, 119, 255, 0.05), rgba(22, 119, 255, 0));
         }
 
         .dayTab:hover {
-          border-color: #c8d3df;
-          background: #fbfdff;
+          transform: translateY(-2px);
+          border-color: #c5d7ea;
+          box-shadow: 0 14px 28px rgba(15, 23, 42, 0.06);
         }
 
         .dayTab.active {
-          border-color: #60a5fa;
-          background: linear-gradient(180deg, #f8fbff, #ffffff);
-          box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.08);
+          border-color: #1687ff;
+          background: linear-gradient(180deg, #ffffff 0%, #f4f9ff 100%);
+          box-shadow: 0 0 0 2px rgba(22, 135, 255, 0.1), 0 14px 30px rgba(22, 119, 255, 0.08);
         }
 
-        .dayTab:focus-visible {
-          outline: none;
-          box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.18);
+        .dayTab.active::before {
+          background: linear-gradient(90deg, #1687ff, #5aa9ff);
+        }
+
+        .dayTabContent {
+          min-width: 0;
+          min-height: 142px;
+          padding: 16px 16px 14px;
+          display: grid;
+          grid-template-rows: auto auto auto;
+          gap: 10px;
+          text-align: left;
+        }
+
+        .dayTabTop {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
         }
 
         .dayTabDate {
-          min-width: 0;
           overflow: hidden;
-          font-size: 13px;
+          color: #0b1f45;
+          font-size: 18px;
           font-weight: 950;
-          color: #0f172a;
-          text-transform: capitalize;
           text-overflow: ellipsis;
           white-space: nowrap;
+          letter-spacing: -0.02em;
+        }
+
+        .dayTabIcon {
+          width: 52px;
+          height: 44px;
+          flex: 0 0 auto;
+          display: grid;
+          place-items: center;
+          border-radius: 14px;
+          background: linear-gradient(180deg, #f8fbff 0%, #edf5ff 100%);
+        }
+
+        .dayTabIcon :global(svg) {
+          width: 44px;
+          height: 38px;
+        }
+
+        .dayTabPrimary {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+          padding: 0 0 10px;
+          border-bottom: 1px solid #edf2f7;
         }
 
         .dayTabTemps {
+          min-width: 0;
           display: flex;
           align-items: center;
           gap: 6px;
+          font-size: 15px;
+          font-weight: 950;
           white-space: nowrap;
         }
 
         .dayTabRain {
-          margin-left: 2px;
-          font-size: 9.5px !important;
-          font-weight: 900 !important;
-          color: #0284c7 !important;
-        }
-
-        .dayTabTemps strong {
-          font-size: 11px;
-          font-weight: 950;
-        }
-
-        .dayTabTemps > span {
-          font-size: 10px;
-          font-weight: 800;
-          color: rgba(15, 23, 42, 0.42);
-        }
-
-        .dayTabIcon {
-          width: 28px;
-          height: 26px;
-          justify-self: end;
-          margin-left: 4px;
-        }
-
-        .dayTabIcon :global(svg) {
-          width: 100%;
-          height: 100%;
-          display: block;
-          overflow: visible;
-        }
-
-        .meteogramCard {
-          margin-top: 6px;
-          border: 1px solid #e2e8f0;
-          border-radius: 13px;
-          overflow: visible;
-          background: #ffffff;
-          box-shadow: 0 4px 14px rgba(15, 23, 42, 0.025);
-        }
-
-        .meteogramGrid {
-          display: grid;
-          grid-template-columns: 205px minmax(0, 1fr);
-          min-width: 0;
-          overflow: visible;
-          border-radius: 13px 13px 0 0;
-        }
-
-        .overviewLegend {
-          position: relative;
-          z-index: 4;
-          min-width: 0;
-          padding: 8px 10px 0;
-          display: grid;
-          grid-template-rows: 108px auto;
-          gap: 0;
-          border-right: 1px solid #e5ebf1;
-          background: linear-gradient(180deg, #ffffff, #fbfdff);
-        }
-
-        .legendTitle {
-          min-width: 0;
-          height: 108px;
-          display: grid;
-          align-content: center;
-          justify-items: center;
-          gap: 3px;
-          padding: 7px 6px 9px;
-          box-sizing: border-box;
-          text-align: center;
-        }
-
-        .legendEyebrow {
-          font-size: 8px;
-          font-weight: 950;
-          color: rgba(15, 23, 42, 0.48);
-          text-transform: uppercase;
-          letter-spacing: 0.075em;
-        }
-
-        .legendClock {
-          width: 25px;
-          height: 25px;
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          color: #0284c7;
-        }
-
-        .legendClock :global(svg) {
-          width: 100%;
-          height: 100%;
-          fill: none;
-          stroke: currentColor;
-          stroke-width: 1.7;
-          stroke-linecap: round;
-          stroke-linejoin: round;
-        }
-
-        .legendTitle > strong {
-          font-size: 10.5px;
-          font-weight: 950;
-          line-height: 1.1;
-          color: #0f172a;
-          letter-spacing: -0.01em;
-        }
-
-        .legendTitle > small {
-          font-size: 8.5px;
-          font-weight: 850;
-          color: rgba(15, 23, 42, 0.48);
-          letter-spacing: 0.035em;
-        }
-
-        .legendList {
-          display: grid;
-          grid-template-rows: repeat(7, 30px);
-          align-content: start;
-          gap: 0;
-          padding: 0 18px;
-        }
-
-        .legendRow {
-          min-width: 0;
-          min-height: 0;
-          display: grid;
-          grid-template-columns: 18px minmax(0, 1fr);
-          align-items: center;
-          justify-content: stretch;
-          gap: 8px;
-          border-top: 1px solid #edf1f5;
-          text-align: left;
-        }
-
-        .legendRow:last-child {
-          border-bottom: 1px solid #edf1f5;
-        }
-
-        .legendRow:last-child {
-          border-bottom: 0;
-        }
-
-        .legendRow:has(.humidexInfo) {
-          position: relative;
-          z-index: 220;
-          overflow: visible;
-        }
-
-        .legendGlyph,
-        .rowGlyph {
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          font-size: 10px;
-          font-weight: 950;
-          color: #0284c7;
-        }
-
-        .legendRow > strong {
-          min-width: 0;
-          overflow: visible;
-          font-size: 8.5px;
-          font-weight: 900;
-          color: rgba(15, 23, 42, 0.62);
-          text-transform: uppercase;
-          letter-spacing: 0.025em;
-          text-align: left;
-          white-space: nowrap;
-        }
-
-        .legendRow small {
-          font-size: 7.5px;
-          font-weight: 700;
-          color: rgba(15, 23, 42, 0.42);
-          text-transform: none;
-          letter-spacing: 0;
-        }
-
-        .windGlyph {
-          color: #2563eb;
-        }
-
-        .windDirectionGlyph {
-          transform-origin: center;
-          transition: transform 140ms ease;
-        }
-
-        .cloudGlyph {
-          color: #0284c7;
-          font-size: 11px;
-        }
-
-        .pressureGlyph {
-          color: #64748b;
-          font-size: 9px;
-          font-weight: 950;
-        }
-
-        .radiationGlyph {
-          color: #d97706;
-          font-size: 11px;
-        }
-
-        .humidexGlyph {
-          color: #db2777;
-          font-size: 11px;
-          font-weight: 950;
-        }
-
-        .humidexLegendLabel {
-          position: relative;
-          z-index: 210;
-          display: inline-flex;
-          align-items: center;
-          gap: 5px;
-          overflow: visible !important;
-          white-space: nowrap;
-        }
-
-        .humidexInfo {
-          position: relative;
-          width: 15px;
-          height: 15px;
-          flex: 0 0 15px;
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          border: 1px solid #cbd5e1;
+          padding: 6px 10px;
           border-radius: 999px;
-          background: #ffffff;
-          color: #64748b;
-          font-size: 9px;
-          font-weight: 950;
-          line-height: 1;
-          cursor: help;
-          outline: none;
+          background: #edf6ff;
+          color: #0b77df;
+          font-size: 11px;
+          font-weight: 900;
+          white-space: nowrap;
         }
 
-        .humidexInfoTooltip {
-          position: absolute;
-          z-index: 200;
-          left: 50%;
-          bottom: calc(100% + 9px);
-          width: 235px;
-          max-width: min(235px, calc(100vw - 36px));
-          padding: 8px 10px;
-          border-radius: 9px;
-          background: #0f172a;
-          color: #ffffff;
+        .dayTabMeta {
+          min-width: 0;
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 8px;
+          color: #667996;
           font-size: 9.5px;
-          font-weight: 700;
-          line-height: 1.35;
-          text-align: left;
-          text-transform: none;
-          letter-spacing: 0;
+          font-weight: 800;
+        }
+
+        .dayTabMeta span {
+          min-width: 0;
+          padding: 7px 8px;
+          display: grid;
+          gap: 2px;
+          justify-items: start;
+          border: 1px solid #edf2f7;
+          border-radius: 12px;
+          background: #fbfdff;
           white-space: normal;
-          overflow-wrap: anywhere;
-          word-break: normal;
-          box-shadow: 0 9px 22px rgba(15, 23, 42, 0.22);
-          opacity: 0;
-          visibility: hidden;
-          transform: translateX(-50%) translateY(4px);
-          transition: opacity 120ms ease, transform 120ms ease, visibility 120ms ease;
+          line-height: 1.2;
+        }
+
+        .dayTabMeta b {
+          color: #425a7d;
+          font-size: 8px;
+          font-weight: 900;
+          letter-spacing: 0.03em;
+          text-transform: uppercase;
+        }
+
+        .detailedForecastCard {
+          min-width: 0;
+          border: 1px solid #dfe7f0;
+          border-radius: 20px;
+          background: #ffffff;
+          padding: 10px 12px 12px;
+          box-shadow: 0 10px 28px rgba(15, 23, 42, 0.035);
+        }
+
+        .detailedForecastHead {
+          position: relative;
+          min-height: 46px;
+          padding: 0 2px 6px;
+          display: flex;
+          align-items: flex-start;
+          justify-content: flex-end;
+        }
+
+        .detailedForecastTitleBlock {
+          position: absolute;
+          top: 0;
+          left: 50%;
+          transform: translateX(-50%);
+          min-width: 0;
+          display: grid;
+          justify-items: center;
+          gap: 1px;
+          text-align: center;
           pointer-events: none;
         }
 
-        .humidexInfoTooltip::after {
-          content: "";
-          position: absolute;
-          left: 50%;
-          top: 100%;
-          width: 7px;
-          height: 7px;
-          background: #0f172a;
-          transform: translateX(-50%) rotate(45deg);
+        .detailedForecastHead strong {
+          color: #0b2454;
+          font-size: 16px;
+          font-weight: 900;
+          line-height: 1.1;
         }
 
-        .humidexInfo:hover .humidexInfoTooltip,
-        .humidexInfo:focus .humidexInfoTooltip {
-          opacity: 1;
-          visibility: visible;
-          transform: translateX(-50%) translateY(0);
+        .detailedForecastHead span,
+        .detailedForecastHead small {
+          color: #71829c;
+          font-size: 10.5px;
+          font-weight: 750;
+          line-height: 1.15;
         }
 
-        .periodColumns {
+        .detailedForecastControls {
           position: relative;
           z-index: 1;
-          min-width: 0;
           display: grid;
-          grid-template-columns: repeat(4, minmax(0, 1fr));
+          justify-items: end;
+          gap: 3px;
         }
 
-        .periodColumn {
-          min-width: 0;
-          padding: 8px 8px 0;
-          display: grid;
-          align-content: start;
-          gap: 0;
-          border-right: 1px solid #e7ecf1;
-          background: #ffffff;
-          transition: background 120ms ease;
-        }
-
-        .periodColumn:hover {
-          background: #fbfdff;
-        }
-
-        .periodColumn.isPast {
-          opacity: 0.68;
-        }
-
-        .periodTopZone {
-          position: relative;
-          height: 108px;
-          box-sizing: border-box;
-          display: grid;
-          grid-template-rows: auto 1fr;
-          align-content: start;
-          padding-top: 7px;
-        }
-
-        .periodSummaryCenter {
-          display: contents;
-        }
-
-        .periodMetricGrid {
-          display: grid;
-          grid-template-rows: repeat(7, 30px);
-          align-content: start;
-        }
-
-        .periodMetricRow {
-          min-width: 0;
-          display: grid;
-          grid-template-columns: 16px minmax(0, 1fr) 16px;
-          align-items: center;
-          gap: 6px;
-          border-top: 1px solid #edf1f5;
-          text-align: center;
-        }
-
-        .periodMetricRow::after {
-          content: "";
-          width: 16px;
-          height: 1px;
-        }
-
-        .periodMetricRow:last-child {
-          border-bottom: 1px solid #edf1f5;
-        }
-
-        .periodMetricRow strong {
-          min-width: 0;
-          overflow: hidden;
-          font-size: 12.5px;
-          font-weight: 900;
-          color: #0f172a;
-          text-align: center;
-          text-overflow: ellipsis;
-          white-space: nowrap;
-        }
-
-        .temperatureMetricRow {
-          grid-template-columns: minmax(18px, 1fr) auto minmax(18px, 1fr);
-          gap: 8px;
-          text-align: center;
-        }
-
-        .temperatureMetricRow::after {
-          display: none;
-        }
-
-        .temperatureMetricRow strong {
-          font-size: 13.5px;
-          font-weight: 950;
-          text-align: center;
-        }
-
-        .humidexMetricRow strong.attention {
-          color: #d97706;
-        }
-
-        .humidexMetricRow strong.high {
-          color: #ea580c;
-        }
-
-        .humidexMetricRow strong.danger {
-          color: #dc2626;
-        }
-
-        .humidexAlert {
+        .forecastResolutionToggle {
           display: inline-flex;
           align-items: center;
-          justify-content: center;
-          margin-left: 5px;
-          font-size: 13px;
-          line-height: 1;
-          vertical-align: -1px;
-          cursor: help;
-        }
-
-        .periodColumnHead {
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          min-height: 18px;
-          text-align: center;
-        }
-
-        .periodColumnHead strong {
-          font-size: 10.5px;
-          font-weight: 950;
-          color: #0f172a;
-          text-transform: uppercase;
-          letter-spacing: 0.025em;
-        }
-
-        .periodTimeCorner {
-          position: absolute;
-          top: 6px;
-          left: 4px;
-          font-size: 7.5px;
-          font-weight: 850;
-          color: rgba(15, 23, 42, 0.42);
-          letter-spacing: 0.02em;
-          white-space: nowrap;
-        }
-
-        .periodWeather {
-          min-width: 0;
-          margin-top: 16px;
-          display: grid;
-          justify-items: center;
-          gap: 3px;
-          text-align: center;
-        }
-
-        .periodWeatherIcon {
-          width: 27px;
-          height: 24px;
-        }
-
-        .periodWeatherIcon :global(svg) {
-          width: 100%;
-          height: 100%;
-          display: block;
-          overflow: visible;
-        }
-
-        .periodWeather > span {
-          min-height: 13px;
-          overflow: hidden;
-          font-size: 8.5px;
-          font-weight: 800;
-          line-height: 1.1;
-          color: #334155;
-          text-align: center;
-          text-overflow: ellipsis;
-          white-space: nowrap;
-        }
-
-        .mobilePeriodTemperature,
-        .mobileMetricLabel,
-        .mobileHumidexInfo {
-          display: none;
-        }
-
-        .periodTempLine {
-          display: grid;
-          grid-template-columns: minmax(8px, 1fr) auto minmax(8px, 1fr);
-          align-items: center;
-          gap: 7px;
-          min-width: 0;
-        }
-
-        .periodTempLine strong {
-          font-size: 11px;
-          font-weight: 950;
-          white-space: nowrap;
-        }
-
-        .tempLine {
-          height: 1.5px;
+          padding: 2px;
+          border: 1px solid #dfe7f0;
           border-radius: 999px;
-          opacity: 0.92;
+          background: #f8fbff;
+          gap: 2px;
         }
 
-        .periodCompactData {
-          display: grid;
-          gap: 0;
+        .resolutionButton {
+          min-width: 106px;
+          min-height: 34px;
+          padding: 0 14px;
+          border: 0;
+          border-radius: 999px;
+          background: transparent;
+          color: #5c708f;
+          font: inherit;
+          font-size: 11px;
+          font-weight: 850;
+          cursor: pointer;
+          transition: background 120ms ease, color 120ms ease, box-shadow 120ms ease;
         }
 
-        .periodCompactRow {
-          min-width: 0;
-          min-height: 23px;
-          display: grid;
-          grid-template-columns: 14px minmax(0, 1fr);
-          align-items: center;
-          gap: 5px;
-          border-bottom: 1px solid #eff3f6;
+        .resolutionButton.active {
+          background: linear-gradient(180deg, #1677ff 0%, #2f8cff 100%);
+          color: #ffffff;
+          box-shadow: 0 8px 18px rgba(22, 119, 255, 0.18);
         }
 
-        .periodCompactRow:last-child {
+
+        .detailedForecastTableWrap {
+          max-height: 520px;
+          overflow: auto;
+          border: 1px solid #e5ebf2;
+          border-radius: 16px;
+          scrollbar-width: thin;
+        }
+
+        .detailedForecastTable {
+          width: 100%;
+          min-width: 1260px;
+          border-collapse: separate;
+          border-spacing: 0;
+          background: #ffffff;
+          color: #0f172a;
+          font-size: 12px;
+        }
+
+        .detailedForecastTable th,
+        .detailedForecastTable td {
+          padding: 9px 12px;
+          border-right: 1px solid #edf1f5;
+          border-bottom: 1px solid #edf1f5;
+          text-align: center;
+          white-space: nowrap;
+          vertical-align: middle;
+          line-height: 1.15;
+        }
+
+        .detailedForecastTable td {
+          font-weight: 650;
+        }
+
+        .detailedForecastTable th:last-child,
+        .detailedForecastTable td:last-child {
+          border-right: 0;
+        }
+
+        .detailedForecastTable tbody tr:last-child td {
           border-bottom: 0;
         }
 
-        .periodCompactRow strong {
-          min-width: 0;
-          overflow: hidden;
-          font-size: 9.5px;
+        .detailedForecastTable thead th {
+          position: sticky;
+          top: 0;
+          z-index: 4;
+          background: #f5f9ff;
+          color: #536987;
+          font-size: 10px;
           font-weight: 900;
-          color: #0f172a;
+          text-transform: uppercase;
+          letter-spacing: 0.03em;
+        }
+
+        .detailedForecastTable thead th:first-child,
+        .detailedForecastTable tbody td:first-child {
+          position: sticky;
+          left: 0;
+          z-index: 3;
+        }
+
+        .detailedForecastTable thead th:first-child {
+          z-index: 5;
+          background: #eef5ff;
+        }
+
+        .detailedForecastTable tbody td:first-child {
+          background: #fbfdff;
+        }
+
+        .detailedForecastTable tbody tr:hover td {
+          background: #f9fbff;
+        }
+
+        .detailedForecastTable tbody tr:hover td:first-child {
+          background: #f3f8ff;
+        }
+
+        .detailedForecastTable tbody tr.isPast {
+          opacity: 0.5;
+        }
+
+        .detailHour {
+          color: #0b2454;
+          font-size: 13px;
+          font-weight: 900;
+        }
+
+        .detailWeather {
+          min-width: 210px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 8px;
           text-align: center;
-          text-overflow: ellipsis;
-          white-space: nowrap;
+          font-size: 12px;
+          font-weight: 750;
+        }
+
+        .detailWeatherIcon {
+          width: 34px;
+          height: 31px;
+          flex: 0 0 auto;
+          display: block;
+        }
+
+        .detailWeatherIcon :global(svg) {
+          width: 100%;
+          height: 100%;
+        }
+
+        .detailedForecastTable td strong {
+          font-size: 13px;
+          font-weight: 950;
         }
 
         .forecastFooterLink {
@@ -6389,54 +6436,111 @@ function ForecastSection() {
           align-items: center;
           justify-content: center;
           gap: 10px;
-          border-top: 1px solid #edf1f5;
-          background: #fbfcfd;
-          color: #0f172a;
-          font-size: 12px;
+          border-top: 1px solid #eef2f6;
+          background: linear-gradient(180deg, #fbfdff, #f7faff);
+          color: #0b2454;
+          font-size: 10.5px;
           font-weight: 900;
           text-decoration: none;
-          transition: background 120ms ease;
         }
 
         .forecastFooterLink:hover {
-          background: #f5f8fb;
+          color: #1677ff;
         }
 
         .forecastFooterLink span:last-child {
+          color: #1677ff;
           font-size: 16px;
-          line-height: 1;
         }
 
-        @media (max-width: 1260px) {
-          .meteogramGrid {
-            grid-template-columns: 180px minmax(0, 1fr);
+        @media (max-width: 1100px) {
+          .dayTabs {
+            gap: 10px;
           }
 
-          .legendRow > strong {
-            font-size: 8px;
+          .dayTabContent {
+            padding: 14px;
           }
 
-          .periodColumn {
-            padding-left: 6px;
-            padding-right: 6px;
-          }
-
-          .periodCompactRow strong {
-            font-size: 9px;
+          .dayTabMeta {
+            grid-template-columns: 1fr;
           }
         }
 
-        @media (max-width: 980px) {
-          .meteogramGrid {
-            grid-template-columns: 165px minmax(0, 1fr);
+        @media (max-width: 900px) {
+          .forecastContent {
+            gap: 10px;
           }
 
+          .dayTabs {
+            grid-template-columns: 1fr;
+          }
+
+          .dayTab,
+          .dayTabContent {
+            min-height: 128px;
+          }
+
+          .dayTabMeta {
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+          }
+
+          .detailedForecastHead {
+            min-height: 0;
+            padding-bottom: 6px;
+            flex-direction: column;
+            align-items: stretch;
+            gap: 6px;
+          }
+
+          .detailedForecastTitleBlock {
+            position: static;
+            transform: none;
+          }
+
+          .detailedForecastControls {
+            justify-items: stretch;
+          }
+
+          .forecastResolutionToggle {
+            width: 100%;
+            justify-content: stretch;
+          }
+
+          .resolutionButton {
+            flex: 1 1 0;
+            min-width: 0;
+            min-height: 32px;
+          }
+
+          .detailedForecastTable {
+            min-width: 1160px;
+            font-size: 11px;
+          }
+
+          .detailedForecastTable th,
+          .detailedForecastTable td {
+            padding: 8px 10px;
+          }
+
+          .detailedForecastTable thead th {
+            font-size: 10px;
+          }
+
+          .forecastFooterLink {
+            min-height: 40px;
+            font-size: 9.5px;
+          }
         }
 
-        @media (max-width: 760px) {
+        @media (max-width: 700px) {
+          .forecastSection {
+            margin-top: 14px;
+            border-radius: 18px;
+          }
+
           .forecastHeader {
-            padding-left: 12px;
-            padding-right: 12px;
+            padding: 12px 9px 10px;
           }
 
           .forecastHeader h2 {
@@ -6444,420 +6548,233 @@ function ForecastSection() {
           }
 
           .forecastHeader p {
-            font-size: 10px;
+            max-width: 330px;
+            font-size: 9px;
+            line-height: 1.3;
+          }
+
+          .forecastUpdate {
+            font-size: 8px;
           }
 
           .forecastContent {
             padding: 7px;
-          }
-
-          .dayTabs {
-            grid-template-columns: 1fr;
-            gap: 5px;
-          }
-
-          .dayTab {
-            min-height: 42px;
-            grid-template-columns: minmax(90px, 1fr) auto 30px;
-            gap: 12px;
-          }
-
-          .meteogramGrid {
-            grid-template-columns: 1fr;
-          }
-
-          .overviewLegend {
-            grid-template-columns: 145px minmax(0, 1fr);
-            grid-template-rows: auto;
-            align-items: center;
-            padding-top: 0;
-            border-right: 0;
-            border-bottom: 1px solid #e5ebf1;
-          }
-
-          .legendTitle {
-            height: 58px;
-            align-content: center;
-            gap: 1px;
-            padding: 5px 8px;
-            border-right: 1px solid #e8edf2;
-          }
-
-          .legendEyebrow,
-          .legendTitle > small {
-            display: none;
-          }
-
-          .legendClock {
-            width: 19px;
-            height: 19px;
-          }
-
-          .legendTitle > strong {
-            font-size: 9px;
-          }
-
-          .legendList {
-            grid-template-columns: repeat(7, minmax(0, 1fr));
-            grid-template-rows: none;
-            padding: 0;
-          }
-
-          .legendRow {
-            min-height: 34px;
-            justify-items: center;
-            grid-template-columns: 1fr;
-            gap: 2px;
-            border-top: 0;
-            border-bottom: 0;
-            border-right: 1px solid #eef2f5;
-            text-align: center;
-          }
-
-          .legendRow:last-child {
-            border-right: 0;
-          }
-
-          .legendRow > strong {
-            font-size: 7.5px;
-          }
-
-          .legendRow small {
-            display: none;
-          }
-
-          .periodColumns {
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-          }
-
-          .periodColumn:nth-child(2) {
-            border-right: 0;
-          }
-
-          .periodColumn:nth-child(-n + 2) {
-            border-bottom: 1px solid #e7ecf1;
-          }
-
-        }
-
-        @media (max-width: 480px) {
-          .forecastContent {
-            padding: 6px;
-          }
-
-          .dayTabs {
-            gap: 5px;
-          }
-
-          .dayTab {
-            min-height: 44px;
-            padding: 6px 10px;
-            grid-template-columns: minmax(82px, 1fr) auto 28px;
             gap: 8px;
+          }
+
+          .dayTabs {
+            display: flex;
+            gap: 8px;
+            overflow-x: auto;
+            scroll-snap-type: x proximity;
+            padding-bottom: 2px;
+            scrollbar-width: none;
+          }
+
+          .dayTabs::-webkit-scrollbar {
+            display: none;
+          }
+
+          .dayTab {
+            flex: 0 0 252px;
+            min-height: 110px;
+            border-radius: 16px;
+            scroll-snap-align: start;
+          }
+
+          .dayTabContent {
+            min-height: 110px;
+            padding: 10px 11px 9px;
+            gap: 6px;
           }
 
           .dayTabDate {
-            font-size: 13px;
-          }
-
-          .dayTabTemps {
-            gap: 4px;
-          }
-
-          .dayTabTemps strong {
-            font-size: 10.5px;
-          }
-
-          .dayTabRain {
-            display: none;
+            font-size: 16px;
           }
 
           .dayTabIcon {
-            width: 25px;
-            height: 23px;
-            margin-left: 0;
+            width: 42px;
+            height: 38px;
+            border-radius: 11px;
           }
 
-          .meteogramCard {
-            margin-top: 7px;
-            border: 0;
-            background: transparent;
-            box-shadow: none;
+          .dayTabIcon :global(svg) {
+            width: 36px;
+            height: 32px;
           }
 
-          .meteogramGrid {
-            display: block;
-            overflow: visible;
-            border-radius: 0;
-          }
-
-          .overviewLegend {
-            display: none;
-          }
-
-          .periodColumns {
-            display: grid;
-            grid-template-columns: 1fr;
+          .dayTabPrimary {
+            flex-direction: row;
+            align-items: center;
+            padding-bottom: 6px;
             gap: 7px;
           }
 
-          .periodColumn,
-          .periodColumn:nth-child(2),
-          .periodColumn:nth-child(-n + 2) {
-            min-width: 0;
-            padding: 8px 10px;
-            display: grid;
-            grid-template-columns: 112px minmax(0, 1fr);
-            align-items: stretch;
-            gap: 10px;
-            border: 1px solid #e2e8f0;
-            border-radius: 15px;
-            background: #ffffff;
-            box-shadow: 0 3px 10px rgba(15, 23, 42, 0.025);
-          }
-
-          .periodColumn:last-child {
-            border-bottom: 1px solid #e2e8f0;
-          }
-
-          .periodTopZone {
-            position: relative;
-            height: 164px;
-            min-height: 164px;
-            padding: 0;
-            display: block;
-            border-right: 1px solid #e8edf3;
-            box-sizing: border-box;
-          }
-
-          .periodTimeCorner {
-            position: absolute;
-            top: 7px;
-            left: 50%;
-            z-index: 3;
-            transform: translateX(-50%);
-            padding: 0;
-            border: 0;
-            border-radius: 0;
-            background: transparent;
-            font-size: 9px;
-            font-weight: 850;
-            line-height: 1;
-            color: #94a3b8;
-            text-align: center;
-            white-space: nowrap;
-          }
-
-          .periodSummaryCenter {
-            position: absolute;
-            inset: 0;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            gap: 8px;
-            padding: 24px 4px 4px;
-            box-sizing: border-box;
-            text-align: center;
-          }
-
-          .periodColumnHead {
-            width: 100%;
-            min-height: 0;
-            margin: 0;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            text-align: center;
-          }
-
-          .periodColumnHead strong {
-            display: block;
-            width: 100%;
+          .dayTabTemps {
             font-size: 13px;
-            text-align: center;
-          }
-
-          .periodWeather {
-            margin: 0;
-            gap: 5px;
-          }
-
-          .periodWeatherIcon {
-            width: 39px;
-            height: 35px;
-          }
-
-          .periodWeather > span {
-            min-height: 0;
-            max-width: 96px;
-            font-size: 10px;
-            line-height: 1.15;
-            white-space: normal;
-          }
-
-          .mobilePeriodTemperature {
-            display: block;
-            margin-top: 8px;
-            font-size: 15px;
-            font-weight: 950;
-            line-height: 1;
-            white-space: nowrap;
-          }
-
-          .periodMetricGrid > .temperatureMetricRow,
-          .temperatureMetricRow {
-            display: none !important;
-            height: 0 !important;
-            min-height: 0 !important;
-            padding: 0 !important;
-            margin: 0 !important;
-            border: 0 !important;
-          }
-
-          .periodMetricGrid {
-            min-width: 0;
-            display: grid;
-            grid-template-rows: repeat(6, 29px);
-            grid-auto-rows: 29px;
-            align-content: center;
-          }
-
-          .periodMetricRow {
-            min-width: 0;
-            height: 29px;
-            min-height: 29px;
-            box-sizing: border-box;
-            padding: 0;
-            margin: 0;
-            display: grid;
-            grid-template-columns: 15px minmax(0, 1fr) minmax(102px, auto);
-            align-items: center;
-            gap: 6px;
-            border-top: 1px solid #edf1f5;
-            text-align: left;
-          }
-
-          .periodMetricRow:first-child:not(.temperatureMetricRow) {
-            border-top: 0;
-          }
-
-          .periodMetricRow::after {
-            display: none;
-          }
-
-          .periodMetricRow:last-child {
-            border-bottom: 0;
-          }
-
-          .mobileMetricLabel {
-            display: flex;
-            align-items: center;
             gap: 4px;
-            min-width: 0;
-            height: 100%;
+          }
+
+          .dayTabRain {
+            align-self: auto;
+            padding: 4px 7px;
+            font-size: 9px;
+          }
+
+          .dayTabMeta {
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 4px;
+            font-size: 8px;
+          }
+
+          .dayTabMeta span {
+            padding: 5px 5px;
+            border-radius: 9px;
+            gap: 1px;
+            line-height: 1.1;
+          }
+
+          .dayTabMeta b {
+            font-size: 7px;
+          }
+
+          .detailedForecastCard {
+            padding: 8px 8px 8px;
+            border-radius: 15px;
+          }
+
+          .detailedForecastHead {
+            gap: 5px;
+            padding-bottom: 5px;
+          }
+
+          .detailedForecastHead strong {
+            font-size: 13px;
+          }
+
+          .detailedForecastHead span,
+          .detailedForecastHead small {
+            font-size: 8.5px;
+          }
+
+          .resolutionButton {
+            min-height: 28px;
             font-size: 9.5px;
-            font-weight: 800;
-            line-height: 1;
-            color: #64748b;
-            white-space: nowrap;
           }
 
-          .periodMetricRow strong {
-            min-width: 102px;
-            overflow: visible;
-            font-size: 10.5px;
-            font-weight: 900;
-            line-height: 1;
-            color: #0f172a;
-            text-align: right;
-            text-overflow: clip;
-            white-space: nowrap;
+          .detailedForecastTableWrap {
+            max-height: 390px;
+            border-radius: 12px;
           }
 
-          .windMetricValue {
-            min-width: 112px !important;
-            font-size: 9.8px !important;
-            letter-spacing: -0.02em;
+          .detailedForecastTable {
+            min-width: 1010px;
+            font-size: 9.5px;
           }
 
-          .rowGlyph {
+          .detailedForecastTable th,
+          .detailedForecastTable td {
+            padding: 5px 6px;
+          }
+
+          .detailedForecastTable thead th {
+            font-size: 8.5px;
+          }
+
+          .detailHour {
             font-size: 10px;
           }
 
-          .humidexAlert {
-            margin-left: 3px;
-            font-size: 11px;
+          .detailWeather {
+            min-width: 150px;
+            gap: 5px;
+            font-size: 10px;
           }
 
-          .mobileHumidexLabel {
-            overflow: visible;
+          .detailWeatherIcon {
+            width: 24px;
+            height: 22px;
           }
 
-          .humidexMetricRow,
-          .periodMetricRow:has(.radiationGlyph) {
-            height: 29px;
-            min-height: 29px;
-            padding-top: 0;
-            padding-bottom: 0;
-            margin-top: 0;
-            margin-bottom: 0;
-          }
-
-          .mobileHumidexInfo {
-            position: relative;
-            width: 14px;
-            height: 14px;
-            flex: 0 0 14px;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            border: 1px solid #cbd5e1;
-            border-radius: 50%;
-            background: #fff;
-            color: #64748b;
-            font-size: 8px;
-            font-weight: 950;
-            cursor: help;
-          }
-
-          .mobileHumidexTooltip {
-            position: absolute;
-            z-index: 80;
-            left: 50%;
-            right: auto;
-            bottom: calc(100% + 7px);
-            width: 185px;
-            max-width: min(185px, calc(100vw - 32px));
-            padding: 7px 8px;
-            border-radius: 9px;
-            background: #0f172a;
-            color: #fff;
-            font-size: 9px;
-            font-weight: 700;
-            line-height: 1.3;
-            white-space: normal;
-            box-shadow: 0 8px 20px rgba(15, 23, 42, 0.2);
-            opacity: 0;
-            visibility: hidden;
-            transform: translateX(-50%) translateY(3px);
-            transition: opacity 120ms ease, transform 120ms ease, visibility 120ms ease;
-            pointer-events: none;
-          }
-
-          .mobileHumidexInfo:hover .mobileHumidexTooltip,
-          .mobileHumidexInfo:focus .mobileHumidexTooltip {
-            opacity: 1;
-            visibility: visible;
-            transform: translateX(-50%) translateY(0);
-          }
-
-          .forecastFooterLink {
-            margin-top: 7px;
-            min-height: 38px;
-            border: 1px solid #e2e8f0;
-            border-radius: 12px;
+          .detailedForecastTable td strong {
             font-size: 10.5px;
+          }
+        }
+
+        @media (max-width: 390px) {
+          .forecastHeader h2 {
+            font-size: 20px;
+          }
+
+          .dayTab {
+            flex-basis: 236px;
+            min-height: 104px;
+          }
+
+          .dayTabContent {
+            min-height: 104px;
+            padding: 9px 10px 8px;
+          }
+
+          .dayTabDate {
+            font-size: 15px;
+          }
+
+          .dayTabTemps {
+            font-size: 12px;
+          }
+
+          .dayTabRain {
+            font-size: 8.5px;
+          }
+
+          .dayTabMeta {
+            font-size: 7.5px;
+          }
+
+          .dayTabMeta b {
+            font-size: 6.5px;
+          }
+
+          .resolutionButton {
+            min-height: 27px;
+            font-size: 9px;
+          }
+
+          .detailedForecastTableWrap {
+            max-height: 360px;
+          }
+
+          .detailedForecastTable {
+            min-width: 980px;
+            font-size: 9px;
+          }
+
+          .detailedForecastTable th,
+          .detailedForecastTable td {
+            padding: 4px 5px;
+          }
+
+          .detailedForecastTable thead th {
+            font-size: 8px;
+          }
+
+          .detailHour {
+            font-size: 9.5px;
+          }
+
+          .detailWeather {
+            min-width: 142px;
+            font-size: 9.5px;
+          }
+
+          .detailWeatherIcon {
+            width: 22px;
+            height: 20px;
+          }
+
+          .detailedForecastTable td strong {
+            font-size: 10px;
           }
         }
       `}</style>
@@ -6947,6 +6864,10 @@ function CustomSelect({ value, options = [], onChange, ariaLabel, variant = "lig
         .customSelect {
           position: relative;
           width: 100%;
+        }
+
+        .customSelect.isOpen {
+          z-index: 3000;
         }
 
         .selectButton {
@@ -8587,6 +8508,7 @@ function PeriodSummary({ data, mode }) {
 
     const tempStats = seriesStats(data.temp);
     const rhStats = seriesStats(data.rh);
+    const rainStats = seriesStats(data.rainH);
     const windStats = seriesStats(data.wind);
     const gustStats = seriesStats(data.gust);
     const pressStats = seriesStats(data.press);
@@ -8633,8 +8555,13 @@ function PeriodSummary({ data, mode }) {
         label: "Precipitazioni",
         mainLabel: "Totale",
         value: `${fmt(data.rainTotal, 1)} mm`,
-        description: "Cumulata del periodo",
-        metrics: [],
+        metrics: [
+          metric(
+            "Rateo max",
+            `${fmt(rainStats.max, 1)} mm`,
+            formatSummaryTimestamp(rainStats.maxTimestamp, mode),
+          ),
+        ],
       },
       {
         key: "wind",
@@ -8700,16 +8627,17 @@ function PeriodSummary({ data, mode }) {
       <div className="summaryGrid">
         {items.map((item) => (
           <div className={`summaryCell ${item.key}`} key={item.key}>
-            <span className="summaryLabel">{item.label}</span>
-
             <div className="summaryCore">
               <span className="summaryIcon">
                 <SummaryParameterIcon type={item.key} />
               </span>
 
               <div className="summaryMain">
-                <strong>{item.value}</strong>
-                <small>{item.mainLabel}</small>
+                <span className="summaryLabel">{item.label}</span>
+                <div className="summaryValueRow">
+                  <strong>{item.value}</strong>
+                  <small>{item.mainLabel}</small>
+                </div>
               </div>
             </div>
 
@@ -8738,7 +8666,7 @@ function PeriodSummary({ data, mode }) {
 
       <style jsx>{`
         .summarySection {
-          padding: 18px 20px 16px;
+          padding: 12px 16px 14px;
           background: #fff;
         }
 
@@ -8749,202 +8677,242 @@ function PeriodSummary({ data, mode }) {
         }
 
         .summaryCell {
-          --card-top: #2563eb;
-          --card-bottom: #0f4fa7;
+          --accent: #2563eb;
+          --soft: #eff5ff;
+          --soft-2: #f8fbff;
           position: relative;
           min-width: 0;
-          min-height: 188px;
-          padding: 14px 12px 12px;
+          min-height: 102px;
+          padding: 10px 10px 8px;
           display: flex;
           flex-direction: column;
-          align-items: center;
-          border: 1px solid rgba(255, 255, 255, 0.22);
+          border: 1px solid #dbe7f3;
           border-radius: 16px;
-          background:
-            radial-gradient(140px 90px at 76% 5%, rgba(255, 255, 255, 0.16), transparent 66%),
-            linear-gradient(160deg, var(--card-top), var(--card-bottom));
-          color: #fff;
-          text-align: center;
-          box-shadow:
-            0 9px 18px rgba(15, 23, 42, 0.11),
-            inset 0 1px 0 rgba(255, 255, 255, 0.19);
+          background: linear-gradient(180deg, var(--soft-2) 0%, #ffffff 100%);
+          color: #0d1b44;
+          box-shadow: 0 5px 16px rgba(15, 23, 42, 0.03);
           overflow: hidden;
+        }
+
+        .summaryCell::before {
+          content: "";
+          position: absolute;
+          inset: 0 0 auto 0;
+          height: 4px;
+          background: var(--accent);
         }
 
         .summaryCell.temperature {
-          --card-top: #ff6a00;
-          --card-bottom: #c93600;
+          --accent: #ff6a00;
+          --soft: #fff1e8;
+          --soft-2: #fffaf7;
         }
 
         .summaryCell.humidity {
-          --card-top: #2cb9c7;
-          --card-bottom: #078493;
+          --accent: #10b3b9;
+          --soft: #e7fbfb;
+          --soft-2: #f7ffff;
         }
 
         .summaryCell.rain {
-          --card-top: #2196ef;
-          --card-bottom: #0861b8;
+          --accent: #1f7cff;
+          --soft: #edf5ff;
+          --soft-2: #f8fbff;
         }
 
         .summaryCell.wind {
-          --card-top: #9a56e8;
-          --card-bottom: #6331b8;
+          --accent: #8b46f7;
+          --soft: #f3ebff;
+          --soft-2: #fbf8ff;
         }
 
         .summaryCell.pressure {
-          --card-top: #2b7bc4;
-          --card-bottom: #074480;
+          --accent: #2372d9;
+          --soft: #edf5ff;
+          --soft-2: #f8fbff;
         }
 
         .summaryCell.solar {
-          --card-top: #ffad0b;
-          --card-bottom: #d77700;
+          --accent: #f5a000;
+          --soft: #fff6df;
+          --soft-2: #fffdf6;
         }
 
         .summaryCell.uv {
-          --card-top: #9a4ce2;
-          --card-bottom: #5d2da8;
-        }
-
-        .summaryLabel {
-          width: 100%;
-          min-height: 28px;
-          display: flex;
-          align-items: flex-start;
-          justify-content: center;
-          overflow: hidden;
-          font-size: 10px;
-          font-weight: 950;
-          line-height: 1.15;
-          text-transform: uppercase;
-          letter-spacing: 0.025em;
-          text-overflow: ellipsis;
+          --accent: #9448eb;
+          --soft: #f4e9ff;
+          --soft-2: #fcf8ff;
         }
 
         .summaryCore {
           width: 100%;
-          margin-top: 4px;
+          min-height: 52px;
           display: grid;
-          justify-items: center;
-          gap: 7px;
+          grid-template-columns: 42px minmax(0, 1fr);
+          align-items: center;
+          gap: 9px;
         }
 
         .summaryIcon {
-          width: 43px;
-          height: 43px;
+          width: 38px;
+          height: 38px;
           display: inline-flex;
           align-items: center;
           justify-content: center;
-          border: 1px solid rgba(255, 255, 255, 0.16);
-          border-radius: 50%;
-          background: rgba(255, 255, 255, 0.11);
-          color: #fff;
+          border-radius: 15px;
+          background: var(--soft);
+          color: var(--accent);
+          box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45);
         }
 
         .summaryIcon :global(svg) {
-          width: 28px;
-          height: 28px;
+          width: 18px;
+          height: 18px;
           fill: none;
           stroke: currentColor;
-          stroke-width: 1.75;
+          stroke-width: 1.8;
           stroke-linecap: round;
           stroke-linejoin: round;
         }
 
         .summaryMain {
+          width: 100%;
           min-width: 0;
           display: grid;
-          justify-items: center;
           gap: 1px;
+          align-content: center;
+          justify-items: start;
+          text-align: left;
         }
 
-        .summaryMain strong {
+        .summaryLabel {
+          color: #5a6f92;
+          font-size: 8px;
+          font-weight: 900;
+          line-height: 1.05;
+          text-transform: uppercase;
+          letter-spacing: 0.025em;
+          white-space: normal;
+          word-break: break-word;
+        }
+
+        .summaryValueRow {
+          min-width: 0;
+          display: grid;
+          justify-items: start;
+          align-content: start;
+          gap: 0;
+          text-align: left;
+        }
+
+        .summaryValueRow strong {
           max-width: 100%;
-          overflow: hidden;
-          font-size: clamp(16px, 1.35vw, 22px);
+          color: #0b1f52;
+          font-size: clamp(15px, 1.18vw, 19px);
           font-weight: 950;
-          line-height: 1.02;
+          line-height: 1;
           letter-spacing: -0.025em;
-          text-overflow: ellipsis;
           white-space: nowrap;
         }
 
-        .summaryMain small {
-          font-size: 9px;
+        .summaryValueRow small {
+          color: #657998;
+          font-size: 7.6px;
           font-weight: 800;
-          color: rgba(255, 255, 255, 0.88);
+          line-height: 1.05;
+          white-space: nowrap;
         }
 
         .summaryDescription {
-          min-height: 38px;
+          min-height: 18px;
           margin-top: auto;
-          padding: 10px 4px 2px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          border-top: 1px solid rgba(255, 255, 255, 0.26);
-          font-size: 8.5px;
+          padding: 5px 2px 0;
+          border-top: 1px solid #e7eef6;
+          color: #6a7f9e;
+          font-size: 8px;
           font-weight: 750;
-          line-height: 1.3;
-          color: rgba(255, 255, 255, 0.9);
+          line-height: 1.1;
+          text-align: center;
         }
 
         .summaryMetrics {
           width: 100%;
           margin-top: auto;
-          padding-top: 9px;
+          padding-top: 5px;
           display: grid;
           grid-template-columns: repeat(2, minmax(0, 1fr));
-          gap: 4px;
-          border-top: 1px solid rgba(255, 255, 255, 0.28);
+          gap: 0;
+          border-top: 1px solid #e7eef6;
         }
 
         .summaryMetrics.oneMetric {
           grid-template-columns: 1fr;
         }
 
+        .summaryMetrics.oneMetric .summaryMetric {
+          justify-items: center;
+          text-align: center;
+        }
+
+        .summaryCell .summaryMetric:first-child:last-child,
+        .summaryCell.solar .summaryMetric,
+        .summaryCell.uv .summaryMetric,
+        .summaryCell.rain .summaryMetric {
+          justify-items: center;
+          text-align: center;
+        }
+
         .summaryMetric {
           min-width: 0;
           display: grid;
           justify-items: center;
-          gap: 1px;
+          gap: 0;
+          align-content: start;
+          text-align: center;
         }
 
         .summaryMetric + .summaryMetric {
-          border-left: 1px solid rgba(255, 255, 255, 0.2);
+          padding-left: 7px;
+          margin-left: 7px;
+          border-left: 1px solid #e7eef6;
         }
 
         .summaryMetric span {
-          font-size: 7.5px;
-          font-weight: 750;
-          color: rgba(255, 255, 255, 0.78);
+          font-size: 7.2px;
+          font-weight: 850;
+          color: #6d809e;
+          line-height: 1.05;
+          text-align: center;
         }
 
         .summaryMetric b {
           max-width: 100%;
-          overflow: hidden;
-          font-size: 9.5px;
-          font-weight: 950;
-          text-overflow: ellipsis;
+          color: var(--accent);
+          font-size: 10px;
+          font-weight: 900;
           white-space: nowrap;
+          line-height: 1.05;
+          text-align: center;
         }
 
         .summaryMetric small {
           font-size: 7px;
-          font-weight: 750;
-          color: rgba(255, 255, 255, 0.72);
+          font-weight: 800;
+          color: #7f91ab;
+          line-height: 1.05;
+          text-align: center;
         }
 
-        @media (max-width: 1180px) {
+        .summaryCell.pressure .summaryMetric b {
+          font-size: 8.8px;
+        }
+
+        @media (max-width: 1320px) {
           .summaryGrid {
             overflow-x: auto;
-            grid-template-columns: repeat(7, minmax(175px, 1fr));
+            grid-template-columns: repeat(7, minmax(210px, 1fr));
             scrollbar-width: thin;
-            padding-bottom: 5px;
-          }
-
-          .summaryCell {
-            min-height: 180px;
+            padding-bottom: 4px;
           }
         }
 
@@ -8954,72 +8922,87 @@ function PeriodSummary({ data, mode }) {
           }
 
           .summaryGrid {
-            grid-template-columns: repeat(7, 120px);
-            gap: 7px;
+            grid-template-columns: repeat(7, 170px);
+            gap: 8px;
             padding-bottom: 3px;
             scroll-snap-type: x proximity;
           }
 
           .summaryCell {
-            min-height: 120px;
-            padding: 7px 7px 6px;
-            border-radius: 12px;
+            min-height: 96px;
+            padding: 8px 8px 6px;
+            border-radius: 14px;
             scroll-snap-align: start;
           }
 
-          .summaryLabel {
-            min-height: 17px;
-            font-size: 7.5px;
-            line-height: 1.05;
-          }
-
           .summaryCore {
-            margin-top: 1px;
-            gap: 3px;
+            min-height: 46px;
+            grid-template-columns: 34px minmax(0, 1fr);
+            gap: 7px;
           }
 
           .summaryIcon {
-            width: 22px;
-            height: 22px;
-            border-width: 1px;
+            width: 32px;
+            height: 32px;
+            border-radius: 11px;
           }
 
           .summaryIcon :global(svg) {
-            width: 13px;
-            height: 13px;
-            stroke-width: 1.6;
+            width: 15px;
+            height: 15px;
+            stroke-width: 1.7;
           }
 
-          .summaryMain strong {
-            font-size: 13px;
+          .summaryMain {
+            gap: 1px;
           }
 
-          .summaryMain small {
+          .summaryLabel {
             font-size: 7px;
           }
 
+          .summaryValueRow {
+            gap: 0;
+          }
+
+          .summaryValueRow strong {
+            font-size: 12.5px;
+          }
+
+          .summaryValueRow small {
+            font-size: 6.6px;
+          }
+
           .summaryDescription {
-            min-height: 27px;
-            padding: 6px 2px 0;
+            min-height: 14px;
+            padding: 4px 1px 0;
             font-size: 6.8px;
-            line-height: 1.15;
+            line-height: 1.05;
           }
 
           .summaryMetrics {
-            padding-top: 6px;
-            gap: 2px;
+            padding-top: 4px;
+          }
+
+          .summaryMetric + .summaryMetric {
+            padding-left: 6px;
+            margin-left: 6px;
           }
 
           .summaryMetric span {
-            font-size: 6px;
+            font-size: 6.3px;
           }
 
           .summaryMetric b {
-            font-size: 7.5px;
+            font-size: 8.4px;
           }
 
           .summaryMetric small {
-            font-size: 5.8px;
+            font-size: 6.7px;
+          }
+
+          .summaryCell.pressure .summaryMetric b {
+            font-size: 7.8px;
           }
         }
       `}</style>
@@ -9221,7 +9204,6 @@ function ClimatologyChart({
       dataZoom: makePeriodDataZoom(),
       grid: isMobile
         ? {
-            // Stesse dimensioni interne del grafico temperatura su mobile.
             left: isVeryNarrow ? 46 : 50,
             right: 12,
             top: 88,
@@ -9235,7 +9217,7 @@ function ClimatologyChart({
             left: 68,
             right: 30,
             top: 80,
-            bottom: ["temp", "rain", "wind"].includes(groupKey) ? 82 : 42,
+            bottom: ["temp", "rh", "wind"].includes(groupKey) ? 88 : 82,
             show: true,
             borderWidth: 0,
             backgroundColor: "rgba(248, 250, 252, 0.52)",
@@ -10274,7 +10256,7 @@ function AnomalySummaryPanel({
 
         .anomalyHeaderText span {
           color: #64748b;
-          font-size: 7px;
+          font-size: 8px;
           font-weight: 950;
           letter-spacing: 0.05em;
           text-transform: uppercase;
@@ -10290,7 +10272,7 @@ function AnomalySummaryPanel({
         .anomalyHeaderText strong {
           overflow: hidden;
           color: #0f172a;
-          font-size: 9.5px;
+          font-size: 11px;
           font-weight: 950;
           text-overflow: ellipsis;
           white-space: nowrap;
@@ -10321,12 +10303,12 @@ function AnomalySummaryPanel({
         }
 
         .meanBadge span {
-          font-size: 6.8px;
+          font-size: 8px;
           font-weight: 900;
         }
 
         .meanBadge strong {
-          font-size: 11.5px;
+          font-size: 14px;
           font-weight: 950;
           line-height: 1;
         }
@@ -10434,15 +10416,15 @@ function AnomalySummaryPanel({
 
         .scaleLabels strong {
           color: #0f172a;
-          font-size: 9px;
+          font-size: 12.5px;
           font-weight: 950;
-          line-height: 1.05;
+          line-height: 1.08;
           white-space: nowrap;
         }
 
         .scaleLabels span {
           color: #64748b;
-          font-size: 6.5px;
+          font-size: 9px;
           font-weight: 850;
           text-transform: uppercase;
           letter-spacing: 0.02em;
@@ -10471,8 +10453,8 @@ function AnomalySummaryPanel({
 
         .timeMetric strong {
           grid-row: 1 / span 2;
-          min-width: 44px;
-          font-size: 15px;
+          min-width: 48px;
+          font-size: 18px;
           font-weight: 950;
           line-height: 1;
           text-align: right;
@@ -10482,7 +10464,7 @@ function AnomalySummaryPanel({
           align-self: end;
           overflow: hidden;
           color: #64748b;
-          font-size: 6.8px;
+          font-size: 8px;
           font-weight: 900;
           text-transform: uppercase;
           text-overflow: ellipsis;
@@ -11398,8 +11380,8 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
         : null;
 
       const meanLegendLabel = "Media climatica 1991–2020";
-      const band50LegendLabel = "Fascia 50%";
-      const band80LegendLabel = "Fascia 80%";
+      const band50LegendLabel = "20°–70° percentile";
+      const band80LegendLabel = "10°–90° percentile";
 
       const tempLegend = isMobileChart
         ? [
@@ -11440,8 +11422,8 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
                 fontSize: isVeryNarrowChart ? 8.7 : 9.2,
               },
               formatter: (name) => {
-                if (name === band50LegendLabel) return "Fascia 50%";
-                if (name === band80LegendLabel) return "Fascia 80%";
+                if (name === band50LegendLabel) return "20°–70° percentile";
+                if (name === band80LegendLabel) return "10°–90° percentile";
                 return name;
               },
               data: [
@@ -11555,7 +11537,7 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
               if (band) {
                 lines.push(
                   `<span style="display:inline-block;margin-right:6px;border-radius:2px;width:10px;height:7px;background:rgba(71,85,105,.28);"></span>` +
-                    `Fascia 50% (P25–P75): ${band.lower.toFixed(1)}–${band.upper.toFixed(1)} °C`,
+                    `20°–70° percentile: ${band.lower.toFixed(1)}–${band.upper.toFixed(1)} °C`,
                 );
               }
             }
@@ -11566,7 +11548,7 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
               if (band) {
                 lines.push(
                   `<span style="display:inline-block;margin-right:6px;border-radius:2px;width:10px;height:7px;background:rgba(148,163,184,.18);"></span>` +
-                    `Fascia 80% (P10–P90): ${band.lower.toFixed(1)}–${band.upper.toFixed(1)} °C`,
+                    `10°–90° percentile: ${band.lower.toFixed(1)}–${band.upper.toFixed(1)} °C`,
                 );
               }
             }
@@ -11800,8 +11782,8 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
           : [];
 
       const medianLegendLabel = "Mediana climatica 1991–2020";
-      const band50LegendLabel = "Fascia 50%";
-      const band80LegendLabel = "Fascia 80%";
+      const band50LegendLabel = "20°–70° percentile";
+      const band80LegendLabel = "10°–90° percentile";
 
       const pulseRain = showRealtimePulse
         ? makeRealtimePulseSeries(
@@ -11952,7 +11934,7 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
               ) {
                 lines.push(
                   `<span style="display:inline-block;margin-right:6px;border-radius:2px;width:10px;height:7px;background:rgba(71,85,105,.28);"></span>` +
-                    `Fascia 50% (P25–P75): ${p25.toFixed(1)}–${p75.toFixed(1)} mm`,
+                    `20°–70° percentile: ${p25.toFixed(1)}–${p75.toFixed(1)} mm`,
                 );
               }
 
@@ -11963,7 +11945,7 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
               ) {
                 lines.push(
                   `<span style="display:inline-block;margin-right:6px;border-radius:2px;width:10px;height:7px;background:rgba(148,163,184,.18);"></span>` +
-                    `Fascia 80% (P10–P90): ${p10.toFixed(1)}–${p90.toFixed(1)} mm`,
+                    `10°–90° percentile: ${p10.toFixed(1)}–${p90.toFixed(1)} mm`,
                 );
               }
             }
@@ -12175,8 +12157,8 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
       );
 
       const meanLegendLabel = "Media climatica 1991–2020";
-      const band50LegendLabel = "Fascia 50%";
-      const band80LegendLabel = "Fascia 80%";
+      const band50LegendLabel = "20°–70° percentile";
+      const band80LegendLabel = "10°–90° percentile";
 
       const pulse = showRealtimePulse
         ? makeRealtimePulseSeries(
@@ -12324,7 +12306,7 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
               if (band) {
                 lines.push(
                   `<span style="display:inline-block;margin-right:6px;border-radius:2px;width:10px;height:7px;background:rgba(71,85,105,.28);"></span>` +
-                    `Fascia 50% (P25–P75): ${band.lower.toFixed(1)}–${band.upper.toFixed(1)}%`,
+                    `20°–70° percentile: ${band.lower.toFixed(1)}–${band.upper.toFixed(1)}%`,
                 );
               }
             }
@@ -12335,7 +12317,7 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
               if (band) {
                 lines.push(
                   `<span style="display:inline-block;margin-right:6px;border-radius:2px;width:10px;height:7px;background:rgba(148,163,184,.18);"></span>` +
-                    `Fascia 80% (P10–P90): ${band.lower.toFixed(1)}–${band.upper.toFixed(1)}%`,
+                    `10°–90° percentile: ${band.lower.toFixed(1)}–${band.upper.toFixed(1)}%`,
                 );
               }
             }
@@ -12405,8 +12387,8 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
       );
 
       const meanLegendLabel = "Media climatica 1991–2020";
-      const band50LegendLabel = "Fascia 50%";
-      const band80LegendLabel = "Fascia 80%";
+      const band50LegendLabel = "20°–70° percentile";
+      const band80LegendLabel = "10°–90° percentile";
 
       const pulseWind = showRealtimePulse
         ? makeRealtimePulseSeries(
@@ -12599,7 +12581,7 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
               if (band) {
                 lines.push(
                   `<span style="display:inline-block;margin-right:6px;border-radius:2px;width:10px;height:7px;background:rgba(71,85,105,.28);"></span>` +
-                    `Fascia 50% (P25–P75): ${band.lower.toFixed(1)}–${band.upper.toFixed(1)} km/h`,
+                    `20°–70° percentile: ${band.lower.toFixed(1)}–${band.upper.toFixed(1)} km/h`,
                 );
               }
             }
@@ -12610,7 +12592,7 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
               if (band) {
                 lines.push(
                   `<span style="display:inline-block;margin-right:6px;border-radius:2px;width:10px;height:7px;background:rgba(148,163,184,.18);"></span>` +
-                    `Fascia 80% (P10–P90): ${band.lower.toFixed(1)}–${band.upper.toFixed(1)} km/h`,
+                    `10°–90° percentile: ${band.lower.toFixed(1)}–${band.upper.toFixed(1)} km/h`,
                 );
               }
             }
@@ -13007,6 +12989,7 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
 
         .dateNavigator {
           position: relative;
+          z-index: 100;
           min-height: 84px;
           padding: 11px 20px;
           display: grid;
@@ -13075,6 +13058,7 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
 
         .chartPanel {
           position: relative;
+          z-index: 1;
           margin: 0 20px 18px;
           overflow: hidden;
           border: 1px solid #dce5ef;
@@ -13091,15 +13075,15 @@ function PeriodChart({ intradayDates = [], dailyRainByDate = {} }) {
         }
 
         .anomalyToggle {
-          min-width: 94px;
-          min-height: 27px;
-          padding: 5px 11px;
+          min-width: 108px;
+          min-height: 32px;
+          padding: 6px 14px;
           border: 1px solid #d7e0ea;
-          border-radius: 9px;
+          border-radius: 10px;
           background: #ffffff;
           color: #0f172a;
           font: inherit;
-          font-size: 9px;
+          font-size: 10px;
           font-weight: 900;
           line-height: 1;
           cursor: pointer;

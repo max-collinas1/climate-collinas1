@@ -1,7 +1,6 @@
 import Link from "next/link";
 import { Fragment, useMemo, useState } from "react";
 import SiteLayout from "../components/SiteLayout";
-import SiteHeader from "../components/SiteHeader";
 import { readDailyLive, readRecordsLive } from "../lib/liveData";
 
 export async function getStaticProps() {
@@ -14,8 +13,6 @@ export async function getStaticProps() {
     revalidate: 60,
   };
 }
-
-// -------------------- helpers --------------------
 function n(x) {
   if (x === null || x === undefined || x === "") return NaN;
 
@@ -87,6 +84,62 @@ const MONTHS_IT_FULL = [
   "Novembre",
   "Dicembre",
 ];
+
+const SEASONS = {
+  DJF: { label: "Inverno", months: [12, 1, 2] },
+  MAM: { label: "Primavera", months: [3, 4, 5] },
+  JJA: { label: "Estate", months: [6, 7, 8] },
+  SON: { label: "Autunno", months: [9, 10, 11] },
+};
+
+function seasonMeta(year, month) {
+  const y = Number(year);
+  const m = Number(month);
+
+  if (m === 12) {
+    const seasonYear = y + 1;
+    return {
+      key: "DJF",
+      seasonYear,
+      label: `Inverno ${y}/${seasonYear}`,
+      daysExpected: daysInMonth(y, 12) + daysInMonth(seasonYear, 1) + daysInMonth(seasonYear, 2),
+    };
+  }
+
+  if (m === 1 || m === 2) {
+    return {
+      key: "DJF",
+      seasonYear: y,
+      label: `Inverno ${y - 1}/${y}`,
+      daysExpected: daysInMonth(y - 1, 12) + daysInMonth(y, 1) + daysInMonth(y, 2),
+    };
+  }
+
+  if (m >= 3 && m <= 5) {
+    return {
+      key: "MAM",
+      seasonYear: y,
+      label: `Primavera ${y}`,
+      daysExpected: daysInMonth(y, 3) + daysInMonth(y, 4) + daysInMonth(y, 5),
+    };
+  }
+
+  if (m >= 6 && m <= 8) {
+    return {
+      key: "JJA",
+      seasonYear: y,
+      label: `Estate ${y}`,
+      daysExpected: daysInMonth(y, 6) + daysInMonth(y, 7) + daysInMonth(y, 8),
+    };
+  }
+
+  return {
+    key: "SON",
+    seasonYear: y,
+    label: `Autunno ${y}`,
+    daysExpected: daysInMonth(y, 9) + daysInMonth(y, 10) + daysInMonth(y, 11),
+  };
+}
 
 function monthShortFromMM(mm) {
   const m = Number(mm);
@@ -241,8 +294,6 @@ function getPeriodLabel(row) {
 
   return "";
 }
-
-// -------------------- coverage helpers --------------------
 function getCoverageValue(row, paramKey) {
   if (!row || typeof row !== "object") return NaN;
 
@@ -295,8 +346,6 @@ function filterRowsByCoverage(arr, paramKey, minCoverage = 0.95, arpasMode = "")
     return cov >= minCoverage;
   });
 }
-
-// -------------------- array helpers --------------------
 function pickFirstArray(scope, keys) {
   if (!scope || typeof scope !== "object") return [];
 
@@ -331,8 +380,6 @@ function inGroup(group, groupTone, cards) {
     groupTone: groupTone || card.groupTone || card.tone || "neutral",
   }));
 }
-
-// -------------------- computed records from daily.json --------------------
 const FIELD_ALIASES = {
   tmax: [
     "tmax",
@@ -652,11 +699,15 @@ function scopeMergePreferExisting(existing = {}, computed = {}) {
   return out;
 }
 
-function makeEmptyAgg(year, month = null) {
+function makeEmptyAgg(year, month = null, daysExpectedOverride = NaN) {
   return {
     year,
     month,
-    daysExpected: month ? daysInMonth(year, month) : daysInYear(year),
+    daysExpected: Number.isFinite(daysExpectedOverride)
+      ? daysExpectedOverride
+      : month
+        ? daysInMonth(year, month)
+        : daysInYear(year),
     daysSeen: new Set(),
     tmax: [],
     tmean: [],
@@ -678,6 +729,7 @@ function makeEmptyAgg(year, month = null) {
 
 function computeRecordsFromDaily(dailyRows) {
   const monthlyAgg = new Map();
+  const seasonalAgg = new Map();
   const yearlyAgg = new Map();
 
   for (const row of dailyRows || []) {
@@ -687,6 +739,8 @@ function computeRecordsFromDaily(dailyRows) {
     const yy = String(dt.year);
     const mm = String(dt.month).padStart(2, "0");
     const ym = `${yy}-${mm}`;
+    const season = seasonMeta(dt.year, dt.month);
+    const seasonAggKey = `${season.key}-${season.seasonYear}`;
 
     if (!monthlyAgg.has(ym)) {
       monthlyAgg.set(ym, makeEmptyAgg(dt.year, dt.month));
@@ -696,11 +750,21 @@ function computeRecordsFromDaily(dailyRows) {
       yearlyAgg.set(yy, makeEmptyAgg(dt.year));
     }
 
+    if (!seasonalAgg.has(seasonAggKey)) {
+      const agg = makeEmptyAgg(season.seasonYear, null, season.daysExpected);
+      agg.season = season.key;
+      agg.seasonYear = season.seasonYear;
+      agg.seasonLabel = season.label;
+      seasonalAgg.set(seasonAggKey, agg);
+    }
+
     const mAgg = monthlyAgg.get(ym);
     const yAgg = yearlyAgg.get(yy);
+    const sAgg = seasonalAgg.get(seasonAggKey);
 
     mAgg.daysSeen.add(dt.date);
     yAgg.daysSeen.add(dt.date);
+    sAgg.daysSeen.add(dt.date);
 
     const vals = {
       tmax: getValueByAliases(row, FIELD_ALIASES.tmax),
@@ -724,7 +788,7 @@ function computeRecordsFromDaily(dailyRows) {
       vals.trange = vals.tmax - vals.tmin;
     }
 
-    for (const agg of [mAgg, yAgg]) {
+    for (const agg of [mAgg, sAgg, yAgg]) {
       pushFinite(agg.tmax, vals.tmax);
       pushFinite(agg.tmean, vals.tmean);
       pushFinite(agg.tmin, vals.tmin);
@@ -743,74 +807,52 @@ function computeRecordsFromDaily(dailyRows) {
     }
   }
 
-  const monthlyRows = [];
-
-  for (const agg of monthlyAgg.values()) {
-    const coverage = agg.daysSeen.size / agg.daysExpected;
-
-    monthlyRows.push({
-      year: agg.year,
-      month: agg.month,
+  function aggToRow(agg, extra = {}) {
+    const coverage = agg.daysExpected > 0 ? agg.daysSeen.size / agg.daysExpected : NaN;
+    return {
+      ...extra,
       coverage,
-
       tmaxMean: avg(agg.tmax),
       tmean: avg(agg.tmean),
       tminMean: avg(agg.tmin),
       trangeMean: avg(agg.trange),
-
       rainTotal: sum(agg.rain),
       rainDaysOver1: agg.rain.filter((v) => Number.isFinite(v) && v > 1).length,
-
+      rainDaysOver10: agg.rain.filter((v) => Number.isFinite(v) && v > 10).length,
+      rainDaysOver20: agg.rain.filter((v) => Number.isFinite(v) && v > 20).length,
+      rainDaysOver50: agg.rain.filter((v) => Number.isFinite(v) && v > 50).length,
       windMean: avg(agg.windMean),
       gustMean: avg(agg.gustMean),
-
       pressMaxMean: avg(agg.pressMax),
       pressMean: avg(agg.pressMean),
       pressMinMean: avg(agg.pressMin),
-
       rhMaxMean: avg(agg.rhMax),
       rhMean: avg(agg.rhMean),
       rhMinMean: avg(agg.rhMin),
-
       uvMean: avg(agg.uvMean),
       solarMean: avg(agg.solarMean),
-    });
+    };
   }
 
-  const yearlyRows = [];
+  const monthlyRows = Array.from(monthlyAgg.values()).map((agg) =>
+    aggToRow(agg, { year: agg.year, month: agg.month })
+  );
 
-  for (const agg of yearlyAgg.values()) {
-    const coverage = agg.daysSeen.size / agg.daysExpected;
+  const seasonalRows = Array.from(seasonalAgg.values()).map((agg) =>
+    aggToRow(agg, {
+      year: agg.seasonYear,
+      seasonYear: agg.seasonYear,
+      season: agg.season,
+      seasonLabel: agg.seasonLabel,
+    })
+  );
 
-    yearlyRows.push({
-      year: agg.year,
-      coverage,
+  const yearlyRows = Array.from(yearlyAgg.values()).map((agg) =>
+    aggToRow(agg, { year: agg.year })
+  );
 
-      tmaxMean: avg(agg.tmax),
-      tmean: avg(agg.tmean),
-      tminMean: avg(agg.tmin),
-      trangeMean: avg(agg.trange),
-
-      pressMaxMean: avg(agg.pressMax),
-      pressMean: avg(agg.pressMean),
-      pressMinMean: avg(agg.pressMin),
-
-      rhMaxMean: avg(agg.rhMax),
-      rhMean: avg(agg.rhMean),
-      rhMinMean: avg(agg.rhMin),
-
-      uvMean: avg(agg.uvMean),
-      solarMean: avg(agg.solarMean),
-    });
-  }
-
-  const monthlyByMonth = {};
-
-  for (let m = 1; m <= 12; m += 1) {
-    const mm = String(m).padStart(2, "0");
-    const rows = monthlyRows.filter((r) => Number(r.month) === m);
-
-    monthlyByMonth[mm] = {
+  function buildRankScope(rows) {
+    return {
       tmax_mean_high: sortHigh(rows.map((r) => makeRankRow(r, r.tmaxMean, r.coverage))),
       tmax_mean_low: sortLow(rows.map((r) => makeRankRow(r, r.tmaxMean, r.coverage))),
       tmean_high: sortHigh(rows.map((r) => makeRankRow(r, r.tmean, r.coverage))),
@@ -819,27 +861,29 @@ function computeRecordsFromDaily(dailyRows) {
       tmin_mean_low: sortLow(rows.map((r) => makeRankRow(r, r.tminMean, r.coverage))),
       trange_mean_high: sortHigh(rows.map((r) => makeRankRow(r, r.trangeMean, r.coverage))),
       trange_mean_low: sortLow(rows.map((r) => makeRankRow(r, r.trangeMean, r.coverage))),
-
+      rain_total_high: sortHigh(rows.map((r) => makeRankRow(r, r.rainTotal, r.coverage))),
+      rain_total_low: sortLow(rows.map((r) => makeRankRow(r, r.rainTotal, r.coverage))),
       rain_days_over_1mm_high: sortHigh(rows.map((r) => makeRankRow(r, r.rainDaysOver1, r.coverage))),
       rain_days_over_1mm_low: sortLow(rows.map((r) => makeRankRow(r, r.rainDaysOver1, r.coverage))),
-
+      rain_days_over_10mm_high: sortHigh(rows.map((r) => makeRankRow(r, r.rainDaysOver10, r.coverage))),
+      rain_days_over_20mm_high: sortHigh(rows.map((r) => makeRankRow(r, r.rainDaysOver20, r.coverage))),
+      rain_days_over_50mm_high: sortHigh(rows.map((r) => makeRankRow(r, r.rainDaysOver50, r.coverage))),
       wind_avg_high: sortHigh(rows.map((r) => makeRankRow(r, r.windMean, r.coverage))),
+      wind_avg_low: sortLow(rows.map((r) => makeRankRow(r, r.windMean, r.coverage))),
       gust_mean_high: sortHigh(rows.map((r) => makeRankRow(r, r.gustMean, r.coverage))),
-
+      gust_mean_low: sortLow(rows.map((r) => makeRankRow(r, r.gustMean, r.coverage))),
       press_max_mean_high: sortHigh(rows.map((r) => makeRankRow(r, r.pressMaxMean, r.coverage))),
       press_max_mean_low: sortLow(rows.map((r) => makeRankRow(r, r.pressMaxMean, r.coverage))),
       press_mean_high: sortHigh(rows.map((r) => makeRankRow(r, r.pressMean, r.coverage))),
       press_mean_low: sortLow(rows.map((r) => makeRankRow(r, r.pressMean, r.coverage))),
       press_min_mean_high: sortHigh(rows.map((r) => makeRankRow(r, r.pressMinMean, r.coverage))),
       press_min_mean_low: sortLow(rows.map((r) => makeRankRow(r, r.pressMinMean, r.coverage))),
-
       rh_max_mean_high: sortHigh(rows.map((r) => makeRankRow(r, r.rhMaxMean, r.coverage))),
       rh_max_mean_low: sortLow(rows.map((r) => makeRankRow(r, r.rhMaxMean, r.coverage))),
       rh_mean_high: sortHigh(rows.map((r) => makeRankRow(r, r.rhMean, r.coverage))),
       rh_mean_low: sortLow(rows.map((r) => makeRankRow(r, r.rhMean, r.coverage))),
       rh_min_mean_high: sortHigh(rows.map((r) => makeRankRow(r, r.rhMinMean, r.coverage))),
       rh_min_mean_low: sortLow(rows.map((r) => makeRankRow(r, r.rhMinMean, r.coverage))),
-
       uv_mean_high: sortHigh(rows.map((r) => makeRankRow(r, r.uvMean, r.coverage))),
       uv_mean_low: sortLow(rows.map((r) => makeRankRow(r, r.uvMean, r.coverage))),
       solar_mean_high: sortHigh(rows.map((r) => makeRankRow(r, r.solarMean, r.coverage))),
@@ -847,41 +891,23 @@ function computeRecordsFromDaily(dailyRows) {
     };
   }
 
-  const yearly = {
-    tmax_mean_high: sortHigh(yearlyRows.map((r) => makeRankRow(r, r.tmaxMean, r.coverage))),
-    tmax_mean_low: sortLow(yearlyRows.map((r) => makeRankRow(r, r.tmaxMean, r.coverage))),
-    tmean_high: sortHigh(yearlyRows.map((r) => makeRankRow(r, r.tmean, r.coverage))),
-    tmean_low: sortLow(yearlyRows.map((r) => makeRankRow(r, r.tmean, r.coverage))),
-    tmin_mean_high: sortHigh(yearlyRows.map((r) => makeRankRow(r, r.tminMean, r.coverage))),
-    tmin_mean_low: sortLow(yearlyRows.map((r) => makeRankRow(r, r.tminMean, r.coverage))),
-    trange_mean_high: sortHigh(yearlyRows.map((r) => makeRankRow(r, r.trangeMean, r.coverage))),
-    trange_mean_low: sortLow(yearlyRows.map((r) => makeRankRow(r, r.trangeMean, r.coverage))),
+  const monthlyByMonth = {};
+  for (let m = 1; m <= 12; m += 1) {
+    const mm = String(m).padStart(2, "0");
+    monthlyByMonth[mm] = buildRankScope(monthlyRows.filter((r) => Number(r.month) === m));
+  }
 
-    press_max_mean_high: sortHigh(yearlyRows.map((r) => makeRankRow(r, r.pressMaxMean, r.coverage))),
-    press_max_mean_low: sortLow(yearlyRows.map((r) => makeRankRow(r, r.pressMaxMean, r.coverage))),
-    press_mean_high: sortHigh(yearlyRows.map((r) => makeRankRow(r, r.pressMean, r.coverage))),
-    press_mean_low: sortLow(yearlyRows.map((r) => makeRankRow(r, r.pressMean, r.coverage))),
-    press_min_mean_high: sortHigh(yearlyRows.map((r) => makeRankRow(r, r.pressMinMean, r.coverage))),
-    press_min_mean_low: sortLow(yearlyRows.map((r) => makeRankRow(r, r.pressMinMean, r.coverage))),
-
-    rh_max_mean_high: sortHigh(yearlyRows.map((r) => makeRankRow(r, r.rhMaxMean, r.coverage))),
-    rh_max_mean_low: sortLow(yearlyRows.map((r) => makeRankRow(r, r.rhMaxMean, r.coverage))),
-    rh_mean_high: sortHigh(yearlyRows.map((r) => makeRankRow(r, r.rhMean, r.coverage))),
-    rh_mean_low: sortLow(yearlyRows.map((r) => makeRankRow(r, r.rhMean, r.coverage))),
-    rh_min_mean_high: sortHigh(yearlyRows.map((r) => makeRankRow(r, r.rhMinMean, r.coverage))),
-    rh_min_mean_low: sortLow(yearlyRows.map((r) => makeRankRow(r, r.rhMinMean, r.coverage))),
-
-    uv_mean_high: sortHigh(yearlyRows.map((r) => makeRankRow(r, r.uvMean, r.coverage))),
-    uv_mean_low: sortLow(yearlyRows.map((r) => makeRankRow(r, r.uvMean, r.coverage))),
-    solar_mean_high: sortHigh(yearlyRows.map((r) => makeRankRow(r, r.solarMean, r.coverage))),
-    solar_mean_low: sortLow(yearlyRows.map((r) => makeRankRow(r, r.solarMean, r.coverage))),
-  };
+  const seasonalBySeason = {};
+  for (const seasonKey of Object.keys(SEASONS)) {
+    seasonalBySeason[seasonKey] = buildRankScope(
+      seasonalRows.filter((r) => r.season === seasonKey)
+    );
+  }
 
   return {
-    monthly: {
-      by_month: monthlyByMonth,
-    },
-    yearly,
+    monthly: { by_month: monthlyByMonth },
+    seasonal: { by_season: seasonalBySeason },
+    yearly: buildRankScope(yearlyRows),
   };
 }
 
@@ -897,6 +923,7 @@ function enhanceRecordsWithDaily(rawRecords, dailyRows) {
         top_n: 20,
         daily: {},
         monthly: { by_month: {} },
+        seasonal: { by_season: {} },
         yearly: {},
       };
 
@@ -917,12 +944,24 @@ function enhanceRecordsWithDaily(rawRecords, dailyRows) {
     );
   }
 
+  base.seasonal = {
+    ...(base.seasonal || {}),
+    by_season: {
+      ...(base.seasonal?.by_season || {}),
+    },
+  };
+
+  for (const seasonKey of Object.keys(SEASONS)) {
+    base.seasonal.by_season[seasonKey] = scopeMergePreferExisting(
+      base.seasonal.by_season[seasonKey] || {},
+      computed.seasonal.by_season[seasonKey] || {}
+    );
+  }
+
   base.yearly = scopeMergePreferExisting(base.yearly || {}, computed.yearly || {});
 
   return base;
 }
-
-// -------------------- scope helpers --------------------
 function getDailyScope(records, yearSel, monthSel) {
   const d = records?.daily;
   if (!d) return null;
@@ -944,7 +983,9 @@ function getMonthlyScope(records, monthSel) {
   return records?.monthly?.by_month?.[monthSel] || null;
 }
 
-// -------------------- cards builders --------------------
+function getSeasonalScope(records, seasonSel) {
+  return records?.seasonal?.by_season?.[seasonSel] || null;
+}
 function getDailyCards(cat, scope) {
   const cards = {
     temp: [
@@ -1334,6 +1375,91 @@ function getMonthlyCards(cat, scope) {
           "",
           { tone: "radLow" }
         ),
+      ]),
+    ],
+  };
+
+  return (cards[cat] || [])
+    .map((c) => ({
+      ...c,
+      rows: c.skipCoverageFilter
+        ? c.rows
+        : filterRowsByCoverage(c.rows, c.paramKey, 0.95, c.arpasMode),
+    }))
+    .filter((c) => c.rows.length > 0);
+}
+
+function getSeasonalCards(cat, scope) {
+  const cards = {
+    temp: [
+      ...inGroup("Valori termici stagionali più alti", "tempHigh", [
+        makeCard("Temperatura media massima stagionale più alta", pickFirstArray(scope, ["tmax_mean_high"]), "°C", 1, "temperature", "", { tone: "tempHigh" }),
+        makeCard("Temperatura media stagionale più alta", pickFirstArray(scope, ["tmean_high"]), "°C", 1, "temperature", "", { tone: "tempHigh" }),
+        makeCard("Temperatura media minima stagionale più alta", pickFirstArray(scope, ["tmin_mean_high"]), "°C", 1, "temperature", "", { tone: "tempHigh" }),
+      ]),
+      ...inGroup("Valori termici stagionali più bassi", "tempLow", [
+        makeCard("Temperatura media massima stagionale più bassa", pickFirstArray(scope, ["tmax_mean_low"]), "°C", 1, "temperature", "", { tone: "tempLow" }),
+        makeCard("Temperatura media stagionale più bassa", pickFirstArray(scope, ["tmean_low"]), "°C", 1, "temperature", "", { tone: "tempLow" }),
+        makeCard("Temperatura media minima stagionale più bassa", pickFirstArray(scope, ["tmin_mean_low"]), "°C", 1, "temperature", "", { tone: "tempLow" }),
+      ]),
+      ...inGroup("Escursione termica stagionale", "tempRangeHigh", [
+        makeCard("Escursione termica media stagionale più alta", pickFirstArray(scope, ["trange_mean_high"]), "°C", 1, "temperature", "", { tone: "tempRangeHigh" }),
+        makeCard("Escursione termica media stagionale più bassa", pickFirstArray(scope, ["trange_mean_low"]), "°C", 1, "temperature", "", { tone: "tempRangeLow" }),
+      ]),
+    ],
+    precip: [
+      ...inGroup("Totali pluviometrici stagionali", "rainHigh", [
+        makeCard("Precipitazioni stagionali più elevate", pickFirstArray(scope, ["rain_total_high"]), "mm", 1, "rain", "", { tone: "rainHigh" }),
+        makeCard("Precipitazioni stagionali più basse", pickFirstArray(scope, ["rain_total_low"]), "mm", 1, "rain", "", { tone: "rainLow" }),
+      ]),
+      ...inGroup("Giorni con precipitazioni", "rainHigh", [
+        makeCard("Stagioni con più giorni piovosi > 1 mm", pickFirstArray(scope, ["rain_days_over_1mm_high"]), "gg", 0, "rain", "", { tone: "rainHigh" }),
+        makeCard("Stagioni con meno giorni piovosi > 1 mm", pickFirstArray(scope, ["rain_days_over_1mm_low"]), "gg", 0, "rain", "", { tone: "rainLow" }),
+        makeCard("Giorni con precipitazioni > 10 mm", pickFirstArray(scope, ["rain_days_over_10mm_high"]), "gg", 0, "rain", "", { tone: "rainHigh" }),
+        makeCard("Giorni con precipitazioni > 20 mm", pickFirstArray(scope, ["rain_days_over_20mm_high"]), "gg", 0, "rain", "", { tone: "rainHigh" }),
+        makeCard("Giorni con precipitazioni > 50 mm", pickFirstArray(scope, ["rain_days_over_50mm_high"]), "gg", 0, "rain", "", { tone: "rainHigh" }),
+      ]),
+    ],
+    wind: [
+      ...inGroup("Vento stagionale", "windHigh", [
+        makeCard("Vento medio stagionale più alto", pickFirstArray(scope, ["wind_avg_high"]), "km/h", 1, "wind", "", { tone: "windHigh" }),
+        makeCard("Vento medio stagionale più basso", pickFirstArray(scope, ["wind_avg_low"]), "km/h", 1, "wind", "", { tone: "windLow" }),
+        makeCard("Raffiche medie stagionali più alte", pickFirstArray(scope, ["gust_mean_high"]), "km/h", 1, "wind", "", { tone: "windHigh" }),
+        makeCard("Raffiche medie stagionali più basse", pickFirstArray(scope, ["gust_mean_low"]), "km/h", 1, "wind", "", { tone: "windLow" }),
+      ]),
+    ],
+    press: [
+      ...inGroup("Pressione stagionale più alta", "pressHigh", [
+        makeCard("Pressione massima media più alta", pickFirstArray(scope, ["press_max_mean_high"]), "hPa", 1, "pressure", "", { tone: "pressHigh" }),
+        makeCard("Pressione media più alta", pickFirstArray(scope, ["press_mean_high"]), "hPa", 1, "pressure", "", { tone: "pressHigh" }),
+        makeCard("Pressione minima media più alta", pickFirstArray(scope, ["press_min_mean_high"]), "hPa", 1, "pressure", "", { tone: "pressHigh" }),
+      ]),
+      ...inGroup("Pressione stagionale più bassa", "pressLow", [
+        makeCard("Pressione massima media più bassa", pickFirstArray(scope, ["press_max_mean_low"]), "hPa", 1, "pressure", "", { tone: "pressLow" }),
+        makeCard("Pressione media più bassa", pickFirstArray(scope, ["press_mean_low"]), "hPa", 1, "pressure", "", { tone: "pressLow" }),
+        makeCard("Pressione minima media più bassa", pickFirstArray(scope, ["press_min_mean_low"]), "hPa", 1, "pressure", "", { tone: "pressLow" }),
+      ]),
+    ],
+    rh: [
+      ...inGroup("Umidità stagionale più alta", "humHigh", [
+        makeCard("Umidità massima media più alta", pickFirstArray(scope, ["rh_max_mean_high"]), "%", 0, "humidity", "", { tone: "humHigh" }),
+        makeCard("Umidità media più alta", pickFirstArray(scope, ["rh_mean_high"]), "%", 0, "humidity", "", { tone: "humHigh" }),
+        makeCard("Umidità minima media più alta", pickFirstArray(scope, ["rh_min_mean_high"]), "%", 0, "humidity", "", { tone: "humHigh" }),
+      ]),
+      ...inGroup("Umidità stagionale più bassa", "humLow", [
+        makeCard("Umidità massima media più bassa", pickFirstArray(scope, ["rh_max_mean_low"]), "%", 0, "humidity", "", { tone: "humLow" }),
+        makeCard("Umidità media più bassa", pickFirstArray(scope, ["rh_mean_low"]), "%", 0, "humidity", "", { tone: "humLow" }),
+        makeCard("Umidità minima media più bassa", pickFirstArray(scope, ["rh_min_mean_low"]), "%", 0, "humidity", "", { tone: "humLow" }),
+      ]),
+    ],
+    rad: [
+      ...inGroup("UV e radiazione stagionale più alta", "radHigh", [
+        makeCard("UV medio stagionale più alto", pickFirstArray(scope, ["uv_mean_high"]), "", 1, "radiation", "", { tone: "radHigh" }),
+        makeCard("Radiazione media stagionale più alta", pickFirstArray(scope, ["solar_mean_high"]), "W/m²", 0, "radiation", "", { tone: "radHigh" }),
+      ]),
+      ...inGroup("UV e radiazione stagionale più bassa", "radLow", [
+        makeCard("UV medio stagionale più basso", pickFirstArray(scope, ["uv_mean_low"]), "", 1, "radiation", "", { tone: "radLow" }),
+        makeCard("Radiazione media stagionale più bassa", pickFirstArray(scope, ["solar_mean_low"]), "W/m²", 0, "radiation", "", { tone: "radLow" }),
       ]),
     ],
   };
@@ -1803,18 +1929,34 @@ function getYearlyCards(cat, scope) {
     }))
     .filter((c) => c.rows.length > 0);
 }
+function getSeasonLabel(row) {
+  if (row?.seasonLabel) return row.seasonLabel;
+  const key = row?.season;
+  const seasonYear = Number(row?.seasonYear || row?.year);
+  if (!key || !Number.isFinite(seasonYear)) return "—";
+  if (key === "DJF") return `Inverno ${seasonYear - 1}/${seasonYear}`;
+  return `${SEASONS[key]?.label || key} ${seasonYear}`;
+}
 
-// -------------------- components --------------------
+function getSeasonHref(row) {
+  const key = String(row?.season || "").toLowerCase();
+  const seasonYear = Number(row?.seasonYear || row?.year);
+  if (!key || !Number.isFinite(seasonYear)) return "/stagioni";
+  return `/stagioni/${seasonYear}/${key}`;
+}
+
 function MiniRankTable({ rows, unit, digits = 1, kind, topN = 20, arpasMode = "", showPeriod = false }) {
   const list = takeTop(rows, topN);
   const has = list.length > 0;
+  const whenLabel = kind === "daily" ? "Giorno" : kind === "monthly" ? "Mese" : kind === "seasonal" ? "Stagione" : "Anno";
 
   return (
     <table className="miniTable">
       <thead>
         <tr>
+          <th className="thRank">#</th>
           <th className="thVal">Valore</th>
-          <th className="thWhen">{kind === "daily" ? "Giorno" : kind === "monthly" ? "Mese" : "Anno"}</th>
+          <th className="thWhen">{whenLabel}</th>
         </tr>
       </thead>
       <tbody>
@@ -1824,14 +1966,15 @@ function MiniRankTable({ rows, unit, digits = 1, kind, topN = 20, arpasMode = ""
             const isArpas = hasArpasPriority(r, kind, arpasMode);
             const arpasNote = getArpasNote(r, kind, arpasMode);
             const periodLabel = showPeriod ? getPeriodLabel(r) : "";
+            const rankClass = idx < 3 ? `rankBadge rankBadge-${idx + 1}` : "rankBadge";
 
             if (kind === "daily") {
               return (
                 <tr key={`${r.date}-${idx}`}>
+                  <td className="tdRank"><span className={rankClass}>{idx + 1}</span></td>
                   <td className="tdVal">{vStr}</td>
                   <td className="tdWhen">
                     <Link href={`/giorni/${r.date}`} className="rowLink" title="Apri dettaglio giornaliero">
-                      <span className="extCell" aria-hidden="true">↗</span>
                       {fmtDateIT(r.date)}
                     </Link>
                   </td>
@@ -1845,6 +1988,7 @@ function MiniRankTable({ rows, unit, digits = 1, kind, topN = 20, arpasMode = ""
 
               return (
                 <tr key={`${yy}-${mm}-${idx}`}>
+                  <td className="tdRank"><span className={rankClass}>{idx + 1}</span></td>
                   <td className="tdVal">
                     <span className={isArpas ? "arpasValue" : ""} title={isArpas ? arpasNote : ""}>
                       {vStr}
@@ -1853,8 +1997,21 @@ function MiniRankTable({ rows, unit, digits = 1, kind, topN = 20, arpasMode = ""
                   </td>
                   <td className="tdWhen">
                     <Link href={`/mesi/${yy}/${mm}`} className="rowLink" title="Apri dettaglio mensile">
-                      <span className="extCell" aria-hidden="true">↗</span>
                       {ymLabel(yy, Number(mm))}
+                    </Link>
+                  </td>
+                </tr>
+              );
+            }
+
+            if (kind === "seasonal") {
+              return (
+                <tr key={`${r.season || "season"}-${r.seasonYear || r.year}-${idx}`}>
+                  <td className="tdRank"><span className={rankClass}>{idx + 1}</span></td>
+                  <td className="tdVal">{vStr}</td>
+                  <td className="tdWhen">
+                    <Link href={getSeasonHref(r)} className="rowLink" title="Apri dettaglio stagionale">
+                      {getSeasonLabel(r)}
                     </Link>
                   </td>
                 </tr>
@@ -1863,6 +2020,7 @@ function MiniRankTable({ rows, unit, digits = 1, kind, topN = 20, arpasMode = ""
 
             return (
               <tr key={`${r.year}-${idx}`}>
+                <td className="tdRank"><span className={rankClass}>{idx + 1}</span></td>
                 <td className="tdVal">
                   <span className={isArpas ? "arpasValue" : ""} title={isArpas ? arpasNote : ""}>
                     {vStr}
@@ -1872,7 +2030,6 @@ function MiniRankTable({ rows, unit, digits = 1, kind, topN = 20, arpasMode = ""
                 </td>
                 <td className="tdWhen">
                   <Link href={`/anni/${r.year}`} className="rowLink" title="Apri dettaglio annuale">
-                    <span className="extCell" aria-hidden="true">↗</span>
                     {r.year}
                   </Link>
                 </td>
@@ -1881,7 +2038,7 @@ function MiniRankTable({ rows, unit, digits = 1, kind, topN = 20, arpasMode = ""
           })
         ) : (
           <tr>
-            <td colSpan={2} className="tdEmpty">Nessun dato disponibile.</td>
+            <td colSpan={3} className="tdEmpty">Nessun dato disponibile.</td>
           </tr>
         )}
       </tbody>
@@ -1889,9 +2046,29 @@ function MiniRankTable({ rows, unit, digits = 1, kind, topN = 20, arpasMode = ""
   );
 }
 
+function toneIcon(tone) {
+  const icons = {
+    tempHigh: "↑",
+    tempLow: "↓",
+    tempRangeHigh: "↕",
+    tempRangeLow: "↕",
+    rainHigh: "↧",
+    rainLow: "↥",
+    windHigh: "≈",
+    windLow: "≈",
+    pressHigh: "↑",
+    pressLow: "↓",
+    humHigh: "◆",
+    humLow: "◇",
+    radHigh: "☀",
+    radLow: "☀",
+    neutral: "•",
+  };
+  return icons[tone] || icons.neutral;
+}
+
 function SectionDivider({ title, tone = "neutral" }) {
   const toneClass = `sectionTone-${tone || "neutral"}`;
-
   return (
     <div className={`sectionDivider ${toneClass}`}>
       <span>{title}</span>
@@ -1901,10 +2078,10 @@ function SectionDivider({ title, tone = "neutral" }) {
 
 function Card({ title, tone = "neutral", children }) {
   const toneClass = `cardTone-${tone || "neutral"}`;
-
   return (
     <div className={`card ${toneClass}`}>
       <div className="cardHead">
+        <div className="cardIcon" aria-hidden="true">{toneIcon(tone)}</div>
         <div className="cardTitle">{title}</div>
       </div>
       <div className="cardBody">{children}</div>
@@ -1938,31 +2115,26 @@ function RecordsGrid({ cards, kind, topN }) {
 
   return (
     <section className="recordsSections">
-      {sections.map((section, sectionIndex) => {
-        const countClass = `cardGridCount-${Math.min(section.cards.length, 3)}`;
-
-        return (
-          <Fragment key={`${section.title || "group"}-${sectionIndex}`}>
-            {section.title ? <SectionDivider title={section.title} tone={section.tone} /> : null}
-
-            <div className={`cardGrid ${countClass}`}>
-              {section.cards.map((c, i) => (
-                <Card key={`${c.title}-${i}`} title={c.title} tone={c.tone}>
-                  <MiniRankTable
-                    rows={c.rows}
-                    unit={c.unit}
-                    digits={c.digits}
-                    kind={kind}
-                    topN={topN}
-                    arpasMode={c.arpasMode}
-                    showPeriod={c.showPeriod}
-                  />
-                </Card>
-              ))}
-            </div>
-          </Fragment>
-        );
-      })}
+      {sections.map((section, sectionIndex) => (
+        <Fragment key={`${section.title || "group"}-${sectionIndex}`}>
+          {section.title ? <SectionDivider title={section.title} tone={section.tone} /> : null}
+          <div className="cardGrid">
+            {section.cards.map((c, i) => (
+              <Card key={`${c.title}-${i}`} title={c.title} tone={c.tone}>
+                <MiniRankTable
+                  rows={c.rows}
+                  unit={c.unit}
+                  digits={c.digits}
+                  kind={kind}
+                  topN={topN}
+                  arpasMode={c.arpasMode}
+                  showPeriod={c.showPeriod}
+                />
+              </Card>
+            ))}
+          </div>
+        </Fragment>
+      ))}
     </section>
   );
 }
@@ -1985,30 +2157,75 @@ function CatButton({ active, children, onClick }) {
 
 function MonthPicker({ value, onChange, allowAll = true }) {
   return (
-    <div className="monthPick">
-      {allowAll ? (
-        <button type="button" onClick={() => onChange("all")} className={value === "all" ? "mBtn mBtnOn" : "mBtn"}>
-          Tutti
-        </button>
-      ) : null}
-
-      {Array.from({ length: 12 }, (_, i) => {
-        const mm = String(i + 1).padStart(2, "0");
-        const active = mm === value;
-
-        return (
-          <button
-            key={mm}
-            type="button"
-            onClick={() => onChange(mm)}
-            className={active ? "mBtn mBtnOn" : "mBtn"}
-            title={monthFullFromMM(mm)}
-          >
-            {monthShortFromMM(mm)}
+    <>
+      <div className="monthPick monthPickDesktop">
+        {allowAll ? (
+          <button type="button" onClick={() => onChange("all")} className={value === "all" ? "mBtn mBtnOn" : "mBtn"}>
+            Tutti
           </button>
-        );
-      })}
+        ) : null}
+
+        {Array.from({ length: 12 }, (_, i) => {
+          const mm = String(i + 1).padStart(2, "0");
+          const active = mm === value;
+
+          return (
+            <button
+              key={mm}
+              type="button"
+              onClick={() => onChange(mm)}
+              className={active ? "mBtn mBtnOn" : "mBtn"}
+              title={monthFullFromMM(mm)}
+            >
+              {monthShortFromMM(mm)}
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="monthPickMobile">
+        <select className="monthSelMobile" value={value} onChange={(e) => onChange(e.target.value)} aria-label="Seleziona mese">
+          {allowAll ? <option value="all">Tutti i mesi</option> : null}
+          {Array.from({ length: 12 }, (_, i) => {
+            const mm = String(i + 1).padStart(2, "0");
+            return (
+              <option key={mm} value={mm}>
+                {monthFullFromMM(mm)}
+              </option>
+            );
+          })}
+        </select>
+      </div>
+    </>
+  );
+}
+
+function SeasonPicker({ value, onChange }) {
+  return (
+    <div className="seasonPick">
+      {Object.entries(SEASONS).map(([key, info]) => (
+        <button
+          key={key}
+          type="button"
+          onClick={() => onChange(key)}
+          className={value === key ? `seasonBtn seasonBtnOn seasonBtn-${key}` : `seasonBtn seasonBtn-${key}`}
+        >
+          <span className="seasonSymbol" aria-hidden="true">
+            {key === "DJF" ? "❄" : key === "MAM" ? "✿" : key === "JJA" ? "☀" : "◆"}
+          </span>
+          {info.label}
+        </button>
+      ))}
     </div>
+  );
+}
+
+function SidebarCatButton({ active, children, onClick, symbol }) {
+  return (
+    <button type="button" onClick={onClick} className={active ? "sideCatBtn sideCatBtnOn" : "sideCatBtn"}>
+      <span className="sideCatIcon" aria-hidden="true">{symbol}</span>
+      <span>{children}</span>
+    </button>
   );
 }
 
@@ -2024,32 +2241,16 @@ function YearPicker({ value, onChange, years }) {
     </select>
   );
 }
-
-// -------------------- page --------------------
 export default function RecordsPage({ records }) {
   const [tab, setTab] = useState("daily");
   const [yearSel, setYearSel] = useState("all");
   const [monthSel, setMonthSel] = useState("all");
   const [catDaily, setCatDaily] = useState("temp");
   const [catMonthly, setCatMonthly] = useState("temp");
+  const [catSeasonal, setCatSeasonal] = useState("temp");
   const [catYearly, setCatYearly] = useState("temp");
   const [mmMonthly, setMmMonthly] = useState("01");
-
-  if (!records) {
-    return (
-      <SiteLayout>
-        <div className="wrap">
-          <SiteHeader kicker="RECORD" title="Record" subtitle="" />
-          <section className="hero">
-            <div className="sub">
-              File <code>data/record.json</code> non trovato. Crealo manualmente.
-            </div>
-          </section>
-          <style jsx>{baseCss}</style>
-        </div>
-      </SiteLayout>
-    );
-  }
+  const [seasonSel, setSeasonSel] = useState("JJA");
 
   const topN = useMemo(() => {
     const v = Number(records?.top_n);
@@ -2058,181 +2259,154 @@ export default function RecordsPage({ records }) {
 
   const yearsAvail = useMemo(() => {
     const ys = records?.daily?.by_year ? Object.keys(records.daily.by_year) : [];
-    return ys.sort();
+    return ys.sort((a, b) => Number(b) - Number(a));
   }, [records]);
 
   const dailyScope = useMemo(() => getDailyScope(records, yearSel, monthSel), [records, yearSel, monthSel]);
   const monthlyScope = useMemo(() => getMonthlyScope(records, mmMonthly), [records, mmMonthly]);
+  const seasonalScope = useMemo(() => getSeasonalScope(records, seasonSel), [records, seasonSel]);
   const yearlyScope = records?.yearly || null;
 
   const dailyCards = useMemo(() => getDailyCards(catDaily, dailyScope), [catDaily, dailyScope]);
   const monthlyCards = useMemo(() => getMonthlyCards(catMonthly, monthlyScope), [catMonthly, monthlyScope]);
+  const seasonalCards = useMemo(() => getSeasonalCards(catSeasonal, seasonalScope), [catSeasonal, seasonalScope]);
   const yearlyCards = useMemo(() => getYearlyCards(catYearly, yearlyScope), [catYearly, yearlyScope]);
 
+  if (!records) {
+    return (
+      <SiteLayout
+        headerProps={{
+          title: "Record",
+          kicker: (
+            <span className="recordHeroKicker">
+              ARCHIVIO RECORD<br />METEOROLOGICI
+            </span>
+          ),
+          subtitle: (
+            <span className="recordHeroSubtitle">
+              I principali estremi dell’archivio della stazione di Collinas, organizzati per scala temporale e parametro. Le classifiche mensili, stagionali e annuali considerano periodi con copertura dati almeno pari al 95% quando disponibile o calcolabile.
+            </span>
+          ),
+          currentPath: "/records",
+          showPeriod: false,
+        }}
+      >
+        <div className="wrap">
+          <section className="emptyBox">
+            File <code>data/record.json</code> non trovato. Crealo manualmente.
+          </section>
+          <style jsx>{baseCss}</style>
+        </div>
+      </SiteLayout>
+    );
+  }
+
+  const catConfig = [
+    ["temp", "Temperature", "°"],
+    ["precip", "Precipitazioni", "↧"],
+    ["wind", "Vento", "≈"],
+    ["press", "Pressione", "◴"],
+    ["rh", "Umidità", "◆"],
+    ["rad", "Radiazione", "☀"],
+  ];
+
+  const activeCat = tab === "daily" ? catDaily : tab === "monthly" ? catMonthly : tab === "seasonal" ? catSeasonal : catYearly;
+  const setActiveCat = tab === "daily" ? setCatDaily : tab === "monthly" ? setCatMonthly : tab === "seasonal" ? setCatSeasonal : setCatYearly;
+  const activeCards = tab === "daily" ? dailyCards : tab === "monthly" ? monthlyCards : tab === "seasonal" ? seasonalCards : yearlyCards;
+  const activeKind = tab === "daily" ? "daily" : tab === "monthly" ? "monthly" : tab === "seasonal" ? "seasonal" : "yearly";
+
   return (
-    <SiteLayout>
+    <SiteLayout
+      headerProps={{
+        title: "Record",
+        kicker: (
+          <span className="recordHeroKicker">
+            ARCHIVIO RECORD<br />METEOROLOGICI
+          </span>
+        ),
+        subtitle: (
+          <span className="recordHeroSubtitle">
+            I principali estremi dell’archivio della stazione di Collinas, organizzati per scala temporale e parametro. Le classifiche mensili, stagionali e annuali considerano periodi con copertura dati almeno pari al 95% quando disponibile o calcolabile.
+          </span>
+        ),
+        currentPath: "/records",
+        showPeriod: false,
+      }}
+    >
       <div className="wrap">
-        <SiteHeader kicker="RECORD" title="Record" subtitle="" />
-
-        <section className="pageDescription" aria-label="Descrizione pagina record">
-          <div className="descriptionCard">
-            <p>
-              Questa pagina raccoglie i principali record meteorologici
-              registrati nell’archivio della stazione. Puoi consultare le
-              classifiche giornaliere, mensili e annuali, filtrando i dati per
-              anno, mese e parametro: temperature, precipitazioni, vento,
-              pressione, umidità e radiazione. Ogni tabella mostra i valori più
-              significativi disponibili e permette di aprire direttamente il
-              dettaglio del giorno, del mese o dell’anno corrispondente. I record
-              giornalieri, mensili e annuali vengono mostrati considerando solo
-              periodi con copertura dati almeno pari al 95%, quando la copertura è
-              disponibile o calcolabile dai dati giornalieri. Nelle classifiche
-              annuali sono inclusi anche gli indici di frequenza termica e
-              pluviometrica, come giorni molto caldi, notti tropicali, gelate,
-              giorni con piogge intense, accumuli massimi su più giorni consecutivi
-              e periodi consecutivi secchi o piovosi. Per le precipitazioni mensili
-              e annuali, quando presenti, vengono mantenuti in evidenza anche i
-              valori corretti o integrati con dato ARPAS.
-            </p>
+        <div className="mainHeader mainHeaderMetaOnly">
+          <div className="updatedChip">
+            <span>Aggiornato</span>
+            <b>{fmtGeneratedAt(records.generated_at)}</b>
           </div>
-        </section>
+        </div>
 
-        <header className="hero">
-          <div className="heroTop">
-            <div className="heroMeta">
-              <div className="sub">
-                Aggiornato: <b>{fmtGeneratedAt(records.generated_at)}</b>
-              </div>
+        <section className="recordsShell">
+          <aside className="recordsSidebar">
+            <div className="sidebarTitle">
+              <span className="sidebarTitleIcon" aria-hidden="true">▥</span>
+              <span>Filtri record</span>
             </div>
 
-            <div className="heroRight">
-              <div className="tabs">
-                <TabButton
-                  active={tab === "daily"}
-                  onClick={() => {
-                    setTab("daily");
-                    setCatDaily("temp");
-                  }}
-                >
-                  Giornalieri
-                </TabButton>
-                <TabButton
-                  active={tab === "monthly"}
-                  onClick={() => {
-                    setTab("monthly");
-                    setCatMonthly("temp");
-                  }}
-                >
-                  Mensili
-                </TabButton>
-                <TabButton
-                  active={tab === "yearly"}
-                  onClick={() => {
-                    setTab("yearly");
-                    setCatYearly("temp");
-                  }}
-                >
-                  Annuali
-                </TabButton>
-              </div>
-            </div>
-          </div>
+            {tab === "daily" ? (
+              <>
+                <div className="sideSection">
+                  <div className="sideLabel">Anno</div>
+                  <YearPicker value={yearSel} onChange={setYearSel} years={yearsAvail} />
+                </div>
+                <div className="sideSection">
+                  <div className="sideLabel">Mese</div>
+                  <MonthPicker value={monthSel} onChange={setMonthSel} allowAll />
+                </div>
+              </>
+            ) : null}
 
-          {tab === "daily" ? (
-            <div className="filterBar filterBarCenter">
-              <div className="filterBox filterBoxYear">
-                <div className="filterLabel filterLabelCenter">Seleziona Anno</div>
-                <YearPicker value={yearSel} onChange={setYearSel} years={yearsAvail} />
-              </div>
-
-              <div className="filterBox filterBoxMonths">
-                <div className="filterLabel filterLabelCenter">Seleziona Mese</div>
-                <MonthPicker value={monthSel} onChange={setMonthSel} allowAll />
-              </div>
-            </div>
-          ) : null}
-
-          {tab === "monthly" ? (
-            <div className="filterBar filterBarOnlyMonths">
-              <div className="filterBox filterBoxMonthsOnly">
-                <div className="filterLabel filterLabelCenter">Seleziona Mese</div>
+            {tab === "monthly" ? (
+              <div className="sideSection">
+                <div className="sideLabel">Mese</div>
                 <MonthPicker value={mmMonthly} onChange={setMmMonthly} allowAll={false} />
               </div>
-            </div>
-          ) : null}
+            ) : null}
 
-          {tab === "daily" ? (
-            <div className="catBar catBarCenter">
-              <div className="catBox">
-                <div className="catLabel catLabelCenter">Seleziona Parametro</div>
-                <div className="catBtns catBtnsCenter">
-                  <CatButton active={catDaily === "temp"} onClick={() => setCatDaily("temp")}>Temperature</CatButton>
-                  <CatButton active={catDaily === "precip"} onClick={() => setCatDaily("precip")}>Precipitazioni</CatButton>
-                  <CatButton active={catDaily === "wind"} onClick={() => setCatDaily("wind")}>Vento</CatButton>
-                  <CatButton active={catDaily === "press"} onClick={() => setCatDaily("press")}>Pressione</CatButton>
-                  <CatButton active={catDaily === "rh"} onClick={() => setCatDaily("rh")}>Umidità</CatButton>
-                  <CatButton active={catDaily === "rad"} onClick={() => setCatDaily("rad")}>Radiazione</CatButton>
-                </div>
+            {tab === "seasonal" ? (
+              <div className="sideSection">
+                <div className="sideLabel">Stagione</div>
+                <SeasonPicker value={seasonSel} onChange={setSeasonSel} />
+              </div>
+            ) : null}
+
+            <div className="sideSection sideSectionParams">
+              <div className="sideLabel">Parametro</div>
+              <div className="sideCatList">
+                {catConfig.map(([key, label, symbol]) => (
+                  <SidebarCatButton
+                    key={key}
+                    active={activeCat === key}
+                    onClick={() => setActiveCat(key)}
+                    symbol={symbol}
+                  >
+                    {label}
+                  </SidebarCatButton>
+                ))}
               </div>
             </div>
-          ) : null}
+          </aside>
 
-          {tab === "monthly" ? (
-            <div className="catBar catBarCenter">
-              <div className="catBox">
-                <div className="catLabel catLabelCenter">Seleziona Parametro</div>
-                <div className="catBtns catBtnsCenter">
-                  <CatButton active={catMonthly === "temp"} onClick={() => setCatMonthly("temp")}>Temperature</CatButton>
-                  <CatButton active={catMonthly === "precip"} onClick={() => setCatMonthly("precip")}>Precipitazioni</CatButton>
-                  <CatButton active={catMonthly === "wind"} onClick={() => setCatMonthly("wind")}>Vento</CatButton>
-                  <CatButton active={catMonthly === "press"} onClick={() => setCatMonthly("press")}>Pressione</CatButton>
-                  <CatButton active={catMonthly === "rh"} onClick={() => setCatMonthly("rh")}>Umidità</CatButton>
-                  <CatButton active={catMonthly === "rad"} onClick={() => setCatMonthly("rad")}>Radiazione</CatButton>
-                </div>
-              </div>
+          <main className="recordsMain">
+            <div className="tabs tabsWide">
+              <TabButton active={tab === "daily"} onClick={() => setTab("daily")}>Giornalieri</TabButton>
+              <TabButton active={tab === "monthly"} onClick={() => setTab("monthly")}>Mensili</TabButton>
+              <TabButton active={tab === "seasonal"} onClick={() => setTab("seasonal")}>Stagionali</TabButton>
+              <TabButton active={tab === "yearly"} onClick={() => setTab("yearly")}>Annuali</TabButton>
             </div>
-          ) : null}
 
-          {tab === "yearly" ? (
-            <div className="catBar catBarCenter catBarNoTopBorder">
-              <div className="catBox">
-                <div className="catLabel catLabelCenter">Seleziona Parametro</div>
-                <div className="catBtns catBtnsCenter">
-                  <CatButton active={catYearly === "temp"} onClick={() => setCatYearly("temp")}>Temperature</CatButton>
-                  <CatButton active={catYearly === "precip"} onClick={() => setCatYearly("precip")}>Precipitazioni</CatButton>
-                  <CatButton active={catYearly === "wind"} onClick={() => setCatYearly("wind")}>Vento</CatButton>
-                  <CatButton active={catYearly === "press"} onClick={() => setCatYearly("press")}>Pressione</CatButton>
-                  <CatButton active={catYearly === "rh"} onClick={() => setCatYearly("rh")}>Umidità</CatButton>
-                  <CatButton active={catYearly === "rad"} onClick={() => setCatYearly("rad")}>Radiazione</CatButton>
-                </div>
-              </div>
-            </div>
-          ) : null}
-        </header>
-
-        {tab === "daily" ? (
-          dailyCards.length ? (
-            <RecordsGrid cards={dailyCards} kind="daily" topN={topN} />
-          ) : (
-            <section className="emptyBox">Nessun dato disponibile per questa selezione.</section>
-          )
-        ) : null}
-
-        {tab === "monthly" ? (
-          monthlyCards.length ? (
-            <RecordsGrid cards={monthlyCards} kind="monthly" topN={topN} />
-          ) : (
-            <section className="emptyBox">Nessun dato disponibile per questa selezione.</section>
-          )
-        ) : null}
-
-        {tab === "yearly" ? (
-          yearlyCards.length ? (
-            <RecordsGrid cards={yearlyCards} kind="yearly" topN={topN} />
-          ) : (
-            <section className="emptyBox">Nessun dato disponibile per questa selezione.</section>
-          )
-        ) : null}
+            {activeCards.length ? (
+              <RecordsGrid cards={activeCards} kind={activeKind} topN={topN} />
+            ) : (
+              <section className="emptyBox">Nessun dato disponibile per questa selezione.</section>
+            )}
+          </main>
+        </section>
 
         <style jsx>{baseCss}</style>
       </div>
@@ -2241,583 +2415,482 @@ export default function RecordsPage({ records }) {
 }
 
 const baseCss = `
+  .recordHeroKicker {
+    display: inline-block;
+    text-align: center;
+    line-height: 1.28;
+  }
+
   :global(body) {
-    background: #fff;
+    background: #f7f9fc;
   }
 
   .wrap {
-    max-width: 1280px;
-    margin: 0 auto;
-    padding: 18px 10px 50px;
-    background: #fff;
-  }
-
-  .pageDescription {
     width: 100%;
-    margin: 14px 0 12px;
-  }
-
-  .descriptionCard {
-    width: 100%;
+    max-width: none;
     box-sizing: border-box;
-    margin: 0 auto;
-    padding: 18px 24px;
-    border: 1px solid #dfe5ec;
-    border-radius: 18px;
-    background: rgba(248, 250, 252, 0.92);
-    box-shadow: 0 10px 28px rgba(15, 23, 42, 0.05);
-  }
-
-  .descriptionCard p {
     margin: 0;
-    font-size: 14px;
-    line-height: 1.75;
-    font-weight: 800;
-    color: #334155;
-    text-align: justify;
-    text-align-last: left;
-    hyphens: auto;
-    -webkit-hyphens: auto;
-    overflow-wrap: break-word;
+    padding: 18px 0 54px;
   }
 
-  .hero {
-    border: 1px solid #ececec;
-    border-radius: 18px;
-    background: #fff;
-    box-shadow: 0 1px 0 rgba(0,0,0,0.02), 0 12px 34px rgba(0,0,0,0.04);
-    padding: 18px;
-  }
-
-  .heroTop {
-    display: flex;
-    justify-content: space-between;
+  .recordsShell {
+    margin-top: 14px;
+    display: grid;
+    grid-template-columns: 220px minmax(0, 1fr);
     gap: 16px;
-    align-items: center;
+    align-items: start;
   }
 
-  .heroMeta {
-    min-height: 24px;
+  .recordsSidebar {
+    position: sticky;
+    top: 16px;
+    border: 1px solid #e6eaf0;
+    border-radius: 18px;
+    background: rgba(255, 255, 255, 0.96);
+    box-shadow: 0 14px 34px rgba(15, 23, 42, 0.055);
+    padding: 18px 16px;
+  }
+
+  .sidebarTitle {
     display: flex;
     align-items: center;
+    gap: 10px;
+    font-size: 17px;
+    font-weight: 950;
+    color: #111827;
+    margin-bottom: 18px;
   }
 
-  .sub {
+  .sidebarTitleIcon {
+    display: inline-flex;
+    width: 32px;
+    height: 32px;
+    align-items: center;
+    justify-content: center;
+    border-radius: 10px;
+    background: #fff1f2;
+    color: #dc2626;
+    font-size: 18px;
+  }
+
+  .sideSection + .sideSection {
+    margin-top: 20px;
+  }
+
+  .sideSectionParams {
+    padding-top: 18px;
+    border-top: 1px solid #eef1f5;
+  }
+
+  .sideLabel {
+    margin-bottom: 9px;
+    font-size: 12px;
+    font-weight: 950;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: #475569;
+  }
+
+  :global(.recordHeroSubtitle) {
+    display: block;
+    width: min(100%, 1040px);
+    margin: 8px auto 0;
+    padding: 0 14px;
+    box-sizing: border-box;
+    text-align: center;
+    color: #64748b;
     font-size: 13px;
-    opacity: 0.75;
-    line-height: 1.35;
+    line-height: 1.5;
+    font-weight: 650;
+  }
+
+  .recordsMain {
+    min-width: 0;
+  }
+
+  .mainHeader {
+    display: flex;
+    align-items: flex-start;
+    justify-content: flex-end;
+    margin: 8px 2px 8px;
+  }
+
+  .mainHeaderMetaOnly {
+    min-height: 0;
+  }
+
+  .updatedChip {
+    flex: 0 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 9px 12px;
+    border: 1px solid #e7ebf0;
+    border-radius: 12px;
+    background: #fff;
+    box-shadow: 0 8px 22px rgba(15, 23, 42, 0.04);
+    color: #64748b;
+    font-size: 10px;
+  }
+
+  .updatedChip b {
+    color: #0f172a;
+    font-size: 12px;
   }
 
   .tabs {
     display: flex;
-    gap: 10px;
-    flex-wrap: wrap;
-    justify-content: flex-end;
+    gap: 0;
+  }
+
+  .tabsWide {
+    width: 100%;
+    border: 1px solid #e6eaf0;
+    border-radius: 14px;
+    background: #fff;
+    overflow: hidden;
+    box-shadow: 0 8px 24px rgba(15, 23, 42, 0.035);
   }
 
   .tabBtn {
+    position: relative;
+    flex: 1 1 0;
+    min-height: 48px;
     padding: 10px 12px;
-    border: 1px solid #ededed;
-    border-radius: 999px;
+    border: 0;
+    border-right: 1px solid #eef1f5;
     background: #fff;
-    font-weight: 950;
+    color: #475569;
+    font-weight: 900;
     font-size: 13px;
     cursor: pointer;
-    opacity: 0.9;
-    transition: background 120ms ease, transform 120ms ease, box-shadow 120ms ease, opacity 120ms ease;
+    transition: background 140ms ease, color 140ms ease;
+  }
+
+  .tabBtn:last-child {
+    border-right: 0;
   }
 
   .tabBtn:hover {
-    background: #f4f4f4;
-    transform: translateY(-1px);
-    box-shadow: 0 8px 20px rgba(0,0,0,0.06);
-    opacity: 1;
+    background: #f8fafc;
+    color: #111827;
   }
 
   .tabBtnOn {
-    background: #111;
+    background: #fff5f5;
+    color: #dc2626;
+  }
+
+  .tabBtnOn::after {
+    content: "";
+    position: absolute;
+    left: 18%;
+    right: 18%;
+    bottom: 0;
+    height: 3px;
+    border-radius: 999px 999px 0 0;
+    background: #dc2626;
+  }
+
+  .yearSel {
+    width: 100%;
+    height: 42px;
+    padding: 0 12px;
+    border: 1px solid #e2e8f0;
+    border-radius: 11px;
+    background: #fff;
+    color: #111827;
+    font-weight: 850;
+    font-size: 13px;
+    outline: none;
+  }
+
+  .yearSel:focus {
+    border-color: #94a3b8;
+    box-shadow: 0 0 0 3px rgba(148, 163, 184, 0.12);
+  }
+
+  .monthPick {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 7px;
+  }
+
+  .monthPickMobile {
+    display: none;
+  }
+
+  .monthSelMobile {
+    width: 100%;
+    height: 42px;
+    padding: 0 12px;
+    border: 1px solid #e2e8f0;
+    border-radius: 11px;
+    background: #fff;
+    color: #111827;
+    font-weight: 850;
+    font-size: 13px;
+    outline: none;
+  }
+
+  .monthSelMobile:focus {
+    border-color: #94a3b8;
+    box-shadow: 0 0 0 3px rgba(148, 163, 184, 0.12);
+  }
+
+  .mBtn {
+    min-width: 0;
+    padding: 8px 5px;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    background: #fff;
+    color: #475569;
+    font-weight: 850;
+    font-size: 11px;
+    cursor: pointer;
+    transition: all 130ms ease;
+  }
+
+  .mBtn:hover {
+    border-color: #cbd5e1;
+    background: #f8fafc;
+  }
+
+  .mBtnOn {
+    border-color: #dc2626;
+    background: #dc2626;
     color: #fff;
-    border-color: #111;
-    box-shadow: 0 10px 24px rgba(0,0,0,0.10);
-    opacity: 1;
+    box-shadow: 0 6px 14px rgba(220, 38, 38, 0.15);
   }
 
-  .filterBar {
-    margin-top: 14px;
-    border-top: 1px solid #efefef;
-    padding-top: 12px;
-    display: flex;
-    gap: 18px;
-    align-items: flex-start;
-    flex-wrap: wrap;
-  }
-
-  .filterBarCenter {
-    justify-content: space-between;
-  }
-
-  .filterBarOnlyMonths {
-    justify-content: center;
-  }
-
-  .filterBox {
+  .seasonPick,
+  .sideCatList {
     display: flex;
     flex-direction: column;
     gap: 8px;
   }
 
-  .filterBoxYear {
-    min-width: 210px;
-  }
-
-  .filterBoxMonths {
-    flex: 1;
-    min-width: 320px;
-  }
-
-  .filterBoxMonthsOnly {
+  .seasonBtn,
+  .sideCatBtn {
     width: 100%;
-  }
-
-  .filterLabel {
-    font-weight: 950;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    font-size: 12px;
-    opacity: 0.8;
-  }
-
-  .filterLabelCenter {
-    text-align: center;
-    width: 100%;
-  }
-
-  .yearSel {
-    height: 48px;
-    padding: 0 16px;
-    border: 1px solid #ededed;
-    border-radius: 16px;
-    background: #fff;
-    font-weight: 900;
-    font-size: 14px;
-  }
-
-  .catBar {
-    margin-top: 14px;
-    border-top: 1px solid #efefef;
-    padding-top: 12px;
+    min-height: 42px;
     display: flex;
-    justify-content: center;
-  }
-
-  .catBarNoTopBorder {
-    border-top: 0;
-    margin-top: 10px;
-    padding-top: 0;
-  }
-
-  .catBarCenter {
-    justify-content: center;
-  }
-
-  .catBox {
-    width: 100%;
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
     align-items: center;
-  }
-
-  .catLabel {
-    font-weight: 950;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    font-size: 12px;
-    opacity: 0.8;
-    white-space: nowrap;
-  }
-
-  .catLabelCenter {
-    text-align: center;
-  }
-
-  .catBtns {
-    display: flex;
     gap: 10px;
-    flex-wrap: wrap;
-  }
-
-  .catBtnsCenter {
-    justify-content: center;
-  }
-
-  .catBtn {
-    padding: 8px 12px;
-    border: 1px solid #ededed;
-    border-radius: 999px;
+    padding: 9px 11px;
+    border: 1px solid #e2e8f0;
+    border-radius: 11px;
     background: #fff;
-    font-weight: 950;
+    color: #334155;
     font-size: 13px;
+    font-weight: 850;
+    text-align: left;
     cursor: pointer;
-    opacity: 0.9;
-    transition: background 120ms ease, transform 120ms ease, box-shadow 120ms ease, opacity 120ms ease;
+    transition: all 130ms ease;
   }
 
-  .catBtn:hover {
-    background: #f4f4f4;
+  .seasonBtn:hover,
+  .sideCatBtn:hover {
+    background: #f8fafc;
+    border-color: #cbd5e1;
     transform: translateY(-1px);
-    box-shadow: 0 8px 20px rgba(0,0,0,0.06);
-    opacity: 1;
   }
 
-  .catBtnOn {
-    background: #111;
-    color: #fff;
-    border-color: #111;
-    box-shadow: 0 10px 24px rgba(0,0,0,0.10);
-    opacity: 1;
-  }
-
-  .monthPick {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: center;
-    gap: 10px;
-    width: 100%;
-  }
-
-  .mBtn {
+  .seasonSymbol,
+  .sideCatIcon {
+    width: 24px;
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    padding: 8px 12px;
-    border-radius: 12px;
-    border: 1px solid #ededed;
-    background: #fff;
-    color: #111;
-    font-weight: 950;
-    font-size: 14px;
-    cursor: pointer;
-    transition: background 120ms ease, transform 120ms ease, box-shadow 120ms ease;
+    justify-content: center;
+    font-size: 16px;
+    line-height: 1;
   }
 
-  .mBtn:hover {
-    background: #f4f4f4;
-    transform: translateY(-1px);
-    box-shadow: 0 8px 20px rgba(0,0,0,0.06);
-  }
+  .seasonBtn-DJF .seasonSymbol { color: #2563eb; }
+  .seasonBtn-MAM .seasonSymbol { color: #16a34a; }
+  .seasonBtn-JJA .seasonSymbol { color: #f59e0b; }
+  .seasonBtn-SON .seasonSymbol { color: #ea580c; }
 
-  .mBtnOn {
-    background: #111;
+  .seasonBtnOn {
+    border-color: #dc2626;
+    background: #dc2626;
     color: #fff;
-    border-color: #111;
-    box-shadow: 0 10px 24px rgba(0,0,0,0.10);
+    box-shadow: 0 8px 18px rgba(220, 38, 38, 0.16);
   }
 
-  code {
-    background: #f4f4f4;
-    padding: 2px 6px;
-    border-radius: 8px;
+  .seasonBtnOn .seasonSymbol {
+    color: #fff;
+  }
+
+  .sideCatBtnOn {
+    border-color: rgba(220, 38, 38, 0.28);
+    background: #fff1f2;
+    color: #dc2626;
+  }
+
+  .sideCatBtnOn .sideCatIcon {
+    color: #dc2626;
   }
 
   .recordsSections {
-    margin-top: 12px;
+    margin-top: 14px;
     display: flex;
     flex-direction: column;
     gap: 12px;
-  }
-
-  .cardGrid {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 12px;
-  }
-
-  .cardGridCount-1 {
-    grid-template-columns: minmax(0, calc((100% - 24px) / 3));
-    justify-content: center;
-  }
-
-  .cardGridCount-2 {
-    grid-template-columns: repeat(2, minmax(0, calc((100% - 24px) / 3)));
-    justify-content: center;
   }
 
   .sectionDivider {
     display: flex;
     align-items: center;
-    gap: 16px;
-    margin: 18px 0 2px;
+    gap: 12px;
+    margin: 8px 2px 0;
   }
 
   .sectionDivider::before,
   .sectionDivider::after {
     content: "";
-    height: 2px;
+    height: 1px;
     flex: 1;
-    border-radius: 999px;
-    background: #e5e7eb;
+    background: #e7ebf0;
   }
 
   .sectionDivider span {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 160px;
-    padding: 7px 18px;
-    border-radius: 999px;
-    background: #fff;
-    border: 1px solid #e5e7eb;
-    color: #111827;
+    color: #334155;
     font-size: 12px;
     font-weight: 950;
-    letter-spacing: 0.08em;
+    letter-spacing: 0.055em;
     text-transform: uppercase;
-    box-shadow: 0 8px 22px rgba(15, 23, 42, 0.06);
     white-space: nowrap;
-  }
-
-  .sectionTone-tempHigh::before,
-  .sectionTone-tempHigh::after,
-  .sectionTone-tempRangeHigh::before,
-  .sectionTone-tempRangeHigh::after {
-    background: linear-gradient(90deg, transparent, rgba(185, 28, 28, 0.55), transparent);
-  }
-
-  .sectionTone-tempLow::before,
-  .sectionTone-tempLow::after,
-  .sectionTone-tempRangeLow::before,
-  .sectionTone-tempRangeLow::after {
-    background: linear-gradient(90deg, transparent, rgba(55, 48, 163, 0.55), transparent);
-  }
-
-  .sectionTone-rainHigh::before,
-  .sectionTone-rainHigh::after {
-    background: linear-gradient(90deg, transparent, rgba(3, 105, 161, 0.55), transparent);
-  }
-
-  .sectionTone-rainLow::before,
-  .sectionTone-rainLow::after {
-    background: linear-gradient(90deg, transparent, rgba(146, 64, 14, 0.55), transparent);
-  }
-
-  .sectionTone-windHigh::before,
-  .sectionTone-windHigh::after,
-  .sectionTone-windLow::before,
-  .sectionTone-windLow::after {
-    background: linear-gradient(90deg, transparent, rgba(126, 34, 206, 0.55), transparent);
-  }
-
-  .sectionTone-pressHigh::before,
-  .sectionTone-pressHigh::after,
-  .sectionTone-pressLow::before,
-  .sectionTone-pressLow::after {
-    background: linear-gradient(90deg, transparent, rgba(15, 118, 110, 0.55), transparent);
-  }
-
-  .sectionTone-humHigh::before,
-  .sectionTone-humHigh::after,
-  .sectionTone-humLow::before,
-  .sectionTone-humLow::after {
-    background: linear-gradient(90deg, transparent, rgba(4, 120, 87, 0.55), transparent);
-  }
-
-  .sectionTone-radHigh::before,
-  .sectionTone-radHigh::after,
-  .sectionTone-radLow::before,
-  .sectionTone-radLow::after {
-    background: linear-gradient(90deg, transparent, rgba(217, 119, 6, 0.55), transparent);
+    text-align: center;
   }
 
   .sectionTone-tempHigh span,
-  .sectionTone-tempRangeHigh span {
-    border-color: rgba(185, 28, 28, 0.24);
-    color: #991b1b;
-  }
-
+  .sectionTone-tempRangeHigh span { color: #b91c1c; }
   .sectionTone-tempLow span,
-  .sectionTone-tempRangeLow span {
-    border-color: rgba(55, 48, 163, 0.24);
-    color: #312e81;
-  }
-
-  .sectionTone-rainHigh span {
-    border-color: rgba(3, 105, 161, 0.24);
-    color: #075985;
-  }
-
-  .sectionTone-rainLow span {
-    border-color: rgba(146, 64, 14, 0.24);
-    color: #78350f;
-  }
-
+  .sectionTone-tempRangeLow span { color: #3730a3; }
+  .sectionTone-rainHigh span { color: #0369a1; }
+  .sectionTone-rainLow span { color: #92400e; }
   .sectionTone-windHigh span,
-  .sectionTone-windLow span {
-    border-color: rgba(126, 34, 206, 0.24);
-    color: #581c87;
-  }
-
+  .sectionTone-windLow span { color: #6d28d9; }
   .sectionTone-pressHigh span,
-  .sectionTone-pressLow span {
-    border-color: rgba(15, 118, 110, 0.24);
-    color: #134e4a;
-  }
-
+  .sectionTone-pressLow span { color: #0f766e; }
   .sectionTone-humHigh span,
-  .sectionTone-humLow span {
-    border-color: rgba(4, 120, 87, 0.24);
-    color: #065f46;
-  }
-
+  .sectionTone-humLow span { color: #047857; }
   .sectionTone-radHigh span,
-  .sectionTone-radLow span {
-    border-color: rgba(217, 119, 6, 0.24);
-    color: #92400e;
+  .sectionTone-radLow span { color: #d97706; }
+
+  .cardGrid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
   }
 
   .card {
-    border: 1px solid #e7e7e7;
+    position: relative;
+    overflow: hidden;
+    border: 1px solid #e7ebf0;
     border-radius: 16px;
     background: #fff;
-    box-shadow: 0 1px 0 rgba(0,0,0,0.02), 0 12px 34px rgba(0,0,0,0.04);
-    overflow: hidden;
+    box-shadow: 0 10px 28px rgba(15, 23, 42, 0.045);
   }
 
-  .cardHead {
-    background: #111;
-    color: #fff;
-    padding: 12px 12px 10px;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    min-height: 62px;
-    text-align: center;
+  .card::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+    background: #cbd5e1;
   }
+
+  .cardTone-tempHigh::before { background: #dc2626; }
+  .cardTone-tempLow::before { background: #4338ca; }
+  .cardTone-tempRangeHigh::before { background: #e11d48; }
+  .cardTone-tempRangeLow::before { background: #64748b; }
+  .cardTone-rainHigh::before { background: #0284c7; }
+  .cardTone-rainLow::before { background: #a16207; }
+  .cardTone-windHigh::before,
+  .cardTone-windLow::before { background: #7c3aed; }
+  .cardTone-pressHigh::before,
+  .cardTone-pressLow::before { background: #0f766e; }
+  .cardTone-humHigh::before,
+  .cardTone-humLow::before { background: #059669; }
+  .cardTone-radHigh::before,
+  .cardTone-radLow::before { background: #d97706; }
+
+  .cardHead {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 60px;
+    padding: 11px 12px 9px 14px;
+    border-bottom: 1px solid #f0f2f5;
+  }
+
+  .cardIcon {
+    flex: 0 0 auto;
+    width: 34px;
+    height: 34px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 11px;
+    background: #f8fafc;
+    color: #475569;
+    font-size: 18px;
+    font-weight: 950;
+  }
+
+  .cardTone-tempHigh .cardIcon,
+  .cardTone-tempRangeHigh .cardIcon { background: #fff1f2; color: #dc2626; }
+  .cardTone-tempLow .cardIcon,
+  .cardTone-tempRangeLow .cardIcon { background: #eef2ff; color: #4338ca; }
+  .cardTone-rainHigh .cardIcon { background: #eff6ff; color: #0284c7; }
+  .cardTone-rainLow .cardIcon { background: #fffbeb; color: #a16207; }
+  .cardTone-windHigh .cardIcon,
+  .cardTone-windLow .cardIcon { background: #f5f3ff; color: #7c3aed; }
+  .cardTone-pressHigh .cardIcon,
+  .cardTone-pressLow .cardIcon { background: #f0fdfa; color: #0f766e; }
+  .cardTone-humHigh .cardIcon,
+  .cardTone-humLow .cardIcon { background: #ecfdf5; color: #059669; }
+  .cardTone-radHigh .cardIcon,
+  .cardTone-radLow .cardIcon { background: #fffbeb; color: #d97706; }
 
   .cardTitle {
     font-weight: 950;
     font-size: 14px;
-    letter-spacing: 0.01em;
-    line-height: 1.2;
-    text-align: center;
-    width: 100%;
-  }
-
-  .cardTone-tempHigh .cardHead {
-    background: #b91c1c;
-  }
-
-  .cardTone-tempLow .cardHead {
-    background: #3730a3;
-  }
-
-  .cardTone-tempRangeHigh .cardHead {
-    background: #be123c;
-  }
-
-  .cardTone-tempRangeLow .cardHead {
-    background: #475569;
-  }
-
-  .cardTone-rainHigh .cardHead {
-    background: #0369a1;
-  }
-
-  .cardTone-rainLow .cardHead {
-    background: #92400e;
-  }
-
-  .cardTone-windHigh .cardHead {
-    background: #7e22ce;
-  }
-
-  .cardTone-windLow .cardHead {
-    background: #6d28d9;
-  }
-
-  .cardTone-pressHigh .cardHead {
-    background: #0f766e;
-  }
-
-  .cardTone-pressLow .cardHead {
-    background: #155e75;
-  }
-
-  .cardTone-humHigh .cardHead {
-    background: #047857;
-  }
-
-  .cardTone-humLow .cardHead {
-    background: #b45309;
-  }
-
-  .cardTone-radHigh .cardHead {
-    background: #d97706;
-  }
-
-  .cardTone-radLow .cardHead {
-    background: #57534e;
-  }
-
-  .cardTone-neutral .cardHead {
-    background: #111;
-  }
-
-  .cardTone-tempHigh {
-    border-color: rgba(185, 28, 28, 0.24);
-  }
-
-  .cardTone-tempLow {
-    border-color: rgba(55, 48, 163, 0.24);
-  }
-
-  .cardTone-rainHigh {
-    border-color: rgba(3, 105, 161, 0.24);
-  }
-
-  .cardTone-rainLow {
-    border-color: rgba(146, 64, 14, 0.24);
-  }
-
-  .cardTone-windHigh,
-  .cardTone-windLow {
-    border-color: rgba(126, 34, 206, 0.24);
-  }
-
-  .cardTone-pressHigh,
-  .cardTone-pressLow {
-    border-color: rgba(15, 118, 110, 0.24);
-  }
-
-  .cardTone-humHigh,
-  .cardTone-humLow {
-    border-color: rgba(4, 120, 87, 0.22);
-  }
-
-  .cardTone-radHigh,
-  .cardTone-radLow {
-    border-color: rgba(217, 119, 6, 0.24);
+    line-height: 1.25;
+    color: #0f172a;
   }
 
   .cardBody {
-    padding: 10px 12px 12px;
+    padding: 2px 9px 8px 11px;
   }
 
   .miniTable {
     width: 100%;
     border-collapse: collapse;
+    table-layout: auto;
   }
 
   .miniTable thead th {
-    font-size: 11px;
+    padding: 7px 4px 5px;
+    border-bottom: 1px solid #eef1f5;
+    color: #64748b;
+    font-size: 10px;
     text-transform: uppercase;
-    letter-spacing: 0.08em;
-    opacity: 0.75;
-    padding: 8px 6px;
-    border-bottom: 1px solid #efefef;
+    letter-spacing: 0.06em;
+    font-weight: 900;
+  }
+
+  .thRank {
+    width: 34px;
+    text-align: left;
   }
 
   .thVal {
+    width: 31%;
     text-align: left;
   }
 
@@ -2826,196 +2899,388 @@ const baseCss = `
   }
 
   .miniTable tbody td {
-    padding: 8px 6px;
-    border-bottom: 1px solid #f1f1f1;
-    font-size: 13px;
-    white-space: nowrap;
-    vertical-align: top;
+    padding: 6px 4px;
+    border-bottom: 1px solid #f1f3f6;
+    font-size: 11px;
+    line-height: 1.2;
+    vertical-align: middle;
   }
 
-  .miniTable tbody tr:nth-child(even) td {
-    background: #fcfcfc;
+  .miniTable tbody tr:last-child td {
+    border-bottom: 0;
   }
 
   .miniTable tbody tr:hover td {
-    background: #fafafa;
+    background: #fafbfc;
+  }
+
+  .tdRank {
+    width: 34px;
+  }
+
+  .rankBadge {
+    width: 20px;
+    height: 20px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    background: #f1f5f9;
+    color: #475569;
+    font-size: 10px;
+    font-weight: 950;
+  }
+
+  .rankBadge-1 {
+    background: #facc15;
+    color: #78350f;
+  }
+
+  .rankBadge-2 {
+    background: #e2e8f0;
+    color: #475569;
+  }
+
+  .rankBadge-3 {
+    background: #fdba74;
+    color: #7c2d12;
   }
 
   .tdVal {
     font-weight: 950;
-    letter-spacing: -0.01em;
+    color: #111827;
     text-align: left;
   }
 
+  .miniTable tbody tr:first-child .tdVal {
+    color: #dc2626;
+  }
+
   .tdWhen {
+    color: #64748b;
     text-align: right;
+    font-weight: 750;
+    white-space: nowrap;
   }
 
   .tdEmpty {
-    padding: 10px 6px;
-    font-size: 13px;
-    opacity: 0.7;
+    padding: 14px 6px !important;
+    text-align: center;
+    color: #64748b;
+    font-weight: 750;
+  }
+
+  .rowLink {
+    color: #475569;
+    text-decoration: none;
+    font-weight: 850;
+    white-space: nowrap;
+  }
+
+  .rowLink:hover {
+    color: #dc2626;
+    text-decoration: underline;
   }
 
   .arpasValue {
     position: relative;
     display: inline-block;
-    color: #111827;
     text-decoration: underline;
     text-decoration-color: #dc2626;
     text-decoration-thickness: 2px;
     text-underline-offset: 3px;
-    padding-left: 16px;
   }
 
-  .arpasValue::before {
-    content: "";
-    position: absolute;
-    left: 0;
-    top: 50%;
-    transform: translateY(-50%);
-    width: 8px;
-    height: 8px;
-    border-radius: 999px;
-    background: #dc2626;
-    box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.16);
-  }
-
-  .arpasMiniNote {
-    display: block;
-    margin-top: 4px;
-    font-size: 11px;
-    line-height: 1.2;
-    color: #64748b;
-    font-weight: 700;
-  }
-
+  .arpasMiniNote,
   .periodMiniNote {
     display: block;
-    margin-top: 4px;
-    font-size: 11px;
-    line-height: 1.25;
+    margin-top: 3px;
     color: #94a3b8;
-    font-weight: 800;
-    letter-spacing: 0;
-  }
-
-  .rowLink {
-    color: #111;
-    text-decoration: none;
-    font-weight: 900;
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    justify-content: flex-end;
-  }
-
-  .rowLink:hover {
-    text-decoration: underline;
-  }
-
-  .extCell {
-    font-size: 12px;
-    opacity: 0.65;
-    transform: translateY(-1px);
+    font-size: 9px;
+    line-height: 1.2;
+    font-weight: 750;
   }
 
   .emptyBox {
-    margin-top: 12px;
-    border: 1px solid #ececec;
+    margin-top: 14px;
+    border: 1px solid #e7ebf0;
     border-radius: 16px;
     background: #fff;
-    padding: 20px;
+    padding: 24px;
     text-align: center;
-    font-weight: 800;
-    color: #444;
-    box-shadow: 0 1px 0 rgba(0,0,0,0.02), 0 12px 34px rgba(0,0,0,0.04);
+    color: #475569;
+    font-weight: 850;
+    box-shadow: 0 10px 28px rgba(15, 23, 42, 0.045);
+  }
+
+  code {
+    background: #f1f5f9;
+    padding: 2px 6px;
+    border-radius: 7px;
+  }
+
+  @media (max-width: 1280px) {
+    .cardGrid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
   }
 
   @media (max-width: 1100px) {
-    .heroTop {
-      flex-direction: column;
-      align-items: flex-start;
-    }
-
-    .tabs {
-      justify-content: flex-start;
-    }
-
-    .filterBarCenter {
-      justify-content: flex-start;
-    }
-
-    .filterBoxMonths {
-      min-width: 260px;
-      width: 100%;
-    }
-
-    .filterBoxMonthsOnly {
-      width: 100%;
+    .recordsShell {
+      grid-template-columns: 210px minmax(0, 1fr);
+      gap: 14px;
     }
 
     .cardGrid {
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
-    .cardGridCount-1 {
-      grid-template-columns: minmax(0, calc((100% - 12px) / 2));
-      justify-content: center;
+    .mainHeader {
+      flex-direction: column;
+    }
+  }
+
+  @media (max-width: 820px) {
+    .recordsShell {
+      grid-template-columns: 1fr;
     }
 
-    .cardGridCount-2 {
+    .recordsSidebar {
+      position: static;
+    }
+
+    .seasonPick,
+    .sideCatList {
+      display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
-      justify-content: center;
+    }
+
+    .monthPick {
+      grid-template-columns: repeat(7, minmax(0, 1fr));
+    }
+
+    .sideSectionParams {
+      padding-top: 14px;
     }
   }
 
   @media (max-width: 640px) {
-    .pageDescription {
-      margin: 12px 0 10px;
+    .wrap {
+      width: 100%;
+      max-width: none;
+      padding: 12px 0 32px;
     }
 
-    .descriptionCard {
-      padding: 16px 18px;
-      border-radius: 18px;
+    .recordsShell {
+      gap: 8px;
+      margin-top: 8px;
     }
 
-    .descriptionCard p {
+    .recordsSidebar {
+      order: 1;
+      padding: 10px 10px;
+      border-radius: 15px;
+    }
+
+    .recordsMain {
+      order: 2;
+    }
+
+    .sidebarTitle {
+      margin-bottom: 10px;
+      font-size: 15px;
+    }
+
+    .sidebarTitleIcon {
+      width: 26px;
+      height: 26px;
+      font-size: 15px;
+      border-radius: 8px;
+    }
+
+    .sideSection + .sideSection {
+      margin-top: 10px;
+    }
+
+    .sideSectionParams {
+      padding-top: 10px;
+    }
+
+    .sideLabel {
+      margin-bottom: 6px;
+      font-size: 11px;
+    }
+
+    :global(.recordHeroSubtitle) {
+      width: 100%;
+      margin-top: 6px;
+      padding: 0 10px;
+      font-size: 12px;
+      line-height: 1.4;
+      text-align: center;
+    }
+
+    .mainHeader {
+      width: 100%;
+      margin: 8px 0 6px;
+    }
+
+    .updatedChip {
+      width: 100%;
+      box-sizing: border-box;
+      margin-top: 0;
+      padding: 6px 9px;
+    }
+
+    .tabsWide {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      overflow: visible;
+      border: 0;
+      gap: 5px;
+      background: transparent;
+      box-shadow: none;
+    }
+
+    .tabBtn {
+      min-height: 38px;
+      padding: 7px 9px;
+      border: 1px solid #e2e8f0 !important;
+      border-radius: 10px;
+      background: #fff;
+      font-size: 12px;
+    }
+
+    .tabBtnOn {
+      border-color: #dc2626 !important;
+      background: #fff1f2;
+    }
+
+    .tabBtnOn::after {
+      display: none;
+    }
+
+    .seasonPick,
+    .sideCatList {
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+    }
+
+    .seasonBtn,
+    .sideCatBtn {
+      min-height: 34px;
+      padding: 6px 8px;
+      gap: 7px;
+      font-size: 11px;
+      border-radius: 10px;
+    }
+
+    .seasonSymbol,
+    .sideCatIcon {
+      width: 20px;
       font-size: 14px;
-      line-height: 1.75;
-      font-weight: 800;
-      text-align: justify;
-      text-align-last: left;
     }
 
-    .cardGrid,
-    .cardGridCount-1,
-    .cardGridCount-2 {
-      grid-template-columns: 1fr;
-      justify-content: stretch;
+    .monthPickDesktop {
+      display: none;
+    }
+
+    .monthPickMobile {
+      display: block;
+    }
+
+    .yearSel,
+    .monthSelMobile {
+      height: 36px;
+      padding: 0 10px;
+      font-size: 12px;
+      border-radius: 10px;
+    }
+
+    .recordsSections {
+      margin-top: 8px;
+      gap: 7px;
     }
 
     .sectionDivider {
-      gap: 10px;
-      margin: 16px 0 0;
+      margin: 3px 2px 0;
+      gap: 7px;
+    }
+
+    .cardGrid {
+      grid-template-columns: 1fr;
+      gap: 7px;
+    }
+
+    .card {
+      border-radius: 14px;
+    }
+
+    .cardHead {
+      min-height: 48px;
+      padding: 7px 9px 6px 11px;
+      gap: 8px;
+    }
+
+    .cardIcon {
+      width: 28px;
+      height: 28px;
+      border-radius: 9px;
+      font-size: 14px;
+    }
+
+    .cardTitle {
+      font-size: 12px;
+      line-height: 1.14;
+    }
+
+    .cardBody {
+      padding: 1px 8px 3px 9px;
+    }
+
+    .miniTable thead th {
+      padding: 5px 4px 4px;
+      font-size: 9px;
+    }
+
+    .miniTable tbody td {
+      font-size: 11px;
+      padding: 6px 4px;
+      line-height: 1.12;
+    }
+
+    .thRank,
+    .tdRank {
+      width: 30px;
+    }
+
+    .thVal {
+      width: 35%;
+    }
+
+    .thWhen {
+      width: 41%;
+    }
+
+    .tdVal {
+      padding-right: 7px;
+      white-space: nowrap;
+    }
+
+    .tdWhen {
+      padding-left: 7px;
+      white-space: nowrap;
+    }
+
+    .rankBadge {
+      width: 18px;
+      height: 18px;
+      font-size: 9px;
     }
 
     .sectionDivider span {
-      min-width: 0;
-      padding: 7px 12px;
       font-size: 10px;
-      letter-spacing: 0.06em;
-    }
-
-    .filterBoxYear,
-    .filterBoxMonths,
-    .filterBoxMonthsOnly {
-      min-width: 0;
-      width: 100%;
-    }
-
-    .yearSel {
-      width: 100%;
+      white-space: normal;
     }
   }
 `;
