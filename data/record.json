@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-04T12:32:43.476Z",
+  "generated_at": "2026-10-04T12:47:30.183Z",
   "top_n": 20,
   "daily": {
     "tmax_abs_high": [
@@ -177949,7 +177949,7 @@
           ],
           "gust_max_high": [
             {
-              "value": 40.2,
+              "value": 49.9,
               "date": "2026-10-04"
             },
             {
@@ -200033,7 +200033,7 @@
             "rain_override_note": ""
           },
           {
-            "value": 40.2,
+            "value": 49.9,
             "year": 2026,
             "month": 10,
             "coverage_by_param": {
@@ -263216,6 +263216,23 @@
             "rain_override_note": ""
           },
           {
+            "value": 49.9,
+            "year": 2026,
+            "month": 10,
+            "coverage_by_param": {
+              "temperature": 0.12903225806451613,
+              "rain": 0.12903225806451613,
+              "wind": 0.0967741935483871,
+              "pressure": 0.0967741935483871,
+              "humidity": 0.0967741935483871,
+              "radiation": 0.0967741935483871
+            },
+            "rain_is_override": false,
+            "rain_override_source": "",
+            "rain_override_label": "",
+            "rain_override_note": ""
+          },
+          {
             "value": 41.8,
             "year": 2026,
             "month": 9,
@@ -263226,23 +263243,6 @@
               "pressure": 1,
               "humidity": 1,
               "radiation": 1
-            },
-            "rain_is_override": false,
-            "rain_override_source": "",
-            "rain_override_label": "",
-            "rain_override_note": ""
-          },
-          {
-            "value": 40.2,
-            "year": 2026,
-            "month": 10,
-            "coverage_by_param": {
-              "temperature": 0.12903225806451613,
-              "rain": 0.12903225806451613,
-              "wind": 0.0967741935483871,
-              "pressure": 0.0967741935483871,
-              "humidity": 0.0967741935483871,
-              "radiation": 0.0967741935483871
             },
             "rain_is_override": false,
             "rain_override_source": "",
