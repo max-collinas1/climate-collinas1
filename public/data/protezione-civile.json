@@ -1,35 +1,37 @@
 {
   "zoneCode": "SARD-C",
   "zoneName": "Bacini Montevecchio-Pischilappiu",
-  "updatedAt": "2026-10-04T13:10:30.324Z",
-  "checkedAt": "2026-10-04T21:19:47.341Z",
+  "updatedAt": "2026-10-05T00:49:51.647Z",
+  "checkedAt": "2026-10-05T00:49:51.647Z",
   "sourceUrl": "https://www.sardegnaambiente.it/index.php?xsl=2685&s=20&v=9&c=12428&nodesc=3&n=9&bx=2&idr=1&dx=2&rl=1",
   "bulletinSourceUrl": "https://www.sardegnaambiente.it/index.php?xsl=2273&s=20&v=9&nodesc=1&c=7092",
   "automatic": true,
   "method": "official-maps-and-criticality-bulletin",
-  "sourceState": "current",
+  "sourceState": "waiting-new-bulletin",
   "sourceDates": {
     "officialToday": "04-10-2026",
     "officialTomorrow": "05-10-2026"
   },
   "today": {
-    "remoteUrl": "https://www.sardegnaambiente.it/immagini/20_286_20261004133536.jpg",
-    "date": "04-10-2026",
-    "pending": false,
-    "rolledFromPreviousBulletin": false,
-    "mapUrl": "/data/protezione-civile-oggi.jpg",
-    "sourceImage": "https://www.sardegnaambiente.it/immagini/20_286_20261004133536.jpg"
-  },
-  "tomorrow": {
     "remoteUrl": "https://www.sardegnaambiente.it/immagini/20_286_20261004133734.jpg",
     "date": "05-10-2026",
     "pending": false,
-    "rolledFromPreviousBulletin": false,
-    "mapUrl": "/data/protezione-civile-domani.jpg",
+    "rolledFromPreviousBulletin": true,
+    "note": "Mappa odierna ricavata dalla previsione per il giorno successivo del bollettino precedente.",
+    "mapUrl": "/data/protezione-civile-oggi.jpg",
     "sourceImage": "https://www.sardegnaambiente.it/immagini/20_286_20261004133734.jpg"
   },
+  "tomorrow": {
+    "remoteUrl": null,
+    "date": "06-10-2026",
+    "pending": true,
+    "rolledFromPreviousBulletin": false,
+    "note": "In attesa del bollettino odierno, normalmente pubblicato nel pomeriggio.",
+    "mapUrl": null,
+    "sourceImage": null
+  },
   "advisory": {
-    "title": "Nessun avviso di criticità attivo",
+    "title": "Bollettino di Criticita' regionale del 04/10/2026",
     "url": "http://www.sardegnaambiente.it/documenti/BCR_277_2026_del_05-10-2026.pdf",
     "date": "2026-10-04",
     "level": "green",
