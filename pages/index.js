@@ -307,21 +307,21 @@ function makeRealtimePulseSeries(
     yAxisIndex,
     coordinateSystem: "cartesian2d",
     symbol: "circle",
-    symbolSize: 9,
+    symbolSize: 6,
     showEffectOn: "render",
     animation: true,
     rippleEffect: {
       brushType: "stroke",
-      scale: 4,
+      scale: 3,
       period: 1.8,
-      number: 3,
+      number: 2,
     },
     itemStyle: {
       color: "#ef4444",
       borderColor: "#ffffff",
-      borderWidth: 2,
-      shadowBlur: 10,
-      shadowColor: "rgba(239, 68, 68, 0.65)",
+      borderWidth: 1.5,
+      shadowBlur: 6,
+      shadowColor: "rgba(239, 68, 68, 0.55)",
     },
     emphasis: { scale: false },
     tooltip: { show: false },
@@ -1583,18 +1583,6 @@ function CivilProtectionSection({ status = null }) {
             </div>
           </div>
 
-          <div className="civilCompactValidity">
-            {hasValidity ? (
-              <p>
-                {validFrom}
-                <br />
-                {validTo}
-              </p>
-            ) : (
-              <p>Non disponibile.</p>
-            )}
-          </div>
-
           <div className="civilCompactRisks">
             <h3>Livelli di criticità</h3>
             {risks.map((risk) => (
@@ -2011,28 +1999,15 @@ function CivilProtectionSection({ status = null }) {
           margin-bottom: 3px;
         }
 
-        .civilCompactStatusHead p,
-        .civilCompactValidity p {
+        .civilCompactStatusHead p {
           margin: 0;
           font-size: 12px;
           line-height: 1.4;
         }
 
-        .civilCompactValidity {
-          border-bottom: 1px solid #e8eef7;
-          padding: 0 4px 10px;
-        }
-
-        .civilCompactValidity strong,
         .civilCompactRisks h3,
         .civilCompactRiskTop strong {
           color: #0b2454;
-        }
-
-        .civilCompactValidity strong {
-          display: block;
-          font-size: 13px;
-          margin-bottom: 3px;
         }
 
         .civilCompactRisks {
@@ -4626,6 +4601,7 @@ function summarizeDeterministicIndexes(hourly, indexes) {
   const cloudCover = [];
   const pressureValues = [];
   const radiationValues = [];
+  const uvValues = [];
   const dewPointValues = [];
   const humidexValues = [];
   const precipitationValues = [];
@@ -4649,6 +4625,7 @@ function summarizeDeterministicIndexes(hourly, indexes) {
     const cloud = n(hourly?.cloud_cover?.[index]);
     const pressure = n(hourly?.pressure_msl?.[index]);
     const radiation = n(hourly?.shortwave_radiation?.[index]);
+    const uvIndex = n(hourly?.uv_index?.[index]);
     const precipitation = n(hourly?.precipitation?.[index]);
     const windSpeed = n(hourly?.wind_speed_10m?.[index]);
     const gust = n(hourly?.wind_gusts_10m?.[index]);
@@ -4661,6 +4638,7 @@ function summarizeDeterministicIndexes(hourly, indexes) {
       cloud,
       pressure,
       radiation,
+      uvIndex,
       dewPoint,
       precipitation,
       windSpeed,
@@ -4675,6 +4653,7 @@ function summarizeDeterministicIndexes(hourly, indexes) {
     if (Number.isFinite(cloud)) cloudCover.push(cloud);
     if (Number.isFinite(pressure)) pressureValues.push(pressure);
     if (Number.isFinite(radiation)) radiationValues.push(Math.max(0, radiation));
+    if (Number.isFinite(uvIndex)) uvValues.push(Math.max(0, uvIndex));
     if (Number.isFinite(dewPoint)) dewPointValues.push(dewPoint);
 
     const humidex = humidexFromTemperatureAndDewPoint(temperature, dewPoint);
@@ -4719,6 +4698,7 @@ function summarizeDeterministicIndexes(hourly, indexes) {
     cloudCover,
     pressureValues,
     radiationValues,
+    uvValues,
     dewPointValues,
     humidexValues,
     precipitationValues,
@@ -4738,6 +4718,7 @@ function summarizeDeterministicIndexes(hourly, indexes) {
     cloudMean: avgFinite(cloudCover),
     pressureMean: avgFinite(pressureValues),
     radiationMean: avgFinite(radiationValues),
+    uvMean: avgFinite(uvValues),
     humidexMax: humidexValues.length ? Math.max(...humidexValues) : null,
     cloudHighFraction: cloudCover.length
       ? cloudCover.filter((value) => value >= 70).length / cloudCover.length
@@ -5005,6 +4986,9 @@ function buildHourlyForecastForDay({
     const shortwaveRadiation = consensusAverage(
       modelSummaries.map((summary) => summary.radiationMean),
     );
+    const uvIndex = consensusAverage(
+      modelSummaries.map((summary) => summary.uvMean),
+    );
     const weather = consensusWeatherMeta(modelSummaries, rainProbability);
     const isDayValue = n(iconHourly?.is_day?.[iconIndex]);
     const night = Number.isFinite(isDayValue)
@@ -5043,6 +5027,7 @@ function buildHourlyForecastForDay({
       shortwaveRadiation: Number.isFinite(n(shortwaveRadiation))
         ? Math.round(n(shortwaveRadiation))
         : null,
+      uvIndex: Number.isFinite(n(uvIndex)) ? round1(uvIndex) : null,
       past,
     };
   });
@@ -5323,6 +5308,7 @@ const DETERMINISTIC_HOURLY_FIELDS = [
   "cloud_cover",
   "pressure_msl",
   "shortwave_radiation",
+  "uv_index",
   "dew_point_2m",
   "wind_speed_10m",
   "wind_direction_10m",
@@ -5775,6 +5761,7 @@ function ForecastSection() {
         pressureMsl: avgFinite(slice.map((point) => point.pressureMsl)),
         cloudCover: avgFinite(slice.map((point) => point.cloudCover)),
         shortwaveRadiation: avgFinite(slice.map((point) => point.shortwaveRadiation)),
+        uvIndex: avgFinite(slice.map((point) => point.uvIndex)),
         past: slice.every((point) => point.past),
       });
     }
@@ -5930,11 +5917,10 @@ function ForecastSection() {
                     <th>Prob.</th>
                     <th>Vento</th>
                     <th>Raffica</th>
-                    <th>Direzione</th>
                     <th>Umidità</th>
                     <th>Pressione</th>
                     <th>Nuvolosità</th>
-                    <th>Radiazione</th>
+                    <th>UV</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -5966,17 +5952,36 @@ function ForecastSection() {
                           ? `${Math.round(n(point.rainProbability))}%`
                           : "—"}
                       </td>
-                      <td>
-                        {Number.isFinite(n(point.windSpeed))
-                          ? `${Math.round(n(point.windSpeed))} km/h`
-                          : "—"}
+                      <td className="detailWindCell">
+                        {Number.isFinite(n(point.windSpeed)) ? (
+                          <div className="detailWindValue">
+                            <span>{Math.round(n(point.windSpeed))} km/h</span>
+                            {Number.isFinite(n(point.windDirectionDegrees)) ? (
+                              <span className="detailWindDirection">
+                                <i
+                                  className="detailWindArrow"
+                                  style={{
+                                    transform: `rotate(${windArrowRotation(
+                                      point.windDirectionDegrees,
+                                    )}deg)`,
+                                  }}
+                                  aria-hidden="true"
+                                >
+                                  ➤
+                                </i>
+                                <b>{point.windDirection || "—"}</b>
+                              </span>
+                            ) : null}
+                          </div>
+                        ) : (
+                          "—"
+                        )}
                       </td>
                       <td>
                         {Number.isFinite(n(point.windGust))
                           ? `${Math.round(n(point.windGust))} km/h`
                           : "—"}
                       </td>
-                      <td>{point.windDirection || "—"}</td>
                       <td>
                         {Number.isFinite(n(point.humidity))
                           ? `${Math.round(n(point.humidity))}%`
@@ -5993,8 +5998,8 @@ function ForecastSection() {
                           : "—"}
                       </td>
                       <td>
-                        {Number.isFinite(n(point.shortwaveRadiation))
-                          ? `${Math.round(n(point.shortwaveRadiation))} W/m²`
+                        {Number.isFinite(n(point.uvIndex))
+                          ? fmt(point.uvIndex, 1)
                           : "—"}
                       </td>
                     </tr>
@@ -6323,7 +6328,7 @@ function ForecastSection() {
 
         .detailedForecastTable {
           width: 100%;
-          min-width: 1260px;
+          min-width: 1160px;
           border-collapse: separate;
           border-spacing: 0;
           background: #ffffff;
@@ -6429,6 +6434,42 @@ function ForecastSection() {
           font-weight: 950;
         }
 
+        .detailWindCell {
+          white-space: nowrap;
+        }
+
+        .detailWindValue {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 7px;
+          width: 100%;
+        }
+
+        .detailWindDirection {
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+          color: #536987;
+          font-size: 10px;
+          font-weight: 850;
+        }
+
+        .detailWindDirection b {
+          color: #536987;
+          font-size: 10px;
+          font-weight: 900;
+        }
+
+        .detailWindArrow {
+          display: inline-block;
+          color: #1677ff;
+          font-size: 11px;
+          font-style: normal;
+          line-height: 1;
+          transform-origin: center;
+        }
+
         .forecastFooterLink {
           min-height: 42px;
           padding: 0 18px;
@@ -6514,7 +6555,7 @@ function ForecastSection() {
           }
 
           .detailedForecastTable {
-            min-width: 1160px;
+            min-width: 1080px;
             font-size: 11px;
           }
 
@@ -6668,7 +6709,7 @@ function ForecastSection() {
           }
 
           .detailedForecastTable {
-            min-width: 1010px;
+            min-width: 920px;
             font-size: 9.5px;
           }
 
@@ -6746,7 +6787,7 @@ function ForecastSection() {
           }
 
           .detailedForecastTable {
-            min-width: 980px;
+            min-width: 900px;
             font-size: 9px;
           }
 
@@ -7499,6 +7540,99 @@ function deltaTone(value) {
   const vv = n(value);
   if (!Number.isFinite(vv) || vv === 0) return "neutral";
   return vv > 0 ? "positive" : "negative";
+}
+
+function meanSeriesInWindow(pairs, start, end) {
+  const values = (Array.isArray(pairs) ? pairs : [])
+    .filter((point) => {
+      const timestamp = Number(point?.[0]);
+      const value = n(point?.[1]);
+
+      return (
+        Number.isFinite(timestamp) &&
+        Number.isFinite(value) &&
+        (!Number.isFinite(start) || timestamp >= start) &&
+        (!Number.isFinite(end) || timestamp <= end)
+      );
+    })
+    .map((point) => n(point?.[1]));
+
+  return values.length ? avgFinite(values) : null;
+}
+
+function estimateThermalPercentile({
+  currentData,
+  climatologyData,
+  start,
+  end,
+}) {
+  const observed = meanSeriesInWindow(currentData?.temp, start, end);
+  const p10 = meanSeriesInWindow(climatologyData?.tempP10, start, end);
+  const p25 = meanSeriesInWindow(climatologyData?.tempP25, start, end);
+  const p75 = meanSeriesInWindow(climatologyData?.tempP75, start, end);
+  const p90 = meanSeriesInWindow(climatologyData?.tempP90, start, end);
+
+  if (
+    !Number.isFinite(observed) ||
+    !Number.isFinite(p10) ||
+    !Number.isFinite(p25) ||
+    !Number.isFinite(p75) ||
+    !Number.isFinite(p90)
+  ) {
+    return null;
+  }
+
+  const anchors = [
+    { percentile: 10, value: p10 },
+    { percentile: 25, value: p25 },
+    { percentile: 75, value: p75 },
+    { percentile: 90, value: p90 },
+  ];
+
+  const interpolate = (lower, upper) => {
+    const span = upper.value - lower.value;
+
+    if (!Number.isFinite(span) || Math.abs(span) < 0.001) {
+      return (lower.percentile + upper.percentile) / 2;
+    }
+
+    const fraction = (observed - lower.value) / span;
+
+    return (
+      lower.percentile +
+      fraction * (upper.percentile - lower.percentile)
+    );
+  };
+
+  let percentile;
+
+  if (observed <= p10) {
+    percentile = interpolate(anchors[0], anchors[1]);
+  } else if (observed <= p25) {
+    percentile = interpolate(anchors[0], anchors[1]);
+  } else if (observed <= p75) {
+    percentile = interpolate(anchors[1], anchors[2]);
+  } else if (observed <= p90) {
+    percentile = interpolate(anchors[2], anchors[3]);
+  } else {
+    percentile = interpolate(anchors[2], anchors[3]);
+  }
+
+  return Math.max(0, Math.min(100, percentile));
+}
+
+function thermalPercentileLabel(percentile) {
+  const value = n(percentile);
+
+  if (!Number.isFinite(value)) return "";
+
+  if (value >= 98) return "Eccezionalmente caldo";
+  if (value >= 90) return "Molto sopra la norma";
+  if (value >= 75) return "Sopra la norma";
+  if (value > 25) return "Nella norma";
+  if (value > 10) return "Sotto la norma";
+  if (value > 2) return "Molto sotto la norma";
+  return "Eccezionalmente freddo";
 }
 
 function symmetricAxisFromPairs(pairs) {
@@ -10091,6 +10225,19 @@ function AnomalySummaryPanel({
 
   const above = Math.round(n(stats.abovePercent));
   const below = Math.round(n(stats.belowPercent));
+  const thermalPercentile =
+    groupKey === "temp"
+      ? estimateThermalPercentile({
+          currentData,
+          climatologyData,
+          start: prepared.start,
+          end: prepared.end,
+        })
+      : null;
+  const thermalPercentileRounded = Number.isFinite(thermalPercentile)
+    ? Math.round(thermalPercentile)
+    : null;
+  const thermalPercentileText = thermalPercentileLabel(thermalPercentile);
   return (
     <section
       className={`anomalySummary ${deltaTone(stats.mean)}`}
@@ -10104,6 +10251,7 @@ function AnomalySummaryPanel({
         "--max-position": `${maxPosition}%`,
         "--above": `${Number.isFinite(above) ? above : 0}%`,
         "--below": `${Number.isFinite(below) ? below : 0}%`,
+        "--thermal-percentile": `${Number.isFinite(thermalPercentileRounded) ? thermalPercentileRounded : 50}%`,
       }}
     >
       <div className="anomalyMain">
@@ -10164,18 +10312,36 @@ function AnomalySummaryPanel({
         </div>
       </div>
 
-      <div className="anomalyTime">
-        <div className="timeMetric above">
-          <strong>{Number.isFinite(above) ? `${above}%` : "—"}</strong>
-          <span>Tempo sopra climatologia</span>
-          <i><b /></i>
+      {groupKey === "temp" && Number.isFinite(thermalPercentileRounded) ? (
+        <div className="thermalPercentile">
+          <span className="thermalPercentileTitle">Percentile termico stimato</span>
+          <div className="thermalPercentileValue">
+            <strong>{thermalPercentileRounded}°</strong>
+            <span>{thermalPercentileText}</span>
+          </div>
+          <div className="thermalPercentileTrack" aria-hidden="true">
+            <i />
+          </div>
+          <div className="thermalPercentileScale" aria-hidden="true">
+            <span>0</span>
+            <span>50</span>
+            <span>100</span>
+          </div>
         </div>
-        <div className="timeMetric below">
-          <strong>{Number.isFinite(below) ? `${below}%` : "—"}</strong>
-          <span>Tempo sotto climatologia</span>
-          <i><b /></i>
+      ) : (
+        <div className="anomalyTime">
+          <div className="timeMetric above">
+            <strong>{Number.isFinite(above) ? `${above}%` : "—"}</strong>
+            <span>Tempo sopra climatologia</span>
+            <i><b /></i>
+          </div>
+          <div className="timeMetric below">
+            <strong>{Number.isFinite(below) ? `${below}%` : "—"}</strong>
+            <span>Tempo sotto climatologia</span>
+            <i><b /></i>
+          </div>
         </div>
-      </div>
+      )}
 
       <style jsx>{`
         .anomalySummary {
@@ -10437,6 +10603,85 @@ function AnomalySummaryPanel({
           min-width: max-content;
         }
 
+        .thermalPercentile {
+          min-width: 0;
+          display: grid;
+          align-content: center;
+          gap: 5px;
+          padding: 2px 2px 0;
+        }
+
+        .thermalPercentileTitle {
+          color: #64748b;
+          font-size: 8px;
+          font-weight: 950;
+          letter-spacing: 0.04em;
+          text-transform: uppercase;
+        }
+
+        .thermalPercentileValue {
+          display: flex;
+          align-items: baseline;
+          gap: 8px;
+        }
+
+        .thermalPercentileValue strong {
+          color: var(--positive);
+          font-size: 24px;
+          font-weight: 950;
+          line-height: 1;
+        }
+
+        .negative .thermalPercentileValue strong {
+          color: var(--negative);
+        }
+
+        .thermalPercentileValue span {
+          min-width: 0;
+          color: #334155;
+          font-size: 9px;
+          font-weight: 900;
+          line-height: 1.15;
+        }
+
+        .thermalPercentileTrack {
+          position: relative;
+          height: 7px;
+          margin-top: 2px;
+          border-radius: 999px;
+          background: linear-gradient(
+            90deg,
+            #3b82f6 0%,
+            #bfdbfe 20%,
+            #e2e8f0 50%,
+            #fecaca 80%,
+            #ef4444 100%
+          );
+          box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.2);
+        }
+
+        .thermalPercentileTrack i {
+          position: absolute;
+          left: var(--thermal-percentile);
+          top: 50%;
+          width: 11px;
+          height: 11px;
+          border: 2px solid #ffffff;
+          border-radius: 50%;
+          background: #0f172a;
+          box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.22);
+          transform: translate(-50%, -50%);
+        }
+
+        .thermalPercentileScale {
+          display: flex;
+          justify-content: space-between;
+          color: #94a3b8;
+          font-size: 6.5px;
+          font-weight: 850;
+          line-height: 1;
+        }
+
         .anomalyTime {
           min-width: 0;
           display: grid;
@@ -10526,15 +10771,16 @@ function AnomalySummaryPanel({
 
         @media (max-width: 760px) {
           .anomalySummary {
-            margin: -2px 10px 12px;
+            margin: -2px 8px 9px;
             min-height: 0;
-            padding: 10px;
+            padding: 7px 8px;
             grid-template-columns: 1fr;
-            gap: 9px;
+            gap: 5px;
+            border-radius: 13px;
           }
 
           .anomalyMain {
-            padding: 0 0 9px;
+            padding: 0 0 5px;
             border-right: 0;
             border-bottom: 1px solid #e5ebf1;
           }
@@ -10544,25 +10790,139 @@ function AnomalySummaryPanel({
             left: auto;
             top: auto;
             max-width: 100%;
-            height: 22px;
-            margin-bottom: 2px;
+            height: 18px;
+            margin-bottom: 0;
+            gap: 5px;
+          }
+
+          .anomalyIcon {
+            width: 18px;
+            height: 18px;
+            flex-basis: 18px;
+            border-radius: 6px;
+          }
+
+          .anomalyIcon :global(svg) {
+            width: 11px;
+            height: 11px;
           }
 
           .anomalyScale {
-            padding: 20px 4px 20px;
+            padding: 16px 2px 12px;
           }
 
           .meanBadge {
-            top: 3px;
+            top: 0;
+            gap: 3px;
+          }
+
+          .meanBadge span {
+            font-size: 6.6px;
+          }
+
+          .meanBadge strong {
+            font-size: 10.5px;
+          }
+
+          .meanBadge i {
+            border-left-width: 3px;
+            border-right-width: 3px;
+            border-top-width: 4px;
+          }
+
+          .scaleTrack {
+            height: 7px;
+          }
+
+          .zeroMarker {
+            top: -5px;
+            height: 17px;
+          }
+
+          .meanMarker {
+            width: 12px;
+            height: 12px;
+            border-width: 2px;
+          }
+
+          .minDot,
+          .maxDot {
+            width: 10px;
+            height: 10px;
+            border-width: 1.5px;
+          }
+
+          .scaleLabels {
+            min-height: 16px;
+            margin-top: 2px;
+          }
+
+          .scaleLabels.staggered {
+            min-height: 27px;
+          }
+
+          .scaleLabels.staggered .maxLabel {
+            top: 12px;
+          }
+
+          .thermalPercentile {
+            grid-template-columns: auto minmax(0, 1fr);
+            grid-template-areas:
+              "title value"
+              "track track"
+              "scale scale";
+            align-items: end;
+            gap: 2px 8px;
+            padding: 0 1px;
+          }
+
+          .thermalPercentileTitle {
+            grid-area: title;
+            font-size: 6.5px;
+            line-height: 1;
+          }
+
+          .thermalPercentileValue {
+            grid-area: value;
+            justify-self: end;
+            gap: 5px;
+          }
+
+          .thermalPercentileValue strong {
+            font-size: 18px;
+          }
+
+          .thermalPercentileValue span {
+            max-width: 128px;
+            font-size: 7.5px;
+            line-height: 1.05;
+            text-align: right;
+          }
+
+          .thermalPercentileTrack {
+            grid-area: track;
+            height: 5px;
+            margin-top: 1px;
+          }
+
+          .thermalPercentileTrack i {
+            width: 9px;
+            height: 9px;
+            border-width: 1.5px;
+          }
+
+          .thermalPercentileScale {
+            grid-area: scale;
+            font-size: 5.5px;
           }
 
           .anomalyTime {
             grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 10px;
+            gap: 8px;
           }
 
           .timeMetric {
-            grid-template-columns: 42px minmax(0, 1fr);
+            grid-template-columns: 40px minmax(0, 1fr);
           }
 
           .timeMetric span {
@@ -10572,39 +10932,44 @@ function AnomalySummaryPanel({
 
         @media (max-width: 430px) {
           .anomalyHeaderText {
-            gap: 4px;
+            gap: 3px;
           }
 
           .anomalyHeaderText span {
-            font-size: 6.8px;
+            font-size: 6.2px;
           }
 
           .anomalyHeaderText strong {
-            font-size: 9px;
-          }
-
-          .meanBadge strong {
-            font-size: 10.5px;
+            font-size: 8.3px;
           }
 
           .scaleLabels > div {
-            max-width: 72px;
+            max-width: 66px;
           }
 
           .scaleLabels strong {
-            font-size: 8.2px;
+            font-size: 7.7px;
           }
 
           .scaleLabels span {
-            font-size: 5.7px;
+            font-size: 5.2px;
           }
 
           .scaleLabels.staggered {
-            min-height: 34px;
+            min-height: 25px;
           }
 
           .scaleLabels.staggered .maxLabel {
-            top: 15px;
+            top: 11px;
+          }
+
+          .thermalPercentileValue strong {
+            font-size: 17px;
+          }
+
+          .thermalPercentileValue span {
+            max-width: 112px;
+            font-size: 7px;
           }
 
           .zeroLabel span {

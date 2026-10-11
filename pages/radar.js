@@ -816,7 +816,7 @@ export default function RadarPage() {
           .arpasDescription {
             font-size: 10px;
             line-height: 1.3;
-          }
+           }
         }
       `}</style>
     </SiteLayout>

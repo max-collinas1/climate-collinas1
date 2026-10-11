@@ -2,16 +2,13 @@ import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import SiteLayout from "../components/SiteLayout";
 import { readDailyLive } from "../lib/liveData";
-
 const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
-
 const TIMEZONE = "Europe/Rome";
 const LATITUDE = 39.6413;
 const LONGITUDE = 8.8399;
 const ELEVATION_M = 249;
 const GDD_BASE_C = 10;
 const FETCH_CACHE = new Map();
-
 const SOURCES = {
   eto: {
     shortLabel: "FAO-56",
@@ -30,7 +27,6 @@ const SOURCES = {
     url: "https://www.ars.usda.gov/research/publications/publication/?seqNo115=375359",
   },
 };
-
 export async function getStaticProps() {
   const dailyRows = (await readDailyLive())
     .filter((row) => /^\d{4}-\d{2}-\d{2}$/.test(String(row?.date || "")))
@@ -44,9 +40,7 @@ export async function getStaticProps() {
       obs_count: finiteOrNull(row.obs_count),
       has_obs: Boolean(row.has_obs),
     }));
-
   const intradayDates = dailyRows.map((row) => row.date);
-
   return {
     props: {
       intradayDates,
@@ -58,31 +52,25 @@ export async function getStaticProps() {
     revalidate: 60,
   };
 }
-
 function finiteOrNull(value) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 }
-
 function n(value) {
   if (value === null || value === undefined || value === "") return NaN;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : NaN;
 }
-
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
-
 function fmt(value, decimals = 1, suffix = "") {
   const parsed = n(value);
   return Number.isFinite(parsed) ? `${parsed.toFixed(decimals)}${suffix}` : "—";
 }
-
 function pad2(value) {
   return String(value).padStart(2, "0");
 }
-
 function currentRomeISO() {
   const parts = new Intl.DateTimeFormat("en-GB", {
     timeZone: TIMEZONE,
@@ -90,17 +78,14 @@ function currentRomeISO() {
     month: "2-digit",
     day: "2-digit",
   }).formatToParts(new Date());
-
   const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
   return `${values.year}-${values.month}-${values.day}`;
 }
-
 function parseLocalTimestamp(value) {
   const match = String(value || "").match(
     /^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})$/,
   );
   if (!match) return null;
-
   return new Date(
     Number(match[1]),
     Number(match[2]) - 1,
@@ -111,29 +96,24 @@ function parseLocalTimestamp(value) {
     0,
   );
 }
-
 function dateFromISO(iso) {
   const match = String(iso || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (!match) return null;
   return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 12);
 }
-
 function dateToISO(date) {
   return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
 }
-
 function addDaysISO(iso, amount) {
   const date = dateFromISO(iso);
   if (!date) return iso;
   date.setDate(date.getDate() + amount);
   return dateToISO(date);
 }
-
 function dateRangeISO(startISO, endISO) {
   const start = dateFromISO(startISO);
   const end = dateFromISO(endISO);
   if (!start || !end || start > end) return [];
-
   const out = [];
   const cursor = new Date(start);
   while (cursor <= end) {
@@ -142,7 +122,6 @@ function dateRangeISO(startISO, endISO) {
   }
   return out;
 }
-
 function formatLongDate(iso) {
   const date = dateFromISO(iso);
   if (!date) return iso || "—";
@@ -154,75 +133,61 @@ function formatLongDate(iso) {
     year: "numeric",
   }).format(date);
 }
-
 function formatObservationTime(value) {
   const date = parseLocalTimestamp(value);
   if (!date) return "—";
   return `${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
 }
-
 function periodStartISO(endISO, period) {
   if (period === "week") return addDaysISO(endISO, -6);
   if (period === "month") return addDaysISO(endISO, -29);
   return endISO;
 }
-
 function periodLabel(period) {
   if (period === "week") return "ultimi 7 giorni";
   if (period === "month") return "ultimi 30 giorni";
   return "oggi";
 }
-
 function averageFinite(values) {
   const valid = values.map(n).filter(Number.isFinite);
   return valid.length
     ? valid.reduce((sum, value) => sum + value, 0) / valid.length
     : null;
 }
-
 function maxFinite(values) {
   const valid = values.map(n).filter(Number.isFinite);
   return valid.length ? Math.max(...valid) : null;
 }
-
 function minFinite(values) {
   const valid = values.map(n).filter(Number.isFinite);
   return valid.length ? Math.min(...valid) : null;
 }
-
 function sumFinite(values) {
   const valid = values.map(n).filter(Number.isFinite);
   return valid.length ? valid.reduce((sum, value) => sum + value, 0) : null;
 }
-
 function saturationVapourPressure(tempC) {
   const temp = n(tempC);
   if (!Number.isFinite(temp)) return null;
   return 0.6108 * Math.exp((17.27 * temp) / (temp + 237.3));
 }
-
 function calculateVpd(tempC, dewpointC, rhPct) {
   const temp = n(tempC);
   if (!Number.isFinite(temp)) return null;
-
   const es = saturationVapourPressure(temp);
   let ea = saturationVapourPressure(dewpointC);
-
   if (!Number.isFinite(ea)) {
     const rh = n(rhPct);
     if (Number.isFinite(rh)) ea = es * clamp(rh / 100, 0, 1);
   }
-
   if (!Number.isFinite(es) || !Number.isFinite(ea)) return null;
   return Math.max(0, es - ea);
 }
-
 function vpdMeta(value) {
   const vpd = n(value);
   if (!Number.isFinite(vpd)) {
     return { label: "Dato non disponibile", detail: "", tone: "neutral" };
   }
-
   if (vpd < 0.4) {
     return {
       label: "Domanda molto bassa",
@@ -251,14 +216,12 @@ function vpdMeta(value) {
       tone: "orange",
     };
   }
-
   return {
     label: "Domanda estrema",
     detail: "Aria molto disseccante: possibile forte stress nelle colture non irrigate.",
     tone: "red",
   };
 }
-
 function isEstimatedLeafWet(row) {
   const rain15 = n(row?.rain_15m_mm);
   const rainRate = n(row?.rain_rate_mmph);
@@ -266,16 +229,12 @@ function isEstimatedLeafWet(row) {
   const temp = n(row?.temp_c);
   const dewpoint = n(row?.dewpoint_c);
   const wind = n(row?.wind_kmh);
-
   if ((Number.isFinite(rain15) && rain15 > 0) || (Number.isFinite(rainRate) && rainRate > 0)) {
     return true;
   }
-
   const dewpointDepression =
     Number.isFinite(temp) && Number.isFinite(dewpoint) ? temp - dewpoint : NaN;
-
   if (Number.isFinite(rh) && rh >= 95) return true;
-
   return (
     Number.isFinite(rh) &&
     rh >= 90 &&
@@ -284,23 +243,19 @@ function isEstimatedLeafWet(row) {
     (!Number.isFinite(wind) || wind <= 12)
   );
 }
-
 function dayOfYear(date) {
   const start = new Date(date.getFullYear(), 0, 0);
   return Math.floor((date - start) / 86400000);
 }
-
 function atmosphericPressureFromElevation(elevationM = ELEVATION_M) {
   return 101.3 * Math.pow((293 - 0.0065 * elevationM) / 293, 5.26);
 }
-
 function extraterrestrialRadiationInterval(date, durationHours = 0.25) {
   const j = dayOfYear(date);
   const phi = (LATITUDE * Math.PI) / 180;
   const dr = 1 + 0.033 * Math.cos((2 * Math.PI * j) / 365);
   const delta = 0.409 * Math.sin((2 * Math.PI * j) / 365 - 1.39);
   const gsc = 0.082;
-
   const localHour = date.getHours() + date.getMinutes() / 60;
   const timezoneOffsetHours = -date.getTimezoneOffset() / 60;
   const b = (2 * Math.PI * (j - 81)) / 364;
@@ -308,16 +263,13 @@ function extraterrestrialRadiationInterval(date, durationHours = 0.25) {
   const standardMeridian = 15 * timezoneOffsetHours;
   const solarCorrectionMinutes = 4 * (LONGITUDE - standardMeridian) + equationOfTimeMinutes;
   const solarMidHour = localHour + solarCorrectionMinutes / 60;
-
   const half = durationHours / 2;
   const omega1 = (Math.PI / 12) * (solarMidHour - half - 12);
   const omega2 = (Math.PI / 12) * (solarMidHour + half - 12);
   const sunsetAngle = Math.acos(clamp(-Math.tan(phi) * Math.tan(delta), -1, 1));
-
   const w1 = clamp(omega1, -sunsetAngle, sunsetAngle);
   const w2 = clamp(omega2, -sunsetAngle, sunsetAngle);
   if (w2 <= w1) return 0;
-
   const ra =
     (12 * 60) /
     Math.PI /
@@ -325,10 +277,8 @@ function extraterrestrialRadiationInterval(date, durationHours = 0.25) {
     dr *
     ((w2 - w1) * Math.sin(phi) * Math.sin(delta) +
       Math.cos(phi) * Math.cos(delta) * (Math.sin(w2) - Math.sin(w1)));
-
   return Math.max(0, ra);
 }
-
 function estimateEtoInterval(row, previousCloudFactor = 0.65) {
   const date = parseLocalTimestamp(row?.t);
   const temp = n(row?.temp_c);
@@ -336,11 +286,9 @@ function estimateEtoInterval(row, previousCloudFactor = 0.65) {
   const dewpoint = n(row?.dewpoint_c);
   const windKmh = n(row?.wind_kmh);
   const solarWm2 = n(row?.solar_wm2);
-
   if (!date || !Number.isFinite(temp) || !Number.isFinite(windKmh)) {
     return { eto: 0, cloudFactor: previousCloudFactor };
   }
-
   const es = saturationVapourPressure(temp);
   let ea = saturationVapourPressure(dewpoint);
   if (!Number.isFinite(ea) && Number.isFinite(rh)) {
@@ -349,23 +297,19 @@ function estimateEtoInterval(row, previousCloudFactor = 0.65) {
   if (!Number.isFinite(es) || !Number.isFinite(ea)) {
     return { eto: 0, cloudFactor: previousCloudFactor };
   }
-
   const delta =
     (4098 * 0.6108 * Math.exp((17.27 * temp) / (temp + 237.3))) /
     Math.pow(temp + 237.3, 2);
   const pressure = atmosphericPressureFromElevation();
   const gamma = 0.000665 * pressure;
   const u2 = Math.max(0, windKmh / 3.6);
-
   const rsInterval = Math.max(0, Number.isFinite(solarWm2) ? solarWm2 : 0) * 0.0009;
   const raInterval = extraterrestrialRadiationInterval(date, 0.25);
   const rsoInterval = (0.75 + 2e-5 * ELEVATION_M) * raInterval;
-
   let cloudFactor = previousCloudFactor;
   if (rsoInterval > 0.003) {
     cloudFactor = clamp(1.35 * clamp(rsInterval / rsoInterval, 0, 1.2) - 0.35, 0.05, 1);
   }
-
   const rnsInterval = 0.77 * rsInterval;
   const sigmaInterval = 4.903e-9 / 96;
   const tempK = temp + 273.16;
@@ -374,42 +318,34 @@ function estimateEtoInterval(row, previousCloudFactor = 0.65) {
     Math.pow(tempK, 4) *
     Math.max(0.05, 0.34 - 0.14 * Math.sqrt(Math.max(0, ea))) *
     cloudFactor;
-
   const rnInterval = rnsInterval - rnlInterval;
   const rnHourly = rnInterval * 4;
   const gHourly = (Number.isFinite(solarWm2) && solarWm2 > 5 ? 0.1 : 0.5) * rnHourly;
-
   const numerator =
     0.408 * delta * (rnHourly - gHourly) +
     gamma * (37 / (temp + 273)) * u2 * Math.max(0, es - ea);
   const denominator = delta + gamma * (1 + 0.34 * u2);
   const etoHourly = denominator > 0 ? numerator / denominator : 0;
-
   return {
     eto: Math.max(0, etoHourly * 0.25),
     cloudFactor,
   };
 }
-
 function enrichRows(rows) {
   const sorted = (Array.isArray(rows) ? rows : [])
     .filter((row) => parseLocalTimestamp(row?.t))
     .sort((a, b) => String(a.t).localeCompare(String(b.t)));
-
   let cloudFactor = 0.65;
   const cumulativeByDate = new Map();
   const runningExtremes = new Map();
-
   return sorted.map((row) => {
     const date = parseLocalTimestamp(row.t);
     const iso = String(row.t).slice(0, 10);
     const etoResult = estimateEtoInterval(row, cloudFactor);
     cloudFactor = etoResult.cloudFactor;
-
     const previousEto = cumulativeByDate.get(iso) || 0;
     const etoCumulative = previousEto + etoResult.eto;
     cumulativeByDate.set(iso, etoCumulative);
-
     const temp = n(row.temp_c);
     const extremes = runningExtremes.get(iso) || { min: Infinity, max: -Infinity };
     if (Number.isFinite(temp)) {
@@ -417,15 +353,12 @@ function enrichRows(rows) {
       extremes.max = Math.max(extremes.max, temp);
     }
     runningExtremes.set(iso, extremes);
-
     const gddRunning =
       Number.isFinite(extremes.min) && Number.isFinite(extremes.max)
         ? Math.max(0, (extremes.min + extremes.max) / 2 - GDD_BASE_C)
         : null;
-
     const rainAcc = n(row.rain_acc_mm);
     const rain15 = n(row.rain_15m_mm);
-
     return {
       ...row,
       timestamp: date.getTime(),
@@ -442,7 +375,6 @@ function enrichRows(rows) {
     };
   });
 }
-
 function groupRowsByDate(rows) {
   const map = new Map();
   for (const row of rows) {
@@ -453,12 +385,10 @@ function groupRowsByDate(rows) {
   }
   return map;
 }
-
 function summarizeDay(rows, iso) {
   const dayRows = (Array.isArray(rows) ? rows : []).filter((row) => row.iso === iso);
   const temps = dayRows.map((row) => row.temp_c).map(n).filter(Number.isFinite);
   const vpdValues = dayRows.map((row) => row.vpd).map(n).filter(Number.isFinite);
-
   const eto = sumFinite(dayRows.map((row) => row.etoInterval)) || 0;
   const rainAccMax = maxFinite(dayRows.map((row) => row.rainCumulative));
   const rainFromSteps = sumFinite(dayRows.map((row) => row.rain15));
@@ -469,7 +399,6 @@ function summarizeDay(rows, iso) {
     Number.isFinite(tmin) && Number.isFinite(tmax)
       ? Math.max(0, (tmin + tmax) / 2 - GDD_BASE_C)
       : null;
-
   return {
     iso,
     timestamp: dateFromISO(iso)?.setHours(12, 0, 0, 0) ?? null,
@@ -485,18 +414,15 @@ function summarizeDay(rows, iso) {
     count: dayRows.length,
   };
 }
-
 function gddFromDailyRow(row) {
   const tmin = n(row?.tmin);
   const tmax = n(row?.tmax);
   if (!Number.isFinite(tmin) || !Number.isFinite(tmax)) return null;
   return Math.max(0, (tmin + tmax) / 2 - GDD_BASE_C);
 }
-
 function seasonalGdd(dailyRows, currentSummary, loadedDate) {
   const year = String(loadedDate || "").slice(0, 4);
   if (!year) return null;
-
   let total = 0;
   let found = false;
   for (const row of dailyRows || []) {
@@ -508,65 +434,53 @@ function seasonalGdd(dailyRows, currentSummary, loadedDate) {
       found = true;
     }
   }
-
   if (Number.isFinite(currentSummary?.gdd)) {
     total += currentSummary.gdd;
     found = true;
   }
   return found ? total : null;
 }
-
 function consecutiveDryDays(dailyRows, currentSummary, loadedDate) {
   const map = new Map((dailyRows || []).map((row) => [String(row.date), row]));
   let count = 0;
   let cursor = loadedDate;
   let safety = 0;
-
   while (cursor && safety < 400) {
     let rain;
     if (cursor === loadedDate && currentSummary) rain = n(currentSummary.rain);
     else rain = n(map.get(cursor)?.rain_total);
-
     if (!Number.isFinite(rain) || rain >= 1) break;
     count += 1;
     cursor = addDaysISO(cursor, -1);
     safety += 1;
   }
-
   return count;
 }
-
 function msUntilNextRefresh(now = new Date()) {
   const next = new Date(now);
   next.setSeconds(0, 0);
   const minute = now.getMinutes();
-
   if (minute < 20) next.setMinutes(20);
   else if (minute < 50) next.setMinutes(50);
   else {
     next.setHours(next.getHours() + 1);
     next.setMinutes(20);
   }
-
   return Math.max(1000, next.getTime() - now.getTime());
 }
-
 async function fetchIntraday(iso, force = false) {
   if (!iso) return [];
   if (!force && FETCH_CACHE.has(iso)) return FETCH_CACHE.get(iso);
-
   const response = await fetch(
     `https://raw.githubusercontent.com/max-collinas1/climate-collinas1/main/public/data/intraday/${encodeURIComponent(iso)}.json?ts=${Date.now()}`,
     { cache: "no-store" },
   );
   if (!response.ok) throw new Error(`Dati ${iso} non disponibili`);
-
   const json = await response.json();
   const rows = Array.isArray(json) ? json : [];
   FETCH_CACHE.set(iso, rows);
   return rows;
 }
-
 function SourceLink({ source }) {
   if (!source) return null;
   return (
@@ -581,42 +495,62 @@ function SourceLink({ source }) {
     </a>
   );
 }
-
+function agroVisual(title = "") {
+  const value = String(title).toLowerCase();
+  if (value.includes("vpd") || value.includes("evaporativa")) return { code: "VPD", tone: "blue" };
+  if (value.includes("et0")) return { code: "ET₀", tone: "cyan" };
+  if (value.includes("bilancio")) return { code: "P−E", tone: "green" };
+  if (value.includes("gradi") || value.includes("35")) return { code: "GDD", tone: "orange" };
+  if (value.includes("bagnatura")) return { code: "LWD", tone: "violet" };
+  if (value.includes("pioggia")) return { code: "P", tone: "cyan" };
+  if (value.includes("secco")) return { code: "DRY", tone: "orange" };
+  return { code: "AG", tone: "slate" };
+}
+function AgroBadge({ title, compact = false }) {
+  const visual = agroVisual(title);
+  return <span className={`agroBadge badge-${visual.tone} ${compact ? "compact" : ""}`}>{visual.code}</span>;
+}
 function InfoCard({ title, text, source }) {
   return (
     <article className="infoCard">
-      <div className="infoTitle">{title}</div>
+      <div className="infoCardHead">
+        <AgroBadge title={title} />
+        <div className="infoTitle">{title}</div>
+      </div>
       <p>{text}</p>
       <SourceLink source={source} />
     </article>
   );
 }
-
 function MetricCard({ title, value, unit, label, detail, tone = "neutral", source }) {
   return (
     <article className={`metricCard tone-${tone}`}>
-      <div className="metricTitle">{title}</div>
+      <div className="metricCardHead">
+        <AgroBadge title={title} />
+        <div className="metricTitle">{title}</div>
+      </div>
       <div className="metricValueRow">
         <span className="metricValue">{value}</span>
         {unit ? <span className="metricUnit">{unit}</span> : null}
       </div>
-      <div className="metricLabel">{label}</div>
+      <div className={`metricLabel label-${tone}`}>{label}</div>
       <div className="metricDetail">{detail}</div>
       <SourceLink source={source} />
     </article>
   );
 }
-
 function SummaryCell({ label, value, detail }) {
   return (
     <div className="summaryCell">
-      <div className="summaryLabel">{label}</div>
+      <div className="summaryTop">
+        <AgroBadge title={label} compact />
+        <div className="summaryLabel">{label}</div>
+      </div>
       <div className="summaryValue">{value}</div>
       <div className="summaryDetail">{detail}</div>
     </div>
   );
 }
-
 const METRIC_OPTIONS = [
   { value: "vpd", label: "Deficit di pressione di vapore (VPD)" },
   { value: "temperature", label: "Temperatura" },
@@ -627,11 +561,10 @@ const METRIC_OPTIONS = [
   { value: "balance", label: "Bilancio pioggia − ET0" },
   { value: "gdd", label: `Gradi giorno, base ${GDD_BASE_C} °C` },
 ];
-
 function chartMetricConfig(metric, dataMax = null, dataMin = null) {
   if (metric === "vpd") {
     return {
-      title: "Andamento della domanda evaporativa (VPD)",
+      title: "Indice VPD",
       unit: "kPa",
       min: 0,
       max: Math.max(3.2, Number.isFinite(dataMax) ? Math.ceil(dataMax * 10) / 10 : 0),
@@ -645,10 +578,9 @@ function chartMetricConfig(metric, dataMax = null, dataMin = null) {
       ],
     };
   }
-
   if (metric === "temperature") {
     return {
-      title: "Andamento della temperatura",
+      title: "Temperatura",
       unit: "°C",
       min: Number.isFinite(dataMin) ? Math.floor(dataMin - 2) : 0,
       max: Number.isFinite(dataMax) ? Math.ceil(dataMax + 2) : 45,
@@ -660,10 +592,9 @@ function chartMetricConfig(metric, dataMax = null, dataMin = null) {
       ],
     };
   }
-
   if (metric === "humidity") {
     return {
-      title: "Andamento dell’umidità relativa",
+      title: "Umidità relativa",
       unit: "%",
       min: 0,
       max: 100,
@@ -671,10 +602,9 @@ function chartMetricConfig(metric, dataMax = null, dataMin = null) {
       areas: [],
     };
   }
-
   if (metric === "leafWetness") {
     return {
-      title: "Condizioni favorevoli alla bagnatura fogliare",
+      title: "Bagnatura fogliare stimata",
       unit: "",
       min: 0,
       max: 1,
@@ -683,7 +613,6 @@ function chartMetricConfig(metric, dataMax = null, dataMin = null) {
       categoryLabels: true,
     };
   }
-
   if (metric === "rain") {
     return {
       title: "Pioggia cumulata",
@@ -694,10 +623,9 @@ function chartMetricConfig(metric, dataMax = null, dataMin = null) {
       areas: [],
     };
   }
-
   if (metric === "eto") {
     return {
-      title: "Evapotraspirazione di riferimento stimata",
+      title: "Indice ET0",
       unit: "mm",
       min: 0,
       max: Number.isFinite(dataMax) ? Math.max(1, Math.ceil(dataMax + 1)) : 8,
@@ -705,7 +633,6 @@ function chartMetricConfig(metric, dataMax = null, dataMin = null) {
       areas: [],
     };
   }
-
   if (metric === "balance") {
     const span = Math.max(
       2,
@@ -717,7 +644,7 @@ function chartMetricConfig(metric, dataMax = null, dataMin = null) {
       ),
     );
     return {
-      title: "Bilancio climatico: pioggia meno ET0",
+      title: "Bilancio climatico",
       unit: "mm",
       min: -span,
       max: span,
@@ -728,7 +655,6 @@ function chartMetricConfig(metric, dataMax = null, dataMin = null) {
       ],
     };
   }
-
   return {
     title: `Gradi giorno, base ${GDD_BASE_C} °C`,
     unit: "°C·giorno",
@@ -738,15 +664,12 @@ function chartMetricConfig(metric, dataMax = null, dataMin = null) {
     areas: [],
   };
 }
-
 function buildChartPoints(rows, metric, period, loadedDate) {
   if (!rows.length) return [];
-
   const startISO = periodStartISO(loadedDate, period);
   const scopedRows = rows.filter(
     (row) => row.iso >= startISO && row.iso <= loadedDate,
   );
-
   if (["vpd", "temperature", "humidity", "leafWetness"].includes(metric)) {
     return scopedRows.map((row) => {
       let value = null;
@@ -757,7 +680,6 @@ function buildChartPoints(rows, metric, period, loadedDate) {
       return [row.timestamp, Number.isFinite(value) ? value : null];
     });
   }
-
   if (metric === "rain" && period !== "day") {
     const grouped = groupRowsByDate(scopedRows);
     return Array.from(grouped.keys())
@@ -767,14 +689,12 @@ function buildChartPoints(rows, metric, period, loadedDate) {
         return [summary.timestamp, summary.rain];
       });
   }
-
   if (metric === "rain") {
     return scopedRows.map((row) => [
       row.timestamp,
       Number.isFinite(row.rainCumulative) ? row.rainCumulative : null,
     ]);
   }
-
   if (period === "day") {
     return scopedRows
       .filter((row) => row.iso === loadedDate)
@@ -786,7 +706,6 @@ function buildChartPoints(rows, metric, period, loadedDate) {
         return [row.timestamp, Number.isFinite(value) ? value : null];
       });
   }
-
   const grouped = groupRowsByDate(scopedRows);
   return Array.from(grouped.keys())
     .sort()
@@ -799,7 +718,6 @@ function buildChartPoints(rows, metric, period, loadedDate) {
       return [summary.timestamp, Number.isFinite(value) ? value : null];
     });
 }
-
 function chartTimeBounds(endISO, period) {
   const start = dateFromISO(periodStartISO(endISO, period));
   const end = dateFromISO(addDaysISO(endISO, 1));
@@ -808,14 +726,39 @@ function chartTimeBounds(endISO, period) {
   end.setHours(0, 0, 0, 0);
   return { min: start.getTime(), max: end.getTime() };
 }
-
 function formatAxisTime(value, period) {
   const date = new Date(value);
   if (period === "day") return `${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
   if (period === "week") return `${pad2(date.getDate())}/${pad2(date.getMonth() + 1)}`;
   return `${pad2(date.getDate())}/${pad2(date.getMonth() + 1)}`;
 }
-
+function makeAgrometeoToolbox({ filename, isMobile }) {
+  return {
+    feature: {
+      restore: { title: "Ripristina" },
+      saveAsImage: {
+        type: "png",
+        name: filename,
+        backgroundColor: "#ffffff",
+        pixelRatio: 2,
+        title: "Salva grafico",
+      },
+    },
+    left: isMobile ? 4 : 8,
+    top: isMobile ? 4 : 7,
+    itemSize: isMobile ? 13 : 17,
+    itemGap: isMobile ? 6 : 9,
+    iconStyle: {
+      borderColor: "#64748b",
+      borderWidth: 1.2,
+    },
+    emphasis: {
+      iconStyle: {
+        borderColor: "#2563eb",
+      },
+    },
+  };
+}
 function AgrometeoChart({ rows, metric, period, loadedDate }) {
   const points = useMemo(
     () => buildChartPoints(rows, metric, period, loadedDate),
@@ -827,7 +770,7 @@ function AgrometeoChart({ rows, metric, period, loadedDate }) {
   const config = chartMetricConfig(metric, dataMax, dataMin);
   const bounds = chartTimeBounds(loadedDate, period);
   const latestPoint = points.slice().reverse().find((point) => Number.isFinite(n(point[1])));
-
+  const isMobile = typeof window !== "undefined" ? window.innerWidth <= 680 : false;
   const markAreaData = (config.areas || []).map(([from, to, label, color]) => [
     {
       name: label,
@@ -836,17 +779,22 @@ function AgrometeoChart({ rows, metric, period, loadedDate }) {
       label: {
         show: true,
         position: "insideTopRight",
-        color: "rgba(15,23,42,.58)",
-        fontSize: 10,
+        color: isMobile ? "rgba(51,65,85,.52)" : "rgba(51,65,85,.68)",
+        fontSize: isMobile ? 8 : 10,
         fontWeight: 800,
       },
     },
     { yAxis: to },
   ]);
-
   const option = {
     animation: false,
-    grid: { left: 70, right: 34, top: 46, bottom: 76 },
+    toolbox: makeAgrometeoToolbox({
+      filename: `meteo-collinas-agrometeo-${metric}-${period}`,
+      isMobile,
+    }),
+    grid: isMobile
+      ? { left: 42, right: 10, top: 34, bottom: 32 }
+      : { left: 66, right: 28, top: 42, bottom: 46 },
     tooltip: {
       trigger: "axis",
       backgroundColor: "rgba(255,255,255,.98)",
@@ -878,11 +826,13 @@ function AgrometeoChart({ rows, metric, period, loadedDate }) {
       max: bounds.max,
       boundaryGap: false,
       axisLabel: {
-        color: "rgba(15,23,42,.68)",
+        color: isMobile ? "rgba(71,85,105,.60)" : "rgba(51,65,85,.72)",
+        fontSize: isMobile ? 9 : 11,
         formatter: (value) => formatAxisTime(value, period),
         hideOverlap: true,
       },
-      axisLine: { lineStyle: { color: "#94a3b8" } },
+      axisTick: { show: false },
+      axisLine: { lineStyle: { color: "rgba(148,163,184,.52)" } },
       splitLine: { show: false },
     },
     yAxis: {
@@ -891,28 +841,24 @@ function AgrometeoChart({ rows, metric, period, loadedDate }) {
       max: config.max,
       name: config.unit,
       nameLocation: "middle",
-      nameGap: 48,
-      nameTextStyle: { color: "rgba(15,23,42,.68)", fontWeight: 800 },
+      nameGap: isMobile ? 28 : 43,
+      nameTextStyle: {
+        color: isMobile ? "rgba(71,85,105,.60)" : "rgba(51,65,85,.72)",
+        fontWeight: 800,
+        fontSize: isMobile ? 9 : 11,
+      },
+      axisTick: { show: false },
+      axisLine: { show: false },
       axisLabel: {
-        color: "rgba(15,23,42,.68)",
+        color: isMobile ? "rgba(71,85,105,.60)" : "rgba(51,65,85,.72)",
+        fontSize: isMobile ? 9 : 11,
         formatter: config.categoryLabels
           ? (value) => (value >= 0.5 ? "Sì" : "No")
           : undefined,
       },
-      splitLine: { lineStyle: { color: "rgba(148,163,184,.22)" } },
+      splitLine: { lineStyle: { color: "rgba(148,163,184,.24)" } },
     },
-    dataZoom: [
-      { type: "inside", filterMode: "none" },
-      {
-        type: "slider",
-        bottom: 18,
-        height: 20,
-        showDetail: false,
-        borderColor: "#cbd5e1",
-        backgroundColor: "#eef2ff",
-        fillerColor: "rgba(148,163,184,.18)",
-      },
-    ],
+    dataZoom: [{ type: "inside", filterMode: "none" }],
     series: [
       {
         name: config.title,
@@ -922,8 +868,8 @@ function AgrometeoChart({ rows, metric, period, loadedDate }) {
         connectNulls: false,
         smooth: metric === "leafWetness" ? false : 0.16,
         step: metric === "leafWetness" ? "end" : false,
-        lineStyle: { width: 3, color: "#0f172a" },
-        itemStyle: { color: "#0f172a" },
+        lineStyle: { width: isMobile ? 2.1 : 2.8, color: "#163a63" },
+        itemStyle: { color: "#163a63" },
         areaStyle:
           metric === "rain"
             ? { color: "rgba(14,165,233,.13)" }
@@ -946,8 +892,8 @@ function AgrometeoChart({ rows, metric, period, loadedDate }) {
             name: "Ultimo dato",
             type: "effectScatter",
             data: [latestPoint],
-            symbolSize: 9,
-            rippleEffect: { scale: 4, period: 1.8, brushType: "stroke" },
+            symbolSize: isMobile ? 6 : 8,
+            rippleEffect: { scale: 3, period: 1.8, brushType: "stroke" },
             itemStyle: {
               color: "#ef4444",
               borderColor: "#fff",
@@ -959,18 +905,18 @@ function AgrometeoChart({ rows, metric, period, loadedDate }) {
         : null,
     ].filter(Boolean),
   };
-
   return (
     <section className="chartPanel">
-      <h2>{config.title}</h2>
-      <div className="chartSubtitle">
-        Periodo: {periodLabel(period)}. Le fasce colorate sono indicative e non sostituiscono soglie specifiche per coltura.
+      <div className="chartHead">
+        <h2>{config.title}</h2>
+        <div className="chartSubtitle">Periodo: {periodLabel(period)}. Le fasce colorate sono indicative e non sostituiscono soglie specifiche per coltura.</div>
       </div>
-      <ReactECharts option={option} style={{ height: 430, width: "100%" }} notMerge lazyUpdate />
+      <div className="chartCanvas">
+        <ReactECharts option={option} style={{ height: "100%", width: "100%" }} notMerge lazyUpdate />
+      </div>
     </section>
   );
 }
-
 export default function Agrometeo({ intradayDates = [], latestDate = null, dailyRows = [] }) {
   const [loadedDate, setLoadedDate] = useState(latestDate || currentRomeISO());
   const [rows, setRows] = useState([]);
@@ -978,20 +924,16 @@ export default function Agrometeo({ intradayDates = [], latestDate = null, daily
   const [error, setError] = useState("");
   const [selectedMetric, setSelectedMetric] = useState("vpd");
   const [selectedPeriod, setSelectedPeriod] = useState("day");
-
   const availableDates = useMemo(() => {
     return Array.from(new Set([...(intradayDates || []), currentRomeISO()].filter(Boolean))).sort();
   }, [intradayDates]);
-
   const loadData = useCallback(
     async (force = false) => {
       setLoading(true);
       setError("");
-
       const today = currentRomeISO();
       const candidates = Array.from(new Set([today, latestDate, loadedDate].filter(Boolean)));
       let resolvedDate = null;
-
       for (const iso of candidates) {
         try {
           const data = await fetchIntraday(iso, force);
@@ -1000,22 +942,18 @@ export default function Agrometeo({ intradayDates = [], latestDate = null, daily
             break;
           }
         } catch {
-          // prova la data successiva
         }
       }
-
       if (!resolvedDate) {
         setRows([]);
         setLoading(false);
         setError("Nessun dato intraday disponibile.");
         return;
       }
-
       const startISO = periodStartISO(resolvedDate, "month");
       const requestedDates = dateRangeISO(startISO, resolvedDate).filter(
         (iso) => availableDates.includes(iso) || iso === today,
       );
-
       const loaded = await Promise.all(
         requestedDates.map(async (iso) => {
           try {
@@ -1025,35 +963,29 @@ export default function Agrometeo({ intradayDates = [], latestDate = null, daily
           }
         }),
       );
-
       setLoadedDate(resolvedDate);
       setRows(enrichRows(loaded.flat()));
       setLoading(false);
     }, [availableDates, latestDate, loadedDate, selectedPeriod],
   );
-
   useEffect(() => {
     loadData(false);
   }, [selectedPeriod]);
-
   useEffect(() => {
     let timeoutId;
     let cancelled = false;
-
     const schedule = () => {
       timeoutId = window.setTimeout(async () => {
         if (!cancelled) await loadData(true);
         if (!cancelled) schedule();
       }, msUntilNextRefresh());
     };
-
     schedule();
     return () => {
       cancelled = true;
       window.clearTimeout(timeoutId);
     };
   }, [loadData]);
-
   useEffect(() => {
     const refreshOnReturn = () => {
       if (document.visibilityState === "visible") loadData(true);
@@ -1065,7 +997,6 @@ export default function Agrometeo({ intradayDates = [], latestDate = null, daily
       window.removeEventListener("focus", refreshOnReturn);
     };
   }, [loadData]);
-
   const currentRows = useMemo(
     () => rows.filter((row) => row.iso === loadedDate),
     [rows, loadedDate],
@@ -1081,7 +1012,6 @@ export default function Agrometeo({ intradayDates = [], latestDate = null, daily
       .sort()
       .map((iso) => summarizeDay(rows, iso));
   }, [rows]);
-
   const currentVpdMeta = vpdMeta(latest?.vpd);
   const wetNow = Boolean(latest?.leafWet);
   const seasonGdd = seasonalGdd(dailyRows, currentSummary, loadedDate);
@@ -1090,7 +1020,6 @@ export default function Agrometeo({ intradayDates = [], latestDate = null, daily
   const eto7 = sumFinite(sevenDay.map((day) => day.eto));
   const balance7 = sumFinite(sevenDay.map((day) => day.waterBalance));
   const rain7 = sumFinite(sevenDay.map((day) => day.rain));
-
   const balanceTone =
     currentSummary.waterBalance < -3
       ? "red"
@@ -1099,7 +1028,6 @@ export default function Agrometeo({ intradayDates = [], latestDate = null, daily
         : currentSummary.waterBalance > 3
           ? "green"
           : "yellow";
-
   return (
     <SiteLayout
       headerProps={{
@@ -1111,274 +1039,89 @@ export default function Agrometeo({ intradayDates = [], latestDate = null, daily
         currentPath: "/agrometeo",
       }}
     >
-      <section className="introPanel">
-        <div className="introHead">
+      <main className="agroPage">
+        <section className="introPanel">
+          <div className="introHead">
+            <div className="introCopy">
+              <h2>Cosa indicano questi valori</h2>
+              <p>Sono stime ricavate dai sensori della stazione di Collinas. Descrivono la domanda evaporativa, il bilancio climatico, lo sviluppo termico e le condizioni favorevoli alla bagnatura fogliare, ma non misurano direttamente l’acqua disponibile nel terreno o lo stato di una coltura specifica.</p>
+            </div>
+            <div className="lastData">
+              <div className="lastDataLine">
+                <span>Ultimo dato</span>
+                <strong>{formatObservationTime(latest?.t)}</strong>
+              </div>
+              <small>{formatLongDate(loadedDate)}</small>
+              <div className="lastDataLine bottom">
+                <span className="livePill">Dati in tempo reale</span>
+                <strong className="currentTemp">{fmt(latest?.temp_c, 1, " °C")}</strong>
+              </div>
+            </div>
+          </div>
+          <div className="infoGrid">
+            <InfoCard title="VPD" text="Deficit di pressione di vapore: descrive la domanda evaporativa dell’atmosfera sulle piante." source={SOURCES.vpd} />
+            <InfoCard title="ET0" text="Evapotraspirazione di riferimento: stima quanta acqua l’atmosfera richiede in condizioni standard." source={SOURCES.eto} />
+            <InfoCard title="Bilancio climatico" text="Differenza tra precipitazione ed ET0: mostra se il periodo è in surplus oppure in deficit climatico." source={SOURCES.eto} />
+            <InfoCard title={`Gradi giorno, base ${GDD_BASE_C} °C`} text="Somma termica utile per descrivere l’accumulo di calore legato allo sviluppo biologico delle colture." source={SOURCES.gdd} />
+            <InfoCard title="Bagnatura fogliare stimata" text="Stima le condizioni favorevoli alla presenza di acqua sulle superfici vegetali." source={SOURCES.leafWetness} />
+          </div>
+        </section>
+        <section className="currentPanel">
+          <div className="panelHeading">
+            <h2>Condizioni agrometeorologiche attuali</h2>
+            <p>Indicatori principali calcolati con i dati disponibili della giornata.</p>
+          </div>
+          {error ? <div className="errorBox">{error}</div> : null}
+          <div className={`metricsGrid ${loading ? "isLoading" : ""}`}>
+            <MetricCard title="Domanda evaporativa (VPD)" value={fmt(latest?.vpd, 2)} unit="kPa" label={currentVpdMeta.label} detail={currentVpdMeta.detail} tone={currentVpdMeta.tone} source={SOURCES.vpd} />
+            <MetricCard title="Bagnatura fogliare" value={wetNow ? "Probabile" : "No"} label={wetNow ? "Condizioni favorevoli" : "Condizioni non favorevoli"} detail={wetNow ? "Umidità, rugiada o pioggia possono mantenere bagnate le superfici vegetali." : "Al momento non emergono condizioni favorevoli alla bagnatura."} tone={wetNow ? "blue" : "green"} source={SOURCES.leafWetness} />
+            <MetricCard title="Gradi giorno di oggi" value={fmt(currentSummary.gdd, 1)} unit="°C·giorno" label={`Base ${GDD_BASE_C} °C`} detail={`Accumulo dall’inizio dell’anno: ${fmt(seasonGdd, 1)} °C·giorno.`} tone="yellow" source={SOURCES.gdd} />
+            <MetricCard title="ET0 stimata oggi" value={fmt(currentSummary.eto, 2)} unit="mm" label="Accumulo provvisorio" detail="La stima cresce durante la giornata con sole, vento e aria più secca." tone="orange" source={SOURCES.eto} />
+            <MetricCard title="Bilancio di oggi" value={fmt(currentSummary.waterBalance, 2)} unit="mm" label={currentSummary.waterBalance < 0 ? "Deficit climatico" : "Surplus climatico"} detail={`Pioggia ${fmt(currentSummary.rain, 1)} mm meno ET0 ${fmt(currentSummary.eto, 2)} mm.`} tone={balanceTone} source={SOURCES.eto} />
+          </div>
+        </section>
+        <section className="summaryPanel">
+          <div className="panelHeading compactHeading"><h2>Riepilogo</h2></div>
+          <div className="summaryGrid">
+            <SummaryCell label="VPD massimo oggi" value={fmt(currentSummary.vpdMax, 2, " kPa")} detail="massima domanda evaporativa" />
+            <SummaryCell label="Ore con VPD ≥1,5" value={fmt(currentSummary.highVpdHours, 1, " h")} detail="domanda elevata" />
+            <SummaryCell label="Bagnatura stimata" value={fmt(currentSummary.leafWetHours, 1, " h")} detail="durata di oggi" />
+            <SummaryCell label="Ore ≥35 °C" value={fmt(currentSummary.heatHours, 1, " h")} detail="caldo molto intenso" />
+            <SummaryCell label="Pioggia ultimi 7 giorni" value={fmt(rain7, 1, " mm")} detail="accumulo recente" />
+            <SummaryCell label="ET0 ultimi 7 giorni" value={fmt(eto7, 1, " mm")} detail="stima complessiva" />
+            <SummaryCell label="Bilancio ultimi 7 giorni" value={fmt(balance7, 1, " mm")} detail="pioggia meno ET0" />
+            <SummaryCell label="Periodo secco" value={`${dryDays} giorni`} detail="giorni con meno di 1 mm" />
+          </div>
+        </section>
+        <section className="trendPanel">
+          <div className="controlsPanel">
+            <div className="controlGroup metricControl">
+              <label htmlFor="agroMetric">Indice selezionato</label>
+              <select id="agroMetric" value={selectedMetric} onChange={(event) => setSelectedMetric(event.target.value)}>
+                {METRIC_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+              </select>
+            </div>
+            <div className="controlGroup">
+              <label htmlFor="agroPeriod">Periodo</label>
+              <select id="agroPeriod" value={selectedPeriod} onChange={(event) => setSelectedPeriod(event.target.value)}>
+                <option value="day">Oggi</option>
+                <option value="week">Ultimi 7 giorni</option>
+                <option value="month">Ultimi 30 giorni</option>
+              </select>
+            </div>
+          </div>
+          <AgrometeoChart rows={rows} metric={selectedMetric} period={selectedPeriod} loadedDate={loadedDate} />
+        </section>
+        <section className="methodPanel">
+          <div className="methodIcon">i</div>
           <div>
-            <h2>Cosa indicano questi valori</h2>
-            <p>
-              Sono stime ricavate dai sensori della stazione. Descrivono le condizioni atmosferiche, ma non misurano direttamente l’acqua nel terreno o lo stato di una coltura specifica.
-            </p>
+            <h2>Come leggere le stime</h2>
+            <p>L’ET0 è stimata con una versione a passo breve della procedura FAO Penman–Monteith usando temperatura, umidità, vento e radiazione solare. Il bilancio climatico non considera irrigazione, riserva del suolo, pendenza, tipo di coltura o profondità delle radici. La bagnatura fogliare è ricavata con criteri meteorologici e non sostituisce un sensore dedicato.</p>
           </div>
-          <div className="lastData">
-            <span>Ultimo dato</span>
-            <strong>{formatObservationTime(latest?.t)}</strong>
-            <small>{formatLongDate(loadedDate)}</small>
-          </div>
-        </div>
-
-        <div className="infoGrid">
-          <InfoCard
-            title="VPD"
-            text="Indica quanto l’aria tende a sottrarre acqua alle piante: più sale, più la traspirazione può diventare intensa."
-            source={SOURCES.vpd}
-          />
-          <InfoCard
-            title="ET0"
-            text="Stima quanta acqua perderebbe una superficie erbosa ben irrigata. Non corrisponde direttamente all’acqua da dare a una coltura."
-            source={SOURCES.eto}
-          />
-          <InfoCard
-            title="Bilancio climatico"
-            text="Confronta la pioggia con l’ET0. Un valore negativo indica che la richiesta atmosferica ha superato la pioggia."
-            source={SOURCES.eto}
-          />
-          <InfoCard
-            title={`Gradi giorno, base ${GDD_BASE_C} °C`}
-            text="Misurano il calore accumulato utile allo sviluppo biologico. La temperatura di base cambia a seconda della coltura."
-            source={SOURCES.gdd}
-          />
-          <InfoCard
-            title="Bagnatura fogliare stimata"
-            text="Segnala quando pioggia, umidità e temperatura rendono probabile la presenza di acqua sulle foglie. Non è una misura diretta."
-            source={SOURCES.leafWetness}
-          />
-        </div>
-      </section>
-
-      <section className="currentPanel">
-        <div className="panelHeading">
-          <h2>Condizioni agrometeorologiche attuali</h2>
-          <p>Dati aggiornati dopo i caricamenti programmati delle :17 e :47.</p>
-        </div>
-
-        {error ? <div className="errorBox">{error}</div> : null}
-
-        <div className={`metricsGrid ${loading ? "isLoading" : ""}`}>
-          <MetricCard
-            title="Domanda evaporativa (VPD)"
-            value={fmt(latest?.vpd, 2)}
-            unit="kPa"
-            label={currentVpdMeta.label}
-            detail={currentVpdMeta.detail}
-            tone={currentVpdMeta.tone}
-            source={SOURCES.vpd}
-          />
-          <MetricCard
-            title="Bagnatura fogliare"
-            value={wetNow ? "Probabile" : "No"}
-            label={wetNow ? "Condizioni favorevoli" : "Condizioni non favorevoli"}
-            detail={
-              wetNow
-                ? "Umidità, rugiada o pioggia possono mantenere bagnate le superfici vegetali."
-                : "Al momento non emergono condizioni favorevoli alla bagnatura."
-            }
-            tone={wetNow ? "blue" : "green"}
-            source={SOURCES.leafWetness}
-          />
-          <MetricCard
-            title="Gradi giorno di oggi"
-            value={fmt(currentSummary.gdd, 1)}
-            unit="°C·giorno"
-            label={`Base ${GDD_BASE_C} °C`}
-            detail={`Accumulo dall’inizio dell’anno: ${fmt(seasonGdd, 1)} °C·giorno.`}
-            tone="yellow"
-            source={SOURCES.gdd}
-          />
-          <MetricCard
-            title="ET0 stimata oggi"
-            value={fmt(currentSummary.eto, 2)}
-            unit="mm"
-            label="Accumulo provvisorio"
-            detail="La stima cresce durante la giornata con sole, vento e aria più secca."
-            tone="orange"
-            source={SOURCES.eto}
-          />
-          <MetricCard
-            title="Bilancio di oggi"
-            value={fmt(currentSummary.waterBalance, 2)}
-            unit="mm"
-            label={currentSummary.waterBalance < 0 ? "Deficit climatico" : "Surplus climatico"}
-            detail={`Pioggia ${fmt(currentSummary.rain, 1)} mm meno ET0 ${fmt(currentSummary.eto, 2)} mm.`}
-            tone={balanceTone}
-            source={SOURCES.eto}
-          />
-        </div>
-      </section>
-
-      <section className="summaryPanel">
-        <div className="panelHeading">
-          <h2>Riepilogo</h2>
-          <p>Valori accumulati con i dati disponibili finora.</p>
-        </div>
-        <div className="summaryGrid">
-          <SummaryCell label="VPD massimo oggi" value={fmt(currentSummary.vpdMax, 2, " kPa")} detail="massima domanda evaporativa" />
-          <SummaryCell label="Ore con VPD ≥1,5" value={fmt(currentSummary.highVpdHours, 1, " h")} detail="intervalli di domanda elevata" />
-          <SummaryCell label="Bagnatura stimata" value={fmt(currentSummary.leafWetHours, 1, " h")} detail="durata complessiva di oggi" />
-          <SummaryCell label="Ore ≥35 °C" value={fmt(currentSummary.heatHours, 1, " h")} detail="caldo molto intenso" />
-          <SummaryCell label="Pioggia ultimi 7 giorni" value={fmt(rain7, 1, " mm")} detail="somma dei giorni caricati" />
-          <SummaryCell label="ET0 ultimi 7 giorni" value={fmt(eto7, 1, " mm")} detail="stima da dati intraday" />
-          <SummaryCell label="Bilancio ultimi 7 giorni" value={fmt(balance7, 1, " mm")} detail="pioggia meno ET0" />
-          <SummaryCell label="Periodo secco" value={`${dryDays} giorni`} detail="giorni consecutivi con meno di 1 mm" />
-        </div>
-      </section>
-
-      <section className="controlsPanel">
-        <div className="controlGroup">
-          <label htmlFor="agroMetric">Valore mostrato</label>
-          <select id="agroMetric" value={selectedMetric} onChange={(event) => setSelectedMetric(event.target.value)}>
-            {METRIC_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
-            ))}
-          </select>
-        </div>
-        <div className="controlGroup">
-          <label htmlFor="agroPeriod">Periodo</label>
-          <select id="agroPeriod" value={selectedPeriod} onChange={(event) => setSelectedPeriod(event.target.value)}>
-            <option value="day">Oggi</option>
-            <option value="week">Ultimi 7 giorni</option>
-            <option value="month">Ultimi 30 giorni</option>
-          </select>
-        </div>
-      </section>
-
-      <AgrometeoChart rows={rows} metric={selectedMetric} period={selectedPeriod} loadedDate={loadedDate} />
-
-      <section className="methodPanel">
-        <h2>Come leggere le stime</h2>
-        <p>
-          L’ET0 è stimata con una versione a passo breve della procedura FAO Penman–Monteith usando temperatura, umidità, vento e radiazione solare. Il bilancio climatico non considera irrigazione, riserva del suolo, pendenza, tipo di coltura o profondità delle radici. La bagnatura fogliare è ricavata con criteri meteorologici e non sostituisce un sensore dedicato.
-        </p>
-      </section>
-
+        </section>
+      </main>
       <style jsx global>{`
-        * { box-sizing: border-box; }
-        .introPanel,
-        .currentPanel,
-        .summaryPanel,
-        .controlsPanel,
-        .chartPanel,
-        .methodPanel {
-          margin-top: 20px;
-          border: 1px solid #e2e8f0;
-          border-radius: 24px;
-          background: rgba(255,255,255,.94);
-          box-shadow: 0 10px 28px rgba(15,23,42,.05);
-        }
-        .introPanel, .currentPanel, .summaryPanel, .methodPanel { padding: 22px; }
-        .introHead {
-          display: flex;
-          justify-content: space-between;
-          align-items: flex-start;
-          gap: 20px;
-        }
-        h2 { margin: 0; color: #0f172a; font-size: 24px; font-weight: 950; letter-spacing: -.02em; }
-        .introHead p, .panelHeading p, .methodPanel p {
-          margin: 7px 0 0;
-          color: rgba(15,23,42,.67);
-          line-height: 1.55;
-          font-size: 14px;
-        }
-        .lastData {
-          min-width: 190px;
-          padding: 12px 14px;
-          border: 1px solid #e2e8f0;
-          border-radius: 16px;
-          background: #f8fafc;
-          text-align: right;
-        }
-        .lastData span, .lastData small { display: block; color: #64748b; font-size: 11px; font-weight: 800; }
-        .lastData strong { display: block; margin: 3px 0; font-size: 22px; color: #0f172a; }
-        .infoGrid { margin-top: 18px; display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); gap: 12px; }
-        .infoCard {
-          min-height: 150px;
-          padding: 16px;
-          border: 1px solid #e2e8f0;
-          border-radius: 18px;
-          background: linear-gradient(180deg,#fff,#f8fafc);
-        }
-        .infoTitle, .metricTitle, .summaryLabel {
-          font-size: 12px;
-          color: #64748b;
-          font-weight: 950;
-          letter-spacing: .04em;
-          text-transform: uppercase;
-        }
-        .infoCard p { margin: 9px 0 12px; font-size: 13px; line-height: 1.48; color: rgba(15,23,42,.72); }
-        .sourceLink { display: inline-block; font-size: 10px; font-weight: 850; color: #64748b; text-decoration: none; }
-        .sourceLink:hover { color: #0f172a; text-decoration: underline; }
-        .panelHeading { text-align: center; }
-        .metricsGrid { margin-top: 18px; display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); gap: 14px; transition: opacity .2s ease; }
-        .metricsGrid.isLoading { opacity: .65; }
-        .metricCard {
-          position: relative;
-          min-height: 235px;
-          overflow: hidden;
-          padding: 18px 18px 16px 22px;
-          border: 1px solid #e2e8f0;
-          border-radius: 20px;
-          background: #fff;
-        }
-        .metricCard::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 5px; background: #94a3b8; }
-        .tone-green::before { background: #22c55e; }
-        .tone-yellow::before { background: #eab308; }
-        .tone-orange::before { background: #f97316; }
-        .tone-red::before { background: #ef4444; }
-        .tone-blue::before { background: #3b82f6; }
-        .metricValueRow { margin-top: 10px; display: flex; align-items: baseline; gap: 6px; }
-        .metricValue { color: #0f172a; font-size: 38px; font-weight: 1000; letter-spacing: -.04em; }
-        .metricUnit { color: #64748b; font-size: 17px; font-weight: 900; }
-        .metricLabel { margin-top: 2px; color: #0f172a; font-size: 16px; font-weight: 950; }
-        .metricDetail { min-height: 45px; margin: 8px 0 10px; color: rgba(15,23,42,.67); font-size: 13px; line-height: 1.45; }
-        .summaryGrid { margin-top: 18px; display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); border: 1px solid #e2e8f0; border-radius: 18px; overflow: hidden; }
-        .summaryCell { min-height: 105px; padding: 16px; border-right: 1px solid #e2e8f0; border-bottom: 1px solid #e2e8f0; background: #fff; }
-        .summaryCell:nth-child(4n) { border-right: 0; }
-        .summaryCell:nth-last-child(-n+4) { border-bottom: 0; }
-        .summaryValue { margin-top: 8px; color: #0f172a; font-size: 22px; font-weight: 1000; }
-        .summaryDetail { margin-top: 5px; color: #64748b; font-size: 11px; }
-        .controlsPanel { padding: 16px 20px; display: flex; justify-content: center; align-items: end; gap: 16px; }
-        .controlGroup { min-width: 260px; display: grid; gap: 7px; }
-        .controlGroup label { color: #64748b; font-size: 11px; font-weight: 950; text-transform: uppercase; letter-spacing: .05em; }
-        .controlGroup select { width: 100%; min-height: 44px; padding: 0 13px; border: 1px solid #cbd5e1; border-radius: 13px; background: #fff; color: #0f172a; font-size: 14px; font-weight: 850; outline: none; }
-        .controlGroup select:focus { border-color: #64748b; box-shadow: 0 0 0 3px rgba(100,116,139,.12); }
-        .chartPanel { padding: 20px 18px 10px; }
-        .chartPanel h2 { text-align: center; }
-        .chartSubtitle { margin: 6px 0 2px; text-align: center; color: #64748b; font-size: 12px; }
-        .methodPanel { margin-bottom: 10px; }
-        .errorBox { margin-top: 15px; padding: 12px 14px; border: 1px solid #fecaca; border-radius: 14px; background: #fef2f2; color: #991b1b; font-weight: 800; }
-        @media (max-width: 1180px) {
-          .infoGrid, .metricsGrid { grid-template-columns: repeat(3,minmax(0,1fr)); }
-        }
-        @media (max-width: 820px) {
-          .introHead { display: grid; }
-          .lastData { width: 100%; text-align: left; }
-          .infoGrid, .metricsGrid { grid-template-columns: repeat(2,minmax(0,1fr)); }
-          .summaryGrid { grid-template-columns: repeat(2,minmax(0,1fr)); }
-          .summaryCell:nth-child(4n) { border-right: 1px solid #e2e8f0; }
-          .summaryCell:nth-child(2n) { border-right: 0; }
-          .summaryCell:nth-last-child(-n+4) { border-bottom: 1px solid #e2e8f0; }
-          .summaryCell:nth-last-child(-n+2) { border-bottom: 0; }
-          .controlsPanel { align-items: stretch; flex-direction: column; }
-          .controlGroup { min-width: 0; width: 100%; }
-        }
-        @media (max-width: 560px) {
-          .introPanel, .currentPanel, .summaryPanel, .methodPanel { padding: 17px; border-radius: 20px; }
-          .infoGrid, .metricsGrid, .summaryGrid { grid-template-columns: 1fr; }
-          .infoCard, .metricCard { min-height: auto; }
-          .summaryCell { border-right: 0 !important; border-bottom: 1px solid #e2e8f0 !important; }
-          .summaryCell:last-child { border-bottom: 0 !important; }
-          .metricValue { font-size: 34px; }
-          .chartPanel { padding-left: 5px; padding-right: 5px; }
-        }
+        .agroPage{margin-top:18px;display:grid;gap:14px}.agroPage *,.agroPage *::before,.agroPage *::after{box-sizing:border-box}.agroPage .introPanel,.agroPage .currentPanel,.agroPage .summaryPanel,.agroPage .trendPanel,.agroPage .methodPanel{border:1px solid #e3eaf0;border-radius:24px;background:rgba(255,255,255,.97);box-shadow:0 10px 30px rgba(15,23,42,.05)}.agroPage .introPanel,.agroPage .currentPanel,.agroPage .summaryPanel,.agroPage .methodPanel{padding:18px}.agroPage .introHead{display:grid;grid-template-columns:minmax(0,1fr) 290px;gap:14px;align-items:stretch}.agroPage .introCopy{display:grid;align-content:center;padding:2px}.agroPage h2{margin:0;color:#0f172a;font-size:22px;line-height:1.1;font-weight:950;letter-spacing:-.025em}.agroPage .introCopy p,.agroPage .panelHeading p,.agroPage .methodPanel p{margin:6px 0 0;color:rgba(15,23,42,.66);font-size:13px;line-height:1.5;font-weight:650}.agroPage .lastData{padding:13px 15px;border:1px solid #dfe8ef;border-radius:17px;background:linear-gradient(135deg,#f8fbff 0%,#eef7ff 100%);display:grid;gap:7px}.agroPage .lastDataLine{display:flex;align-items:center;justify-content:space-between;gap:10px}.agroPage .lastDataLine.bottom{align-items:flex-end}.agroPage .lastData span,.agroPage .lastData small{color:#64748b;font-size:10px;font-weight:800}.agroPage .lastData strong{color:#0f172a;font-size:20px;font-weight:950}.agroPage .livePill{padding:4px 8px;border-radius:999px;background:#dcfce7;color:#15803d!important;font-size:9px!important}.agroPage .currentTemp{font-size:16px!important}.agroPage .infoGrid{margin-top:14px;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px}.agroPage .infoCard{min-width:0;min-height:112px;padding:12px;border:1px solid #e4eaf0;border-radius:17px;background:linear-gradient(180deg,#fff,#fbfdff);display:grid;align-content:start;gap:7px}.agroPage .infoCardHead,.agroPage .metricCardHead,.agroPage .summaryTop{display:flex;align-items:center;gap:9px;min-width:0}.agroPage .agroBadge{min-width:42px;height:34px;padding:0 8px;border-radius:12px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;border:1px solid transparent;font-size:10px;font-weight:950}.agroPage .agroBadge.compact{min-width:31px;height:27px;padding:0 6px;border-radius:9px;font-size:8px}.agroPage .badge-blue{color:#1d4ed8;background:#eff6ff;border-color:#bfdbfe}.agroPage .badge-cyan{color:#0369a1;background:#f0f9ff;border-color:#bae6fd}.agroPage .badge-green{color:#15803d;background:#f0fdf4;border-color:#bbf7d0}.agroPage .badge-orange{color:#c2410c;background:#fff7ed;border-color:#fed7aa}.agroPage .badge-violet{color:#7e22ce;background:#faf5ff;border-color:#e9d5ff}.agroPage .badge-slate{color:#475569;background:#f8fafc;border-color:#e2e8f0}.agroPage .infoTitle,.agroPage .metricTitle,.agroPage .summaryLabel{min-width:0;color:#334155;font-size:11px;line-height:1.25;font-weight:950}.agroPage .infoCard p{margin:0;color:rgba(15,23,42,.67);font-size:11px;line-height:1.35;font-weight:650}.agroPage .sourceLink{width:fit-content;font-size:9px;font-weight:900;color:#64748b;text-decoration:none}.agroPage .sourceLink:hover{color:#2563eb;text-decoration:underline}.agroPage .panelHeading{text-align:left}.agroPage .compactHeading{margin-bottom:10px}.agroPage .metricsGrid{margin-top:14px;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;transition:opacity .2s ease}.agroPage .metricsGrid.isLoading{opacity:.62}.agroPage .metricCard{min-width:0;min-height:164px;padding:13px;border:1px solid #e3eaf0;border-radius:18px;background:linear-gradient(180deg,#fff 0%,#fbfdff 100%);display:grid;align-content:start;gap:7px}.agroPage .metricValueRow{display:flex;align-items:baseline;gap:5px}.agroPage .metricValue{color:#0f172a;font-size:28px;line-height:1;font-weight:1000;letter-spacing:-.04em}.agroPage .metricUnit{color:#64748b;font-size:13px;font-weight:900}.agroPage .metricLabel{width:fit-content;padding:4px 8px;border-radius:999px;background:#f1f5f9;color:#475569;font-size:10px;font-weight:900}.agroPage .label-green{background:#dcfce7;color:#15803d}.agroPage .label-yellow{background:#fef3c7;color:#a16207}.agroPage .label-orange{background:#ffedd5;color:#c2410c}.agroPage .label-red{background:#fee2e2;color:#b91c1c}.agroPage .label-blue{background:#dbeafe;color:#1d4ed8}.agroPage .metricDetail{min-height:32px;color:rgba(15,23,42,.64);font-size:10.5px;line-height:1.35;font-weight:650}.agroPage .summaryGrid{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:8px}.agroPage .summaryCell{min-width:0;min-height:86px;padding:10px;border:1px solid #e5ebf0;border-radius:14px;background:#fbfdff}.agroPage .summaryValue{margin-top:7px;color:#0f172a;font-size:17px;line-height:1;font-weight:1000}.agroPage .summaryDetail{margin-top:5px;color:#64748b;font-size:9px;line-height:1.25;font-weight:700}.agroPage .trendPanel{overflow:hidden}.agroPage .controlsPanel{padding:12px 16px;display:flex;justify-content:center;align-items:end;gap:14px;border-bottom:1px solid #e8edf2;background:linear-gradient(180deg,#fbfdff,#f8fbff)}.agroPage .controlGroup{min-width:230px;display:grid;gap:5px}.agroPage .metricControl{min-width:360px}.agroPage .controlGroup label{color:#64748b;font-size:9px;font-weight:950;text-transform:uppercase;letter-spacing:.06em;text-align:center}.agroPage .controlGroup select{width:100%;min-height:40px;padding:0 12px;border:1px solid #cbd5e1;border-radius:12px;background:#fff;color:#0f172a;font-size:12px;font-weight:850;outline:none}.agroPage .controlGroup select:focus{border-color:#93c5fd;box-shadow:0 0 0 3px rgba(59,130,246,.1)}.agroPage .chartPanel{padding:12px 13px 7px;background:#fff}.agroPage .chartHead{min-height:40px;padding:0 50px;text-align:center}.agroPage .chartPanel h2{font-size:18px}.agroPage .chartSubtitle{margin-top:3px;color:#64748b;font-size:10px;line-height:1.35;font-weight:650}.agroPage .chartCanvas{height:320px}.agroPage .methodPanel{margin-bottom:10px;display:flex;align-items:flex-start;gap:12px;background:linear-gradient(180deg,#fbfffd,#f5fbf7)}.agroPage .methodIcon{width:34px;height:34px;border-radius:11px;display:flex;align-items:center;justify-content:center;flex-shrink:0;background:#dcfce7;color:#15803d;font-size:16px;font-weight:950}.agroPage .methodPanel h2{font-size:18px}.agroPage .errorBox{margin-top:12px;padding:10px 12px;border:1px solid #fecaca;border-radius:12px;background:#fef2f2;color:#991b1b;font-size:12px;font-weight:800}@media(max-width:1280px){.agroPage .infoGrid,.agroPage .metricsGrid{grid-template-columns:repeat(3,minmax(0,1fr))}.agroPage .summaryGrid{grid-template-columns:repeat(4,minmax(0,1fr))}}@media(max-width:820px){.agroPage .introHead{grid-template-columns:1fr}.agroPage .lastData{width:100%}.agroPage .infoGrid,.agroPage .metricsGrid{grid-template-columns:repeat(2,minmax(0,1fr))}.agroPage .summaryGrid{grid-template-columns:repeat(2,minmax(0,1fr))}.agroPage .controlsPanel{display:grid;grid-template-columns:1fr;align-items:stretch}.agroPage .controlGroup,.agroPage .metricControl{min-width:0;width:100%}}@media(max-width:560px){.agroPage{gap:10px}.agroPage .introPanel,.agroPage .currentPanel,.agroPage .summaryPanel,.agroPage .methodPanel{padding:11px;border-radius:18px}.agroPage .introCopy p,.agroPage .panelHeading p,.agroPage .methodPanel p{font-size:11px;line-height:1.4}.agroPage h2{font-size:18px}.agroPage .infoGrid{grid-template-columns:1fr;gap:7px}.agroPage .infoCard{min-height:0;padding:9px;gap:5px}.agroPage .metricsGrid{grid-template-columns:1fr;gap:7px}.agroPage .metricCard{min-height:0;padding:10px;gap:5px}.agroPage .metricValue{font-size:23px}.agroPage .metricUnit{font-size:11px}.agroPage .metricDetail{min-height:0;font-size:10px}.agroPage .summaryGrid{gap:6px}.agroPage .summaryCell{min-height:72px;padding:8px}.agroPage .summaryValue{font-size:15px}.agroPage .summaryLabel{font-size:9px}.agroPage .summaryDetail{font-size:8px}.agroPage .controlsPanel{padding:10px;gap:8px}.agroPage .controlGroup label{text-align:left;font-size:8px}.agroPage .controlGroup select{min-height:36px;font-size:11px}.agroPage .chartPanel{padding:8px 4px 3px}.agroPage .chartHead{min-height:34px;padding:0 42px}.agroPage .chartPanel h2{font-size:15px}.agroPage .chartSubtitle{font-size:8px}.agroPage .chartCanvas{height:230px}.agroPage .methodPanel{gap:9px}.agroPage .methodIcon{width:28px;height:28px;border-radius:9px;font-size:13px}.agroPage .methodPanel h2{font-size:16px}.agroPage .agroBadge{min-width:35px;height:29px;font-size:9px}}
       `}</style>
     </SiteLayout>
   );
