@@ -1,113 +1,106 @@
-name: Aggiorna allerte Protezione Civile
+name: Aggiorna dati Weather Underground
 
 on:
-  schedule:
-    - cron: "7,27,47 * * * *"
+  workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: write
 
 concurrency:
-  group: protezione-civile-auto-update
+  group: update-wunderground-data
   cancel-in-progress: false
 
 jobs:
-  update:
+  update-data:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
 
     steps:
-      - name: Checkout repository
+      - name: Scarica il repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Riallinea con origin/main
-        shell: bash
-        run: |
-          git fetch origin main
-          git checkout main
-          git reset --hard origin/main
-
-      - name: Verifica se eseguire il controllo
-        id: gate
-        shell: bash
-        run: |
-          python3 - <<'PY'
-          import json
-          import os
-          from datetime import datetime, timezone
-          from pathlib import Path
-
-          run = True
-          path = Path("public/data/protezione-civile.json")
-
-          try:
-              data = json.loads(path.read_text(encoding="utf-8"))
-              checked_at = data.get("checkedAt")
-              if checked_at:
-                  dt = datetime.fromisoformat(checked_at.replace("Z", "+00:00"))
-                  age = (datetime.now(timezone.utc) - dt).total_seconds()
-                  run = age >= 3300
-          except Exception:
-              run = True
-
-          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
-              f.write(f"run={'true' if run else 'false'}\n")
-          PY
-
-      - name: Setup Node
-        if: steps.gate.outputs.run == 'true'
+      - name: Configura Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: "20"
 
-      - name: Installa Poppler
-        if: steps.gate.outputs.run == 'true'
+      - name: Installa le dipendenze
         shell: bash
         run: |
-          sudo apt-get update
-          sudo apt-get install -y poppler-utils
+          set -e
 
-      - name: Aggiorna Protezione Civile
-        if: steps.gate.outputs.run == 'true'
-        run: node scripts/update-protezione-civile.mjs
-
-      - name: Controlla modifiche
-        if: steps.gate.outputs.run == 'true'
-        id: changes
-        shell: bash
-        run: |
-          if git diff --quiet --             public/data/protezione-civile.json             public/data/protezione-civile-oggi.jpg             public/data/protezione-civile-domani.jpg; then
-            echo "changed=false" >> "$GITHUB_OUTPUT"
+          if [ -f package-lock.json ]; then
+            npm ci
           else
-            echo "changed=true" >> "$GITHUB_OUTPUT"
+            npm install
           fi
 
-      - name: Commit
-        if: steps.gate.outputs.run == 'true' && steps.changes.outputs.changed == 'true'
+      - name: Recupera i dati Weather Underground
+        env:
+          WU_API_KEY: ${{ secrets.WU_API_KEY }}
+          WU_STATION_ID: ICOLLI48
+          WU_START_DATE: "2026-07-10"
         shell: bash
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add             public/data/protezione-civile.json             public/data/protezione-civile-oggi.jpg             public/data/protezione-civile-domani.jpg
-          git commit -m "Aggiorna Protezione Civile"
+          set -e
 
-      - name: Push con retry
-        if: steps.gate.outputs.run == 'true' && steps.changes.outputs.changed == 'true'
-        shell: bash
-        run: |
-          for attempt in 1 2 3 4 5; do
-            echo "Tentativo push $attempt/5"
-            git fetch origin main
-            git rebase origin/main
+          MAX_ATTEMPTS=3
+          ATTEMPT=1
 
-            if git push origin HEAD:main; then
+          while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
+            echo "Tentativo $ATTEMPT di $MAX_ATTEMPTS..."
+
+            if node scripts/update-wunderground.mjs; then
+              echo "Recupero dati completato correttamente."
               exit 0
             fi
 
-            sleep 12
+            if [ "$ATTEMPT" -eq "$MAX_ATTEMPTS" ]; then
+              echo "Recupero dati fallito dopo $MAX_ATTEMPTS tentativi."
+              exit 1
+            fi
+
+            echo "Tentativo fallito. Nuovo tentativo tra 30 secondi..."
+            sleep 30
+            ATTEMPT=$((ATTEMPT + 1))
           done
 
-          echo "Push non riuscito dopo 5 tentativi"
-          exit 1
+      - name: Rigenera daily.json e i file intraday
+        shell: bash
+        run: |
+          set -e
+          node scripts/build-data.js
+
+      - name: Rigenera i record
+        shell: bash
+        run: |
+          set -e
+          node scripts/build-records.js
+
+      - name: Salva i dati aggiornati su GitHub
+        shell: bash
+        run: |
+          set -e
+
+          if [ -z "$(git status --porcelain -- data_raw/clean/auto data/daily.json data/record.json public/data/intraday)" ]; then
+            echo "Nessuna modifica da salvare."
+            exit 0
+          fi
+
+          LAST_AUTHOR_NAME="$(git log -1 --pretty=format:'%an')"
+          LAST_AUTHOR_EMAIL="$(git log -1 --pretty=format:'%ae')"
+
+          git config user.name "$LAST_AUTHOR_NAME"
+          git config user.email "$LAST_AUTHOR_EMAIL"
+
+          git add data_raw/clean/auto
+          git add data/daily.json
+          git add data/record.json
+          git add public/data/intraday
+
+          git commit -m "Aggiornamento automatico dati meteo e record"
+          git pull --rebase origin main
+          git push origin HEAD:main
