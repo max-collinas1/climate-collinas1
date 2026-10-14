@@ -1,45 +1,43 @@
 {
   "zoneCode": "SARD-C",
   "zoneName": "Bacini Montevecchio-Pischilappiu",
-  "updatedAt": "2026-10-14T07:29:34.127Z",
-  "checkedAt": "2026-10-14T07:29:34.127Z",
+  "updatedAt": "2026-10-14T13:37:38.875Z",
+  "checkedAt": "2026-10-14T13:37:38.875Z",
   "sourceUrl": "https://www.sardegnaambiente.it/index.php?xsl=2685&s=20&v=9&c=12428&nodesc=3&n=9&bx=2&idr=1&dx=2&rl=1",
   "bulletinSourceUrl": "https://www.sardegnaambiente.it/index.php?xsl=2273&s=20&v=9&nodesc=1&c=7092",
   "automatic": true,
   "method": "official-maps-and-criticality-bulletin",
-  "sourceState": "waiting-new-bulletin",
+  "sourceState": "current",
   "sourceDates": {
-    "officialToday": "13-10-2026",
-    "officialTomorrow": "14-10-2026"
+    "officialToday": "14-10-2026",
+    "officialTomorrow": "15-10-2026"
   },
   "today": {
-    "remoteUrl": "https://www.sardegnaambiente.it/immagini/20_286_20261013125634.jpg",
+    "remoteUrl": "https://www.sardegnaambiente.it/immagini/20_286_20261014133949.jpg",
     "date": "14-10-2026",
     "pending": false,
-    "rolledFromPreviousBulletin": true,
-    "note": "Mappa odierna ricavata dalla previsione per il giorno successivo del bollettino precedente.",
+    "rolledFromPreviousBulletin": false,
     "mapUrl": "/data/protezione-civile-oggi.jpg",
-    "sourceImage": "https://www.sardegnaambiente.it/immagini/20_286_20261013125634.jpg"
+    "sourceImage": "https://www.sardegnaambiente.it/immagini/20_286_20261014133949.jpg"
   },
   "tomorrow": {
-    "remoteUrl": null,
+    "remoteUrl": "https://www.sardegnaambiente.it/immagini/20_286_20261014133952.jpg",
     "date": "15-10-2026",
-    "pending": true,
+    "pending": false,
     "rolledFromPreviousBulletin": false,
-    "note": "In attesa del bollettino odierno, normalmente pubblicato nel pomeriggio.",
-    "mapUrl": null,
-    "sourceImage": null
+    "mapUrl": "/data/protezione-civile-domani.jpg",
+    "sourceImage": "https://www.sardegnaambiente.it/immagini/20_286_20261014133952.jpg"
   },
   "advisory": {
-    "title": "Bollettino di Criticita' regionale del 13/10/2026",
-    "url": "http://www.sardegnaambiente.it/documenti/BCR_286_2026_del_14-10-2026.pdf",
-    "date": "2026-10-13",
+    "title": "Nessun avviso di criticità attivo",
+    "url": "http://www.sardegnaambiente.it/documenti/BCR_287_2026_del_15-10-2026.pdf",
+    "date": "2026-10-14",
     "level": "green",
     "label": "Nessuna criticità",
-    "validFrom": "2026-10-13T12:00:00.000Z",
-    "validTo": "2026-10-14T21:59:00.000Z",
-    "bulletinValidFrom": "2026-10-13T12:00:00.000Z",
-    "bulletinValidTo": "2026-10-14T21:59:00.000Z",
+    "validFrom": "2026-10-14T12:00:00.000Z",
+    "validTo": "2026-10-15T21:59:00.000Z",
+    "bulletinValidFrom": "2026-10-14T12:00:00.000Z",
+    "bulletinValidTo": "2026-10-15T21:59:00.000Z",
     "alertValidFrom": null,
     "alertValidTo": null,
     "riskLevels": {
@@ -52,6 +50,6 @@
     "riskHydraulic": false,
     "riskThunderstorms": false,
     "appliesToZone": true,
-    "detailSourceUrl": "http://www.sardegnaambiente.it/documenti/BCR_286_2026_del_14-10-2026.pdf"
+    "detailSourceUrl": "http://www.sardegnaambiente.it/documenti/BCR_287_2026_del_15-10-2026.pdf"
   }
 }
