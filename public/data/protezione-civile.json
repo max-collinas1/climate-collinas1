@@ -1,8 +1,8 @@
 {
   "zoneCode": "SARD-C",
   "zoneName": "Bacini Montevecchio-Pischilappiu",
-  "updatedAt": "2026-10-14T01:48:45.865Z",
-  "checkedAt": "2026-10-14T01:48:45.865Z",
+  "updatedAt": "2026-10-14T07:29:34.127Z",
+  "checkedAt": "2026-10-14T07:29:34.127Z",
   "sourceUrl": "https://www.sardegnaambiente.it/index.php?xsl=2685&s=20&v=9&c=12428&nodesc=3&n=9&bx=2&idr=1&dx=2&rl=1",
   "bulletinSourceUrl": "https://www.sardegnaambiente.it/index.php?xsl=2273&s=20&v=9&nodesc=1&c=7092",
   "automatic": true,
@@ -31,23 +31,27 @@
     "sourceImage": null
   },
   "advisory": {
-    "title": "Bollettino di criticità non disponibile",
-    "url": "https://www.sardegnaambiente.it/index.php?xsl=2273&s=20&v=9&nodesc=1&c=7092",
-    "date": null,
-    "level": "unknown",
-    "label": "Stato non disponibile",
-    "validFrom": null,
-    "validTo": null,
+    "title": "Bollettino di Criticita' regionale del 13/10/2026",
+    "url": "http://www.sardegnaambiente.it/documenti/BCR_286_2026_del_14-10-2026.pdf",
+    "date": "2026-10-13",
+    "level": "green",
+    "label": "Nessuna criticità",
+    "validFrom": "2026-10-13T12:00:00.000Z",
+    "validTo": "2026-10-14T21:59:00.000Z",
+    "bulletinValidFrom": "2026-10-13T12:00:00.000Z",
+    "bulletinValidTo": "2026-10-14T21:59:00.000Z",
+    "alertValidFrom": null,
+    "alertValidTo": null,
     "riskLevels": {
-      "hydrogeological": "unknown",
-      "hydraulic": "unknown",
-      "thunderstorms": "unknown"
+      "hydrogeological": "green",
+      "hydraulic": "green",
+      "thunderstorms": "green"
     },
     "risks": [],
-    "riskHydrogeological": null,
-    "riskHydraulic": null,
-    "riskThunderstorms": null,
-    "appliesToZone": null,
-    "detailSourceUrl": "https://www.sardegnaambiente.it/index.php?xsl=2273&s=20&v=9&nodesc=1&c=7092"
+    "riskHydrogeological": false,
+    "riskHydraulic": false,
+    "riskThunderstorms": false,
+    "appliesToZone": true,
+    "detailSourceUrl": "http://www.sardegnaambiente.it/documenti/BCR_286_2026_del_14-10-2026.pdf"
   }
 }
