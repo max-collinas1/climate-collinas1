@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-15T08:32:14.716Z",
+  "generated_at": "2026-10-15T08:46:53.628Z",
   "top_n": 20,
   "daily": {
     "tmax_abs_high": [
@@ -2916,10 +2916,6 @@
             "date": "2024-10-04"
           },
           {
-            "value": 4.5,
-            "date": "2026-10-15"
-          },
-          {
             "value": 4.500000000000002,
             "date": "2024-10-05"
           },
@@ -2930,6 +2926,10 @@
           {
             "value": 4.899999999999999,
             "date": "2026-10-11"
+          },
+          {
+            "value": 4.900000000000002,
+            "date": "2026-10-15"
           },
           {
             "value": 5.099999999999998,
@@ -177755,7 +177755,7 @@
               "date": "2026-10-12"
             },
             {
-              "value": 20.7,
+              "value": 21.1,
               "date": "2026-10-15"
             },
             {
@@ -177777,7 +177777,7 @@
               "date": "2026-10-10"
             },
             {
-              "value": 20.7,
+              "value": 21.1,
               "date": "2026-10-15"
             },
             {
@@ -178123,22 +178123,22 @@
               "date": "2026-10-09"
             },
             {
-              "value": 4.899999999999999,
-              "date": "2026-10-11"
+              "value": 4.900000000000002,
+              "date": "2026-10-15"
             },
             {
-              "value": 4.5,
-              "date": "2026-10-15"
+              "value": 4.899999999999999,
+              "date": "2026-10-11"
             }
           ],
           "trange_low": [
             {
-              "value": 4.5,
-              "date": "2026-10-15"
-            },
-            {
               "value": 4.899999999999999,
               "date": "2026-10-11"
+            },
+            {
+              "value": 4.900000000000002,
+              "date": "2026-10-15"
             },
             {
               "value": 5.4,
@@ -199550,7 +199550,7 @@
             "rain_override_note": ""
           },
           {
-            "value": 24.113333333333333,
+            "value": 24.14,
             "year": 2026,
             "month": 10,
             "coverage_by_param": {
@@ -199671,7 +199671,7 @@
             "rain_override_note": ""
           },
           {
-            "value": 24.113333333333333,
+            "value": 24.14,
             "year": 2026,
             "month": 10,
             "coverage_by_param": {
@@ -200208,7 +200208,7 @@
             "rain_override_note": ""
           },
           {
-            "value": 7.319999999999999,
+            "value": 7.346666666666667,
             "year": 2026,
             "month": 10,
             "coverage_by_param": {
@@ -200261,7 +200261,7 @@
             "rain_override_note": ""
           },
           {
-            "value": 7.319999999999999,
+            "value": 7.346666666666667,
             "year": 2026,
             "month": 10,
             "coverage_by_param": {
@@ -261628,7 +261628,7 @@
             "rain_override_note": ""
           },
           {
-            "value": 24.113333333333333,
+            "value": 24.14,
             "year": 2026,
             "month": 10,
             "coverage_by_param": {
@@ -261817,7 +261817,7 @@
             "rain_override_note": ""
           },
           {
-            "value": 24.113333333333333,
+            "value": 24.14,
             "year": 2026,
             "month": 10,
             "coverage_by_param": {
@@ -262694,7 +262694,7 @@
             "rain_override_note": ""
           },
           {
-            "value": 7.319999999999999,
+            "value": 7.346666666666667,
             "year": 2026,
             "month": 10,
             "coverage_by_param": {
@@ -262815,7 +262815,7 @@
             "rain_override_note": ""
           },
           {
-            "value": 7.319999999999999,
+            "value": 7.346666666666667,
             "year": 2026,
             "month": 10,
             "coverage_by_param": {
@@ -266390,7 +266390,7 @@
   "yearly": {
     "tmax_mean_high": [
       {
-        "value": 24.35,
+        "value": 24.351428571428574,
         "year": 2026,
         "coverage_by_param": {
           "temperature": 0.7671232876712328,
@@ -266548,7 +266548,7 @@
         "rain_override_months": []
       },
       {
-        "value": 24.35,
+        "value": 24.351428571428574,
         "year": 2026,
         "coverage_by_param": {
           "temperature": 0.7671232876712328,
@@ -266918,7 +266918,7 @@
     ],
     "trange_mean_high": [
       {
-        "value": 9.245357142857138,
+        "value": 9.246785714285709,
         "year": 2026,
         "coverage_by_param": {
           "temperature": 0.7671232876712328,
@@ -267076,7 +267076,7 @@
         "rain_override_months": []
       },
       {
-        "value": 9.245357142857138,
+        "value": 9.246785714285709,
         "year": 2026,
         "coverage_by_param": {
           "temperature": 0.7671232876712328,
@@ -270240,10 +270240,10 @@
           "humidity": 0.7315068493150685,
           "radiation": 0.7315068493150685
         },
-        "tmax_mean": 24.35,
+        "tmax_mean": 24.351428571428574,
         "tmean_mean": 19.633034804177854,
         "tmin_mean": 15.104642857142851,
-        "trange_mean": 9.245357142857138,
+        "trange_mean": 9.246785714285709,
         "tmax_days_gt_35": 33,
         "tmax_days_gt_30": 85,
         "tmax_days_lt_5": 0,
