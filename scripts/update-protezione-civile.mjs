@@ -577,120 +577,68 @@ function scanRiskCellColors(image, page, xStartPt, xEndPt, yTopPt, yBottomPt) {
 
 function extractZoneRiskLevels(page, image, zoneCode = ZONE_CODE) {
   const normalizedZoneCode = normalizeWord(zoneCode);
-  const zoneCandidates = page.words.filter(
-    (word) => normalizeWord(word.text) === normalizedZoneCode,
-  );
-
-  if (!zoneCandidates.length) {
-    throw new Error(`${zoneCode} non trovato nel bollettino`);
-  }
-
+  const zoneCandidates = page.words.filter((word) => normalizeWord(word.text) === normalizedZoneCode);
+  if (!zoneCandidates.length) throw new Error(`${zoneCode} non trovato nel bollettino`);
   const zoneWord = zoneCandidates[0];
   const zoneY = wordCenterY(zoneWord);
-  const rowTargets = [
+  const targets = [
     { key: "hydrogeological", target: "idrogeologico" },
     { key: "hydraulic", target: "idraulico" },
     { key: "thunderstorms", target: "temporali" },
     { key: "snow", target: "neve" },
   ];
-
   const rows = [];
-
-  for (const item of rowTargets) {
+  for (const item of targets) {
     const candidates = page.words
-      .filter(
-        (word) =>
-          normalizeWord(word.text) === item.target &&
-          word.xMin > zoneWord.xMax &&
-          Math.abs(wordCenterY(word) - zoneY) <= 48,
-      )
-      .sort(
-        (a, b) =>
-          Math.abs(wordCenterY(a) - zoneY) -
-          Math.abs(wordCenterY(b) - zoneY),
-      );
-
+      .filter((word) => normalizeWord(word.text) === item.target && word.xMin > zoneWord.xMax && Math.abs(wordCenterY(word) - zoneY) <= 50)
+      .sort((a, b) => Math.abs(wordCenterY(a) - zoneY) - Math.abs(wordCenterY(b) - zoneY));
     if (!candidates.length) {
       if (item.key === "snow") continue;
       throw new Error(`Riga ${item.target} non trovata per ${zoneCode}`);
     }
-
     const word = candidates[0];
     rows.push({ key: item.key, word, y: wordCenterY(word) });
   }
-
   rows.sort((a, b) => a.y - b.y);
-
   const riskRows = rows.filter((row) => row.key !== "snow");
-  if (riskRows.length !== 3) {
-    throw new Error(`Righe di rischio incomplete per ${zoneCode}`);
-  }
-
-  const labelRight = Math.max(...rows.map(({ word }) => word.xMax));
-  const xStart = labelRight + 10;
-  const xEnd = Math.max(xStart + 35, page.width * 0.56);
+  if (riskRows.length !== 3) throw new Error(`Righe di rischio incomplete per ${zoneCode}`);
+  const labelRight = Math.max(...rows.map((row) => row.word.xMax));
+  const xStart = labelRight + 6;
+  const xEnd = Math.min(page.width * 0.62, Math.max(xStart + 60, page.width * 0.57));
+  if (xEnd <= xStart + 8) throw new Error(`Colonne di criticita' non identificabili per ${zoneCode}`);
   const levels = {};
-
+  const scores = { green: 0, yellow: 1, orange: 2, red: 3 };
   for (const row of riskRows) {
-    const index = rows.findIndex((candidate) => candidate.key === row.key);
+    const index = rows.indexOf(row);
     const previous = rows[index - 1] || null;
     const next = rows[index + 1] || null;
-
     const previousGap = previous ? row.y - previous.y : next ? next.y - row.y : 12;
     const nextGap = next ? next.y - row.y : previous ? row.y - previous.y : 12;
-
-    let yTop = row.y - previousGap * 0.44;
-    let yBottom = row.y + nextGap * 0.44;
-
-    const inset = Math.min(2.2, Math.max(0.7, (yBottom - yTop) * 0.12));
-    yTop += inset;
-    yBottom -= inset;
-
-    let sampled = scanRiskCellColors(
-      image,
-      page,
-      xStart,
-      xEnd,
-      yTop,
-      yBottom,
-    );
-
-    if (sampled.level === "unknown") {
-      sampled = scanRowColors(image, page, row.y, xStart, xEnd, 5.5);
+    const halfGap = Math.max(1.8, Math.min(previousGap, nextGap) * 0.34);
+    const top = row.y - halfGap;
+    const bottom = row.y + halfGap;
+    const narrowerEnd = Math.min(xEnd, xStart + Math.max(35, (xEnd - xStart) * 0.42));
+    const samples = [
+      scanRiskCellColors(image, page, xStart, xEnd, top, bottom),
+      scanRiskCellColors(image, page, xStart, narrowerEnd, top, bottom),
+      scanRowColors(image, page, row.y, xStart, xEnd, Math.max(1.2, halfGap * 0.55)),
+      scanRowColors(image, page, row.y, xStart, narrowerEnd, Math.max(1.2, halfGap * 0.55)),
+    ];
+    const confirmed = samples.map((sample) => sample.level).filter((level) => level in scores);
+    if (!confirmed.length) {
+      const bands = findColorBands(image, page, xStart, xEnd, top, bottom);
+      for (const band of bands) {
+        if (band.level in scores && Math.abs(band.centerPt - row.y) <= halfGap) confirmed.push(band.level);
+      }
     }
-
-    if (sampled.level === "unknown") {
-      sampled = scanRowColors(
-        image,
-        page,
-        row.y + Math.min(2.5, nextGap * 0.18),
-        xStart,
-        xEnd,
-        3.8,
-      );
-    }
-
-    if (sampled.level === "unknown") {
-      sampled = scanRowColors(
-        image,
-        page,
-        row.y - Math.min(2.5, previousGap * 0.18),
-        xStart,
-        xEnd,
-        3.8,
-      );
-    }
-
-    levels[row.key] = sampled.level;
+    levels[row.key] = confirmed.length ? confirmed.reduce((a, b) => scores[b] > scores[a] ? b : a) : "unknown";
   }
-
   return {
     hydrogeological: levels.hydrogeological || "unknown",
     hydraulic: levels.hydraulic || "unknown",
     thunderstorms: levels.thunderstorms || "unknown",
   };
 }
-
 function maxLevel(levels = []) {
   const normalized = levels.map((level) =>
     Object.prototype.hasOwnProperty.call(LEVEL_SCORE, level) ? level : "unknown",
@@ -798,24 +746,6 @@ async function analyzeCriticalityPdf(document) {
       ["green", "yellow", "orange", "red"].includes(level),
     );
 
-    if (document?.type === "bulletin") {
-      if (allUnknown) {
-        riskLevels = {
-          hydrogeological: "green",
-          hydraulic: "green",
-          thunderstorms: "green",
-        };
-      } else if (knownLevels.length && knownLevels.every((level) => level === "green")) {
-        riskLevels = {
-          hydrogeological:
-            riskLevels.hydrogeological === "unknown" ? "green" : riskLevels.hydrogeological,
-          hydraulic: riskLevels.hydraulic === "unknown" ? "green" : riskLevels.hydraulic,
-          thunderstorms:
-            riskLevels.thunderstorms === "unknown" ? "green" : riskLevels.thunderstorms,
-        };
-      }
-    }
-
     const level = maxLevel(Object.values(riskLevels));
     const useAlertValidity =
       level !== "green" &&
@@ -842,6 +772,38 @@ async function analyzeCriticalityPdf(document) {
   }
 }
 
+async function confirmNationalGreenSardC(dateKey) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dateKey || ""))) return false;
+  const targetDate = new Date(`${dateKey}T12:00:00Z`);
+  const targetText = new Intl.DateTimeFormat("it-IT", {
+    timeZone: "UTC",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  }).format(targetDate).toLowerCase();
+  const url = "https://mappe.protezionecivile.gov.it/it/mappe-rischi/bollettino-di-criticita/";
+  const response = await fetchResponse(url, "text/html,*/*;q=0.8");
+  const html = await response.text();
+  const text = decodeHtml(String(html)
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]*>/g, " "))
+    .replace(/\s+/g, " ")
+    .trim();
+  const normalized = text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const expectedHeading = `bollettino di criticita del ${targetText.normalize("NFD").replace(/[\u0300-\u036f]/g, "")}`;
+  const heading = normalized.lastIndexOf(expectedHeading);
+  if (heading < 0) return false;
+  const bulletin = normalized.slice(heading);
+  const start = bulletin.indexOf("per la giornata di oggi");
+  const next = bulletin.indexOf("per la giornata di domani");
+  const end = bulletin.indexOf("scarica i dati del bollettino");
+  if (start < 0 || next <= start || end <= next) return false;
+  const alerts = bulletin.slice(start, end);
+  if (!alerts.includes("criticita") || !alerts.includes("allerta")) return false;
+  if (/\bmontevecchio\b|\bpischilappiu\b|\bsard\s*[-–]\s*c\b/i.test(alerts)) return false;
+  return true;
+}
 function buildUnknownAdvisory(document = null) {
   return {
     title: document?.title || "Bollettino di criticità non disponibile",
@@ -1254,6 +1216,37 @@ async function main() {
 
   if (!advisory) {
     advisory = buildUnknownAdvisory(bulletinDocument);
+  }
+  if (
+    bulletinDocument?.date === romeDateKey() &&
+    advisory?.level === "unknown" &&
+    Object.values(advisory.riskLevels || {}).some((level) => level === "green") &&
+    Object.values(advisory.riskLevels || {}).some((level) => level === "unknown")
+  ) {
+    try {
+      if (await confirmNationalGreenSardC(romeDateKey())) {
+        advisory = {
+          ...advisory,
+          level: "green",
+          label: LEVEL_LABEL.green,
+          riskLevels: {
+            hydrogeological: "green",
+            hydraulic: "green",
+            thunderstorms: "green",
+          },
+          riskHydrogeological: false,
+          riskHydraulic: false,
+          riskThunderstorms: false,
+          risks: [],
+          nationalConfirmation: true,
+        };
+        console.log("Assenza di allerte per SARD-C confermata dal bollettino nazionale.");
+      } else {
+        console.log("Conferma nazionale non disponibile o non compatibile: mantengo i livelli non verificati.");
+      }
+    } catch (error) {
+      console.warn("Conferma nazionale non riuscita:", error.message);
+    }
   }
 
   let todayImageChanged = false;
