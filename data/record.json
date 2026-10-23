@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-23T14:33:10.430Z",
+  "generated_at": "2026-10-23T14:47:45.989Z",
   "top_n": 20,
   "daily": {
     "tmax_abs_high": [
@@ -178391,6 +178391,10 @@
               "date": "2026-10-06"
             },
             {
+              "value": 0.2,
+              "date": "2026-10-23"
+            },
+            {
               "value": 0,
               "date": "2026-10-01"
             },
@@ -178437,10 +178441,6 @@
             {
               "value": 0,
               "date": "2026-10-17"
-            },
-            {
-              "value": 0,
-              "date": "2026-10-18"
             }
           ],
           "rainrate_max_high": [
@@ -178473,6 +178473,10 @@
               "date": "2026-10-06"
             },
             {
+              "value": 0.8,
+              "date": "2026-10-23"
+            },
+            {
               "value": 0,
               "date": "2026-10-01"
             },
@@ -178519,10 +178523,6 @@
             {
               "value": 0,
               "date": "2026-10-17"
-            },
-            {
-              "value": 0,
-              "date": "2026-10-18"
             }
           ],
           "rain_15m_high": [
@@ -200969,7 +200969,7 @@
             "rain_override_note": ""
           },
           {
-            "value": 61.2,
+            "value": 61.400000000000006,
             "year": 2026,
             "month": 10,
             "coverage_by_param": {
@@ -201124,7 +201124,7 @@
             "rain_override_note": ""
           },
           {
-            "value": 61.2,
+            "value": 61.400000000000006,
             "year": 2026,
             "month": 10,
             "coverage_by_param": {
@@ -203028,8 +203028,8 @@
               "humidity": 0.6451612903225806,
               "radiation": 0.6451612903225806
             },
-            "rain_total": 61.2,
-            "rain_total_raw": 61.2,
+            "rain_total": 61.400000000000006,
+            "rain_total_raw": 61.400000000000006,
             "rain_is_override": false,
             "rain_override_source": "",
             "rain_override_label": "",
@@ -263574,7 +263574,7 @@
             "rain_override_note": "Totale mensile corretto da riepilogo ARPAS per incompletezza della stazione"
           },
           {
-            "value": 61.2,
+            "value": 61.400000000000006,
             "year": 2026,
             "month": 10,
             "coverage_by_param": {
@@ -263831,7 +263831,7 @@
             "rain_override_note": ""
           },
           {
-            "value": 61.2,
+            "value": 61.400000000000006,
             "year": 2026,
             "month": 10,
             "coverage_by_param": {
@@ -266980,8 +266980,8 @@
               "humidity": 0.6451612903225806,
               "radiation": 0.6451612903225806
             },
-            "rain_total": 61.2,
-            "rain_total_raw": 61.2,
+            "rain_total": 61.400000000000006,
+            "rain_total_raw": 61.400000000000006,
             "rain_is_override": false,
             "rain_override_source": "",
             "rain_override_label": "",
@@ -268208,7 +268208,7 @@
         "rain_override_months": []
       },
       {
-        "value": 384.6,
+        "value": 384.80000000000007,
         "year": 2026,
         "coverage_by_param": {
           "temperature": 0.7890410958904109,
@@ -268226,7 +268226,7 @@
     ],
     "rain_total_low": [
       {
-        "value": 384.6,
+        "value": 384.80000000000007,
         "year": 2026,
         "coverage_by_param": {
           "temperature": 0.7890410958904109,
@@ -270853,8 +270853,8 @@
         "tmax_days_lt_5": 0,
         "tmin_days_gt_20": 73,
         "tmin_days_lt_0": 0,
-        "rain_total": 384.6,
-        "rain_total_raw": 339.00000000000006,
+        "rain_total": 384.80000000000007,
+        "rain_total_raw": 339.20000000000005,
         "rain_has_override": true,
         "rain_override_months": [
           2
