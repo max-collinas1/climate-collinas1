@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-11-13T08:18:02.456Z",
+  "generated_at": "2026-11-13T08:32:52.427Z",
   "top_n": 20,
   "daily": {
     "tmax_abs_high": [
@@ -6140,6 +6140,10 @@
             "date": "2023-11-28"
           },
           {
+            "value": 40.2,
+            "date": "2026-11-13"
+          },
+          {
             "value": 37,
             "date": "2023-11-22"
           },
@@ -6150,10 +6154,6 @@
           {
             "value": 35.4,
             "date": "2022-11-18"
-          },
-          {
-            "value": 35.4,
-            "date": "2022-11-23"
           }
         ],
         "press_min_low": [
@@ -180941,12 +180941,12 @@
           ],
           "wind_max_high": [
             {
-              "value": 33.8,
-              "date": "2026-11-12"
+              "value": 40.2,
+              "date": "2026-11-13"
             },
             {
-              "value": 32.2,
-              "date": "2026-11-13"
+              "value": 33.8,
+              "date": "2026-11-12"
             },
             {
               "value": 30.6,
@@ -206571,7 +206571,7 @@
             "rain_override_note": ""
           },
           {
-            "value": 33.8,
+            "value": 40.2,
             "year": 2026,
             "month": 11,
             "coverage_by_param": {
@@ -267838,6 +267838,23 @@
             "rain_override_note": ""
           },
           {
+            "value": 40.2,
+            "year": 2026,
+            "month": 11,
+            "coverage_by_param": {
+              "temperature": 0.43333333333333335,
+              "rain": 0.43333333333333335,
+              "wind": 0.4,
+              "pressure": 0.4,
+              "humidity": 0.4,
+              "radiation": 0.4
+            },
+            "rain_is_override": false,
+            "rain_override_source": "",
+            "rain_override_label": "",
+            "rain_override_note": ""
+          },
+          {
             "value": 38.6,
             "year": 2026,
             "month": 8,
@@ -267865,23 +267882,6 @@
               "pressure": 1,
               "humidity": 1,
               "radiation": 1
-            },
-            "rain_is_override": false,
-            "rain_override_source": "",
-            "rain_override_label": "",
-            "rain_override_note": ""
-          },
-          {
-            "value": 33.8,
-            "year": 2026,
-            "month": 11,
-            "coverage_by_param": {
-              "temperature": 0.43333333333333335,
-              "rain": 0.43333333333333335,
-              "wind": 0.4,
-              "pressure": 0.4,
-              "humidity": 0.4,
-              "radiation": 0.4
             },
             "rain_is_override": false,
             "rain_override_source": "",
