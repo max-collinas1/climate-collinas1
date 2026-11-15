@@ -1,8 +1,8 @@
 {
   "zoneCode": "SARD-C",
   "zoneName": "Bacini Montevecchio-Pischilappiu",
-  "updatedAt": "2026-11-15T01:47:06.258Z",
-  "checkedAt": "2026-11-15T01:47:06.258Z",
+  "updatedAt": "2026-11-15T09:12:45.014Z",
+  "checkedAt": "2026-11-15T09:12:45.014Z",
   "sourceUrl": "https://www.sardegnaambiente.it/index.php?xsl=2685&s=20&v=9&c=12428&nodesc=3&n=9&bx=2&idr=1&dx=2&rl=1",
   "bulletinSourceUrl": "https://www.sardegnaambiente.it/index.php?xsl=2273&s=20&v=9&nodesc=1&c=7092",
   "automatic": true,
@@ -32,28 +32,22 @@
   },
   "advisory": {
     "title": "Avviso di Criticita' regionale del 14/11/2026",
-    "url": "https://www.sardegnaambiente.it/documenti/ACR_318_2026_del_15-11-2026.pdf",
+    "url": "http://www.sardegnaambiente.it/documenti/ACR_318_2026_del_15-11-2026.pdf",
     "date": "2026-11-14",
-    "level": "yellow",
-    "label": "Allerta gialla",
-    "validFrom": "2026-11-14T20:00:00.000Z",
-    "validTo": "2026-11-15T08:00:00.000Z",
-    "bulletinValidFrom": "2026-11-14T13:00:00.000Z",
-    "bulletinValidTo": "2026-11-15T22:59:00.000Z",
-    "alertValidFrom": "2026-11-14T20:00:00.000Z",
-    "alertValidTo": "2026-11-15T08:00:00.000Z",
+    "level": "unknown",
+    "label": "Stato non disponibile",
+    "validFrom": null,
+    "validTo": null,
     "riskLevels": {
-      "hydrogeological": "yellow",
+      "hydrogeological": "unknown",
       "hydraulic": "unknown",
       "thunderstorms": "unknown"
     },
-    "risks": [
-      "Rischio idrogeologico"
-    ],
-    "riskHydrogeological": true,
-    "riskHydraulic": false,
-    "riskThunderstorms": false,
-    "appliesToZone": true,
-    "detailSourceUrl": "https://www.sardegnaambiente.it/documenti/ACR_318_2026_del_15-11-2026.pdf"
+    "risks": [],
+    "riskHydrogeological": null,
+    "riskHydraulic": null,
+    "riskThunderstorms": null,
+    "appliesToZone": null,
+    "detailSourceUrl": "http://www.sardegnaambiente.it/documenti/ACR_318_2026_del_15-11-2026.pdf"
   }
 }
